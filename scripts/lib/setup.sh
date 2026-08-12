@@ -437,18 +437,33 @@ setup_unregister_path() {
 }
 
 setup_cleanup_owned_temps() {
-  local path
+  local path owned
+  local -a remaining=()
   for path in "${SETUP_OWNED_TEMPS[@]}"; do
     [[ -n "$path" ]] || continue
+    owned=0
     case "$path" in
       "$HOME"/.nexus-setup-backup.*|"$CANONICAL_DIR"/.nexus-canonical-tmp.*|"$NEXUS_HOME"/.nexus-setup-source.*|"$NEXUS_HOME"/.nexus-setup-copy.*|"$NEXUS_HOME"/.nexus-lock.*|"$NEXUS_HOME"/.nexus-lock-candidates.*)
+        owned=1
         if [[ -e "$path" || -L "$path" ]]; then
-          rm -rf -- "$path" || continue
+          if ! rm -rf -- "$path"; then
+            remaining+=("$path")
+            continue
+          fi
         fi
         ;;
     esac
-    setup_unregister_path "$path"
+    if (( owned == 0 )); then
+      [[ -e "$path" || -L "$path" ]] && remaining+=("$path")
+    fi
   done
+  SETUP_OWNED_TEMPS=("${remaining[@]}")
+  ((${#remaining[@]} == 0))
+}
+
+setup_report_retained_temps() {
+  ((${#SETUP_OWNED_TEMPS[@]})) || return 0
+  error "retained setup temp paths: ${SETUP_OWNED_TEMPS[*]}"
 }
 
 setup_restore_traps() {
@@ -467,7 +482,8 @@ setup_signal_handler() {
   case "$sig" in INT) code=130 ;; TERM) code=143 ;; *) code=1 ;; esac
   trap - EXIT INT TERM
   SETUP_INTERRUPTED=1
-  setup_cleanup_owned_temps
+  setup_cleanup_owned_temps || :
+  setup_report_retained_temps
   if [[ -e "$HOME/.claude-backup" || -e "$HOME/.codex-backup" || -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
     error "setup interrupted; retained final/recovery paths: $HOME/.claude-backup $HOME/.codex-backup $LOCK_FILE"
     ((${#SETUP_OWNED_RECOVERY[@]})) && error "retained setup recovery paths: ${SETUP_OWNED_RECOVERY[*]}"
@@ -483,7 +499,8 @@ setup_exit_handler() {
   local status=$?
   trap - EXIT INT TERM
   if (( status != 0 )); then
-    setup_cleanup_owned_temps
+    setup_cleanup_owned_temps || :
+    setup_report_retained_temps
     if [[ -e "$HOME/.claude-backup" || -e "$HOME/.codex-backup" || -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
       error "setup failed; retained final/recovery paths: $HOME/.claude-backup $HOME/.codex-backup $LOCK_FILE"
       ((${#SETUP_OWNED_RECOVERY[@]})) && error "retained setup recovery paths: ${SETUP_OWNED_RECOVERY[*]}"

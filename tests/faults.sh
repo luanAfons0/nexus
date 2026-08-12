@@ -35,12 +35,21 @@ fault_setup() {
     canonical_restore) canonical_move() { [[ "$1" == */original || "$1" == *'/.nexus-canonical-tmp.'* ]] && { error 'test seam: canonical restore failed'; return 1; }; __fault_orig_canonical_move "$@"; } ;;
     canonical_cleanup) cleanup_canonical_temp() { error 'test seam: canonical temp cleanup failed'; return 1; }; canonical_move() { [[ "$1" == *'/.nexus-canonical-tmp.'* ]] && { error 'test seam: canonical promotion failed'; return 1; }; [[ "$1" == */original ]] && { error 'test seam: canonical restore failed'; return 1; }; __fault_orig_canonical_move "$@"; } ;;
   esac
-  if [[ "${NEXUS_FAULT:-}" == term_pre ]]; then
+  if [[ "${NEXUS_FAULT:-}" == term_pre || "${NEXUS_FAULT:-}" == term_pre_cleanup_fail ]]; then
     fault_save register_validator_snapshot
     register_validator_snapshot() { __fault_orig_register_validator_snapshot "$@" || return; : >"$HOME/pre-handshake"; while [[ ! -e "$HOME/pre-release" ]]; do sleep .02; done; }
   fi
-  if [[ "${NEXUS_FAULT:-}" == term_post ]]; then
+  if [[ "${NEXUS_FAULT:-}" == term_post || "${NEXUS_FAULT:-}" == term_post_cleanup_fail ]]; then
     fault_save register_validator_snapshot
     register_validator_snapshot() { __fault_orig_register_validator_snapshot "$@" || return; if [[ -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then : >"$HOME/post-handshake"; while [[ ! -e "$HOME/post-release" ]]; do sleep .02; done; fi; }
+  fi
+  if [[ "${NEXUS_FAULT:-}" == term_pre_cleanup_fail || "${NEXUS_FAULT:-}" == term_post_cleanup_fail ]]; then
+    rm() {
+      local arg
+      for arg in "$@"; do
+        [[ "$arg" == *'/.nexus-lock.'* && ( -e "$HOME/pre-handshake" || -e "$HOME/post-handshake" ) ]] && { error 'test seam: lock snapshot cleanup failed'; return 1; }
+      done
+      command rm "$@"
+    }
   fi
 }

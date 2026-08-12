@@ -1010,7 +1010,25 @@ test_term_recovery() {
   grep -Fq '$nexus-link' "$home/post-output" || failed=1
   [[ ! -e "$home/.nexus/.nexus-setup.lock" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
-  [[ "$home/post-output" != *'.nexus-lock.'* && "$home/post-output" != *'.nexus-lock-candidates.'* && "$home/post-output" != *'.nexus-setup-source.'* && "$home/post-output" != *'.nexus-setup-copy.'* ]] || failed=1
+  [[ "$(<"$home/post-output")" != *'.nexus-lock.'* && "$(<"$home/post-output")" != *'.nexus-lock-candidates.'* && "$(<"$home/post-output")" != *'.nexus-setup-source.'* && "$(<"$home/post-output")" != *'.nexus-setup-copy.'* ]] || failed=1
+
+  home="$(new_home term_pre_cleanup_fail)"; write_lock "$home/.agents/.skill-lock.json"; mkdir -p "$home/.claude" "$home/.codex"
+  start_nexus_overridden "$home" term_pre_cleanup_fail "$home/fail-pre-output" setup || failed=1
+  pid="$NEXUS_TEST_PID"
+  wait_handshake "$home/pre-handshake" "$pid" || { failed=1; cat "$home/fail-pre-output" >&2; }
+  stop_and_reap "$pid"; status="$NEXUS_WAIT_STATUS"
+  retained="$(sed -n 's/.*retained setup temp paths: //p' "$home/fail-pre-output" | tail -n 1)"
+  [[ "$status" -eq 143 && -n "$retained" && -e "$retained" && "$(<"$home/fail-pre-output")" == *"retained setup temp paths: $retained"* && "$(<"$home/fail-pre-output")" == *'rerun setup'* ]] || failed=1
+  [[ "$retained" == "$home/.nexus/.nexus-lock."* ]] || failed=1
+
+  home="$(new_home term_post_cleanup_fail)"; write_lock "$home/.agents/.skill-lock.json"; mkdir -p "$home/.claude" "$home/.codex"
+  start_nexus_overridden "$home" term_post_cleanup_fail "$home/fail-post-output" setup || failed=1
+  pid="$NEXUS_TEST_PID"
+  wait_handshake "$home/post-handshake" "$pid" || { failed=1; cat "$home/fail-post-output" >&2; }
+  stop_and_reap "$pid"; status="$NEXUS_WAIT_STATUS"
+  retained="$(sed -n 's/.*retained setup temp paths: //p' "$home/fail-post-output" | tail -n 1)"
+  [[ "$status" -eq 143 && -n "$retained" && -e "$retained" && "$(<"$home/fail-post-output")" == *"retained setup temp paths: $retained"* && "$(<"$home/fail-post-output")" == *"$home/.nexus/skill-lock.json"* && "$(<"$home/fail-post-output")" == *'/nexus:link'* && "$(<"$home/fail-post-output")" == *'retained final/recovery paths'* ]] || failed=1
+  [[ "$retained" == "$home/.nexus/.nexus-lock."* && "$(find "$home/.nexus" -maxdepth 1 -name '.nexus-setup-*' -print -quit)" == '' ]] || failed=1
   if (( failed == 0 )); then pass term_recovery; else fail term_recovery; fi
 }
 
