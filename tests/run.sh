@@ -1035,6 +1035,14 @@ test_metadata() {
     assert_line "skills/$name/SKILL.md" "name: $name" || failed=1
     assert_contains "skills/$name/SKILL.md" "$command" || failed=1
     assert_contains "skills/$name/claude-command.md" "$command" || failed=1
+    if [[ "$name" == nexus-install ]]; then
+      assert_contains "skills/$name/SKILL.md" '--skill "skill-a" --skill "skill-b"' || failed=1
+      assert_contains "skills/$name/claude-command.md" '--skill "skill-a" --skill "skill-b"' || failed=1
+      if grep -Fq 'install "/path/to/source" "skill-a"' "$REPO_ROOT/skills/$name/SKILL.md" "$REPO_ROOT/skills/$name/claude-command.md"; then
+        printf '  nexus-install advertises incompatible positional skills\n' >&2
+        failed=1
+      fi
+    fi
   done
 
   if (( failed == 0 )); then
