@@ -10,6 +10,7 @@ CONTROL_SKILLS=(nexus-setup nexus-link nexus-install)
 ERRORS=0
 TEST_FAIL="${NEXUS_TEST_FAIL:-}"
 declare -A DESIRED_SET=()
+DESIRED_NAMES=()
 
 info() { printf 'nexus: %s\n' "$*"; }
 error() { printf 'nexus: error: %s\n' "$*" >&2; ERRORS=$((ERRORS + 1)); }
@@ -79,13 +80,6 @@ validate_lock() {
   return 0
 }
 
-desired_names() {
-  {
-    jq -r '.skills | keys[]' "$LOCK_FILE"
-    printf '%s\n' "${CONTROL_SKILLS[@]}"
-  } | LC_ALL=C sort -u
-}
-
 skill_target() {
   local name="$1"
   case "$name" in
@@ -96,6 +90,119 @@ skill_target() {
 
 desired_contains() {
   [[ -n "${DESIRED_SET[$1]+present}" ]]
+}
+
+safe_skill_name() {
+  local name="$1"
+  [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$name" != . && "$name" != .. ]]
+}
+
+cleanup_lock_snapshot() {
+  local snapshot_dir="$1" snapshot="$snapshot_dir/lock.json" names="$snapshot_dir/names"
+  if [[ ! -d "$snapshot_dir" || "$(dirname -- "$snapshot_dir")" != "$NEXUS_HOME" ||
+        "$(basename -- "$snapshot_dir")" != .nexus-lock.* ]]; then
+    error "invalid lock snapshot directory: $snapshot_dir"
+    return 1
+  fi
+  rm -f -- "$snapshot" "$names"
+  if ! rmdir -- "$snapshot_dir"; then
+    error "cannot clean lock snapshot directory: $snapshot_dir"
+    return 1
+  fi
+  return 0
+}
+
+load_validated_lock_names() {
+  local file="$1" output_array_name="$2" snapshot_dir='' snapshot names name marker_seen=0
+  local -n output_array="$output_array_name"
+  output_array=()
+  if [[ ! -f "$file" || -L "$file" ]]; then
+    error "invalid version-3 lock: expected regular file at $file"
+    return 1
+  fi
+  snapshot_dir="$(mktemp -d -- "$NEXUS_HOME/.nexus-lock.XXXXXX")" || {
+    error "cannot create lock snapshot directory under $NEXUS_HOME"
+    return 1
+  }
+  snapshot="$snapshot_dir/lock.json"
+  names="$snapshot_dir/names"
+  if ! cp -- "$file" "$snapshot"; then
+    error "cannot snapshot lock file: $file"
+    cleanup_lock_snapshot "$snapshot_dir" || :
+    return 1
+  fi
+  if [[ "$TEST_FAIL" == lock_extract ]]; then
+    error "test seam: lock key extraction failed"
+    cleanup_lock_snapshot "$snapshot_dir" || :
+    return 1
+  fi
+  if ! jq -er -s '
+    def valid_lock:
+      type == "object" and
+      (.version == 3 and (.version | type) == "number") and
+      (.skills | type == "object") and
+      all(.skills | keys[];
+        test("^[A-Za-z0-9][A-Za-z0-9._-]*\\z") and . != "." and . != "..");
+    if length == 1 and (.[0] | valid_lock) then
+      ((.[0].skills | keys[]), "__NEXUS_LOCK_END__")
+    else
+      error("invalid version-3 lock")
+    end
+  ' "$snapshot" >"$names"; then
+    error "invalid version-3 lock: $file must be one JSON object with numeric version 3, object skills, and safe skill names"
+    cleanup_lock_snapshot "$snapshot_dir" || :
+    return 1
+  fi
+  if [[ "$TEST_FAIL" == lock_replace ]]; then
+    if ! printf '%s\n' '{"version":3,"skills":{"../escape":{}}}' >"$file"; then
+      error "test seam: lock replacement failed"
+      cleanup_lock_snapshot "$snapshot_dir" || :
+      return 1
+    fi
+  fi
+  while IFS= read -r name || [[ -n "$name" ]]; do
+    if [[ "$name" == __NEXUS_LOCK_END__ ]]; then
+      marker_seen=1
+      continue
+    fi
+    if (( marker_seen != 0 )) || ! safe_skill_name "$name"; then
+      error "invalid version-3 lock: unsafe emitted skill name"
+      cleanup_lock_snapshot "$snapshot_dir" || :
+      return 1
+    fi
+    output_array+=("$name")
+  done <"$names"
+  if (( marker_seen == 0 )); then
+    error "invalid version-3 lock: key extraction did not complete"
+    cleanup_lock_snapshot "$snapshot_dir" || :
+    return 1
+  fi
+  cleanup_lock_snapshot "$snapshot_dir" || return 1
+  return 0
+}
+
+build_desired_names() {
+  local name smallest
+  local -A remaining=()
+  local LC_ALL=C
+  DESIRED_NAMES=()
+  for name in "${!DESIRED_SET[@]}"; do
+    remaining["$name"]=1
+  done
+  while (( ${#remaining[@]} != 0 )); do
+    smallest=''
+    for name in "${!remaining[@]}"; do
+      if [[ -z "$smallest" || "$name" < "$smallest" ]]; then
+        smallest="$name"
+      fi
+    done
+    DESIRED_NAMES+=("$smallest")
+    unset 'remaining[$smallest]'
+  done
+}
+
+desired_names() {
+  printf '%s\n' "${DESIRED_NAMES[@]}"
 }
 
 remove_stale_links() {
@@ -136,19 +243,22 @@ remove_missing_managed_link() {
 
 link_all() {
   local force="${1:-false}" name target
-  local -a names=()
+  local -a lock_names=()
   ERRORS=0
-  validate_lock "$LOCK_FILE" || return 1
-
+  load_validated_lock_names "$LOCK_FILE" lock_names || return 1
   DESIRED_SET=()
-  mapfile -t names < <(desired_names)
-  for name in "${names[@]}"; do
+  for name in "${lock_names[@]}" "${CONTROL_SKILLS[@]}"; do
+    if ! safe_skill_name "$name"; then
+      error "invalid version-3 lock: unsafe desired skill name"
+      return 1
+    fi
     DESIRED_SET["$name"]=1
   done
+  build_desired_names
 
   remove_stale_links "$CLAUDE_SKILLS" || :
   remove_stale_links "$CODEX_SKILLS" || :
-  for name in "${names[@]}"; do
+  for name in "${DESIRED_NAMES[@]}"; do
     target="$(skill_target "$name")"
     if [[ ! -f "$target/SKILL.md" ]]; then
       error "missing skill: $name (expected $target/SKILL.md)"

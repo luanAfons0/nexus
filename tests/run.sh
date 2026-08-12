@@ -344,13 +344,15 @@ test_link_invalid_locks_do_not_mutate() {
 }
 
 test_link_reconciliation() {
-  local failed=0 home canonical lock output status before after
+  local failed=0 home canonical lock output status before after stale_before stale_after
   home="$(new_home link_reconciliation)"
   canonical="$home/.agents/skills"
   lock="$home/.nexus/skill-lock.json"
   write_skill "$canonical" alpha
   write_skill "$canonical" beta
   write_skill "$canonical" stale
+  printf 'stale-marker\n' >"$canonical/stale/marker"
+  stale_before="$(sha256sum "$canonical/stale/SKILL.md" "$canonical/stale/marker")"
   write_lock "$lock" alpha beta missing
   mkdir -p "$home/.claude/skills" "$home/.codex/skills/.system"
   printf 'keep\n' >"$home/.codex/skills/.system/marker"
@@ -385,6 +387,8 @@ test_link_reconciliation() {
   [[ ! -e "$home/.codex/skills/stale" && ! -L "$home/.codex/skills/stale" ]] || failed=1
   [[ ! -e "$home/.claude/skills/missing" && ! -L "$home/.claude/skills/missing" ]] || failed=1
   [[ ! -e "$home/.codex/skills/missing" && ! -L "$home/.codex/skills/missing" ]] || failed=1
+  stale_after="$(sha256sum "$canonical/stale/SKILL.md" "$canonical/stale/marker")"
+  [[ -d "$canonical/stale" && "$stale_before" == "$stale_after" ]] || failed=1
   [[ -f "$home/.claude/skills/unrelated-file" ]] || failed=1
   [[ -d "$home/.codex/skills/unrelated-dir" && -f "$home/.codex/skills/.system/marker" ]] || failed=1
   [[ -L "$home/.claude/skills/prefix-lookalike" && "$(readlink -- "$home/.claude/skills/prefix-lookalike")" == '../../.agents/skills-elsewhere/keep' ]] || failed=1
@@ -398,7 +402,7 @@ test_link_reconciliation() {
 }
 
 test_link_stale_ownership_and_empty_lock() {
-  local failed=0 home canonical lock output status
+  local failed=0 home canonical lock output status stale_before stale_after
   home="$(new_home link_stale_ownership)"
   canonical="$home/.agents/skills"
   lock="$home/.nexus/skill-lock.json"
@@ -406,6 +410,8 @@ test_link_stale_ownership_and_empty_lock() {
   mv -- "$canonical" "$home/.agents/skills-real"
   ln -s -- skills-real "$canonical"
   write_skill "$canonical" stale
+  printf 'stale-marker\n' >"$canonical/stale/marker"
+  stale_before="$(sha256sum "$canonical/stale/SKILL.md" "$canonical/stale/marker")"
   ln -s -- /external/target "$canonical/alias"
   write_lock "$lock"
   mkdir -p "$home/.claude/skills" "$home/.codex/skills"
@@ -414,6 +420,8 @@ test_link_stale_ownership_and_empty_lock() {
   output="$(run_nexus "$home" link 2>&1)"; status=$?
   [[ "$status" -eq 0 ]] || { printf '%s\n' "$output" >&2; failed=1; }
   [[ ! -L "$home/.claude/skills/lexical-stale" && ! -L "$home/.codex/skills/resolved-stale" ]] || failed=1
+  stale_after="$(sha256sum "$canonical/stale/SKILL.md" "$canonical/stale/marker")"
+  [[ -d "$canonical/stale" && "$stale_before" == "$stale_after" ]] || failed=1
   for name in nexus-setup nexus-link nexus-install; do
     assert_link_to "$home/.claude/skills/$name" "$home/.nexus/skills/$name" || failed=1
     assert_link_to "$home/.codex/skills/$name" "$home/.nexus/skills/$name" || failed=1
@@ -436,6 +444,32 @@ test_link_desired_collisions_are_preserved() {
   [[ -f "$home/.claude/skills/alpha/marker" ]] || failed=1
   [[ -L "$home/.codex/skills/alpha" && "$(readlink -- "$home/.codex/skills/alpha")" == /external/alpha ]] || failed=1
   if (( failed == 0 )); then pass link_desired_collisions_are_preserved; else fail link_desired_collisions_are_preserved; fi
+}
+
+test_link_snapshot_safety() {
+  local failed=0 home canonical lock output status before after
+  home="$(new_home link_snapshot_safety)"
+  canonical="$home/.agents/skills"
+  lock="$home/.nexus/skill-lock.json"
+  write_skill "$canonical" alpha
+  write_skill "$canonical" stale
+  write_lock "$lock" alpha
+  mkdir -p "$home/.claude/skills" "$home/.codex/skills"
+  ln -s -- "../../.agents/skills/stale" "$home/.claude/skills/stale"
+  ln -s -- "../../.agents/skills/stale" "$home/.codex/skills/stale"
+
+  before="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
+  output="$(NEXUS_TEST_FAIL=lock_extract run_nexus "$home" link 2>&1)"; status=$?
+  after="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
+  [[ "$status" -ne 0 && "$output" == *'lock key extraction failed'* && "$before" == "$after" ]] || failed=1
+
+  output="$(NEXUS_TEST_FAIL=lock_replace run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '%s\n' "$output" >&2; failed=1; }
+  assert_link_to "$home/.claude/skills/alpha" "$canonical/alpha" || failed=1
+  assert_link_to "$home/.codex/skills/alpha" "$canonical/alpha" || failed=1
+  [[ ! -L "$home/.claude/skills/stale" && ! -L "$home/.codex/skills/stale" ]] || failed=1
+  [[ ! -e "$home/.claude/escape" && ! -e "$home/.codex/escape" && ! -e "$home/.agents/escape" ]] || failed=1
+  if (( failed == 0 )); then pass link_snapshot_safety; else fail link_snapshot_safety; fi
 }
 
 test_metadata() {
@@ -483,5 +517,6 @@ test_link_invalid_locks_do_not_mutate
 test_link_reconciliation
 test_link_stale_ownership_and_empty_lock
 test_link_desired_collisions_are_preserved
+test_link_snapshot_safety
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))
