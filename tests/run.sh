@@ -697,7 +697,7 @@ test_setup_backup_transaction_and_absent_roots() {
   before="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
   output="$(run_nexus_overridden "$home" backup_copy_false setup 2>&1)" && failed=1
   after="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
-  [[ "$output" == *'backup verification failed'* && "$before" == "$after" && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  [[ ( "$output" == *'backup verification failed'* || "$output" == *'agent state changed during backup'* ) && "$before" == "$after" && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
 
   home="$(new_home setup_backup_corrupt_success)"
@@ -707,7 +707,7 @@ test_setup_backup_transaction_and_absent_roots() {
   seam="$home/backup-corrupt-seam"
   printf '%s\n' '#!/usr/bin/env bash' 'command cp "$@"' 'destination="${!#}"' 'chmod 600 "$destination/.hidden"' >"$seam"; chmod 755 "$seam"
   output="$(run_nexus_overridden "$home" backup_copy_corrupt setup 2>&1)" && failed=1
-  [[ "$output" == *'backup verification failed'* && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  [[ ( "$output" == *'backup verification failed'* || "$output" == *'agent state changed during backup'* ) && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
 
   home="$(new_home setup_backup_root_metadata_false_success)"
@@ -716,7 +716,7 @@ test_setup_backup_transaction_and_absent_roots() {
   printf 'same-child\n' >"$home/.claude/child"
   chmod 751 "$home/.claude"; touch -d '2026-01-01 00:00:00.123456789' "$home/.claude"
   output="$(run_nexus_overridden "$home" backup_root_corrupt setup 2>&1)" && failed=1
-  [[ "$output" == *'backup verification failed'* && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  [[ ( "$output" == *'backup verification failed'* || "$output" == *'agent state changed during backup'* ) && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
 
   home="$(new_home setup_backup_child_subsecond_false_success)"
@@ -727,7 +727,7 @@ test_setup_backup_transaction_and_absent_roots() {
   seam="$home/backup-child-metadata-seam"
   printf '%s\n' '#!/usr/bin/env bash' 'command cp "$@"' 'destination="${!#}"' 'touch -d "2026-01-01 00:00:00.987654321" "$destination/child"' >"$seam"; chmod 755 "$seam"
   output="$(run_nexus_overridden "$home" backup_child_corrupt setup 2>&1)" && failed=1
-  [[ "$output" == *'backup verification failed'* && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  [[ ( "$output" == *'backup verification failed'* || "$output" == *'agent state changed during backup'* ) && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
 
   home="$(new_home setup_backup_trailing_newline_symlink_corrupt)"
@@ -737,19 +737,14 @@ test_setup_backup_transaction_and_absent_roots() {
   seam="$home/backup-symlink-corrupt-seam"
   printf '%s\n' '#!/usr/bin/env bash' 'command cp "$@"' 'destination="${!#}"' 'rm -- "$destination/trailing-newline-link"' 'ln -s -- literal-target "$destination/trailing-newline-link"' >"$seam"; chmod 755 "$seam"
   output="$(run_nexus_overridden "$home" backup_symlink_corrupt setup 2>&1)" && failed=1
-  [[ "$output" == *'backup verification failed'* && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  [[ ( "$output" == *'backup verification failed'* || "$output" == *'agent state changed during backup'* ) && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
 
-  home="$(new_home setup_final_backup_corrupt)"
+  home="$(new_home setup_backup_promotion_identity)"
   write_lock "$home/.agents/.skill-lock.json"
   mkdir -p "$home/.claude" "$home/.codex"
-  printf 'hidden-original\n' >"$home/.claude/.hidden"; chmod 644 "$home/.claude/.hidden"
-  seam="$home/backup-move-corrupt-seam"
-  printf '%s\n' '#!/usr/bin/env bash' 'command mv "$@"' 'destination="${!#}"' 'if [[ "$destination" == "$HOME/.codex-backup" ]]; then chmod 600 "$HOME/.claude-backup/.hidden"; fi' >"$seam"; chmod 755 "$seam"
-  output="$(run_nexus_overridden "$home" backup_final_corrupt setup 2>&1)" && failed=1
-  [[ "$output" == *'final backup verification failed'* && -d "$home/.claude-backup" && -d "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
-  assert_no_setup_residue "$home" || failed=1
-
+  output="$(run_nexus_overridden "$home" backup_promote_ambiguous setup 2>&1)" && failed=1
+  [[ "$output" == *'backup promotion changed verified tree identity'* && -d "$home/.claude-backup" && -d "$home/.codex-backup" && -d "$home/.claude-backup.unknown" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
   home="$(new_home setup_promotion_failure)"
   write_lock "$home/.agents/.skill-lock.json"
   output="$(run_nexus_overridden "$home" backup_promote_second setup 2>&1)" && failed=1
@@ -772,6 +767,37 @@ test_setup_backup_transaction_and_absent_roots() {
   run_nexus "$home" setup >/dev/null 2>&1 || failed=1
   [[ -d "$home/.claude-backup" && -d "$home/.codex-backup" ]] || failed=1
   if (( failed == 0 )); then pass setup_backup_transaction_and_absent_roots; else fail setup_backup_transaction_and_absent_roots; fi
+}
+
+test_setup_backup_retries_and_manifest_bound() {
+  local failed=0 home output before after
+  home="$(new_home setup_backup_retry_once)"
+  write_lock "$home/.agents/.skill-lock.json"
+  mkdir -p "$home/.claude" "$home/.codex"
+  printf 'initial\n' >"$home/.claude/retry-marker"
+  output="$(run_nexus_overridden "$home" backup_retry_once setup 2>&1)" || failed=1
+  [[ -f "$home/.claude-backup/retry-marker" && "$(cat "$home/.claude-backup/retry-marker")" == *retry-state* ]] || failed=1
+
+  home="$(new_home setup_backup_retry_always)"
+  write_lock "$home/.agents/.skill-lock.json"
+  mkdir -p "$home/.claude" "$home/.codex"
+  printf 'live\n' >"$home/.claude/retry-marker"; printf 'live\n' >"$home/.codex/retry-marker"
+  before="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
+  output="$(run_nexus_overridden "$home" backup_retry_always setup 2>&1)" && failed=1
+  after="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
+  [[ "$output" == *'agent state changed during backup; close Claude and Codex and retry'* && -f "$home/.claude/retry-marker" && -f "$home/.codex/retry-marker" && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  assert_no_setup_residue "$home" || failed=1
+
+  home="$(new_home setup_backup_manifest_bound)"
+  write_lock "$home/.agents/.skill-lock.json"
+  mkdir -p "$home/.claude" "$home/.codex"
+  run_nexus_overridden "$home" backup_manifest_count setup >/dev/null 2>&1 || failed=1
+  [[ "$(wc -l <"$home/manifest-calls")" == 6 ]] || failed=1
+  home="$(new_home setup_backup_manifest_bound_absent)"
+  write_lock "$home/.agents/.skill-lock.json"
+  run_nexus_overridden "$home" backup_manifest_count setup >/dev/null 2>&1 || failed=1
+  [[ "$(wc -l <"$home/manifest-calls")" == 6 && -d "$home/.claude-backup" && -d "$home/.codex-backup" ]] || failed=1
+  if (( failed == 0 )); then pass setup_backup_retries_and_manifest_bound; else fail setup_backup_retries_and_manifest_bound; fi
 }
 
 test_setup_lock_publication_verification() {
@@ -950,6 +976,7 @@ test_link_snapshot_safety
 test_setup_happy_and_idempotent
 test_setup_preflight_and_lock_discovery
 test_setup_backup_transaction_and_absent_roots
+test_setup_backup_retries_and_manifest_bound
 test_setup_lock_publication_verification
 test_setup_rejects_reserved_control_skill_names
 test_setup_canonical_failures_retain_publication
@@ -1005,5 +1032,11 @@ test_setup_traps_restore() {
 
 test_term_recovery
 test_setup_traps_restore
+
+if python3 "$REPO_ROOT/tests/backup_manifest_test.py" >/dev/null; then
+  pass backup_manifest_fixtures
+else
+  fail backup_manifest_fixtures
+fi
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))

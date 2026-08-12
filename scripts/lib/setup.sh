@@ -1,3 +1,5 @@
+BACKUP_MANIFEST_HELPER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/backup_manifest.py"
+
 owned_setup_dir() {
   local path="$1" parent="$2" prefix="$3"
   [[ -d "$path" && "$(dirname -- "$path")" == "$parent" &&
@@ -104,88 +106,69 @@ copy_agent_tree() {
   return 0
 }
 
-tree_manifest() {
-  local root="$1" manifest="$2" unsorted="$2.unsorted" paths="$2.paths" sorted_paths="$2.sorted-paths" item relative kind metadata hash link_hash link_bytes inode group
-  local -A hardlink_groups=()
-  : >"$unsorted" || return 1
-  [[ -d "$root" && ! -L "$root" ]] || return 1
-  emit_manifest_entry() {
-    local path="$1" label="$2"
-    metadata="$(stat -c '%a|%u|%g|%y' -- "$path")" || return 1
-    if [[ -L "$path" ]]; then
-      kind='l'
-      link_hash="$(readlink -n -- "$path" | sha256sum | awk '{print $1}')" || return 1
-      link_bytes="$(readlink -n -- "$path" | wc -c)" || return 1
-      printf '%q|%s|%s|%s|%s\0' "$label" "$kind" "$metadata" "$link_bytes" "$link_hash" >>"$unsorted"
-    elif [[ -f "$path" ]]; then
-      kind='f'
-      hash="$(sha256sum -- "$path" | awk '{print $1}')" || return 1
-      inode="$(stat -c '%d:%i' -- "$path")" || return 1
-      group="${hardlink_groups[$inode]:-$label}"
-      hardlink_groups["$inode"]="$group"
-      printf '%q|%s|%s|%s|%q\0' "$label" "$kind" "$metadata" "$hash" "$group" >>"$unsorted"
-    elif [[ -d "$path" ]]; then
-      kind='d'
-      printf '%q|%s|%s|-\0' "$label" "$kind" "$metadata" >>"$unsorted"
-    else
-      error "unsupported agent backup entry: $path"
-      return 1
-    fi
-  }
-  emit_manifest_entry "$root" . || return 1
-  if ! find -P "$root" -mindepth 1 -print0 >"$paths"; then
-    rm -f -- "$paths"
-    error "cannot traverse backup tree: $root"
-    return 1
-  fi
-  if ! LC_ALL=C sort -z -- "$paths" >"$sorted_paths"; then
-    rm -f -- "$paths" "$sorted_paths"
-    error "cannot sort backup tree traversal: $root"
-    return 1
-  fi
-  while IFS= read -r -d '' item; do
-    relative="${item#"$root"/}"
-    emit_manifest_entry "$item" "$relative" || return 1
-  done <"$sorted_paths"
-  rm -f -- "$paths" "$sorted_paths"
-  LC_ALL=C sort -z -- "$unsorted" >"$manifest" || return 1
-  rm -f -- "$unsorted"
-  unset -f emit_manifest_entry
-  return 0
+backup_manifest() {
+  local root="$1" full="$2" state="$3"
+  python3 "$BACKUP_MANIFEST_HELPER" "$root" "$full" "$state"
 }
 
-verify_backup_tree() {
-  local source="$1" copied="$2" transaction="$3" label="$4"
-  local source_manifest="$transaction/$label.source.manifest" copied_manifest="$transaction/$label.copied.manifest"
+verify_backup_attempt() {
+  local source="$1" copied="$2" tx="$3" label="$4"
+  local sf="$tx/$label.source.full" ss="$tx/$label.source.state"
+  local cf="$tx/$label.copied.full" cs="$tx/$label.copied.state"
+  local sa="$tx/$label.source.after.state" compare_result
+  backup_manifest "$source" "$sf" "$ss" || return 1
+  copy_agent_tree "$source" "$copied" || return 1
+  backup_manifest "$copied" "$cf" "$cs" || return 1
   if [[ ! -e "$source" && ! -L "$source" ]]; then
-    [[ -d "$copied" && ! -L "$copied" && -z "$(find -P "$copied" -mindepth 1 -print -quit)" ]] || {
-      error "backup verification failed for absent source $source"
+    [[ -d "$copied" && ! -L "$copied" && -z "$(find -P "$copied" -mindepth 1 -print -quit)" ]] || return 2
+  elif cmp -s -- "$sf" "$cf"; then
+    :
+  else
+    compare_result=$?
+    if (( compare_result != 1 )); then
+      error "cannot compare backup manifests for $source"
       return 1
-    }
-    return 0
-  fi
-  if ! tree_manifest "$source" "$source_manifest" || ! tree_manifest "$copied" "$copied_manifest" ||
-       ! cmp -s -- "$source_manifest" "$copied_manifest"; then
+    fi
     error "backup verification failed for $source"
-    return 1
+    return 2
   fi
+  if [[ ! -e "$source" && ! -L "$source" ]]; then
+    :
+  elif cmp -s -- "$ss" "$cs"; then
+    :
+  else
+    compare_result=$?
+    if (( compare_result != 1 )); then
+      error "cannot compare copied state manifests for $source"
+      return 1
+    fi
+    error "backup verification failed for $source"
+    return 2
+  fi
+  backup_manifest "$source" "$sa.full" "$sa" || return 1
+  if cmp -s -- "$ss" "$sa"; then
+    :
+  else
+    compare_result=$?
+    if (( compare_result != 1 )); then
+      error "cannot compare source state manifests for $source"
+      return 1
+    fi
+    error "backup verification failed for $source"
+    return 2
+  fi
+  rm -f -- "$sa.tmp"
   return 0
 }
 
 cleanup_backup_manifests() {
-  local transaction="$1" label
-  for label in claude codex claude-final codex-final; do
-    rm -f -- "$transaction/$label.source.manifest" "$transaction/$label.copied.manifest" \
-      "$transaction/$label.source.manifest.unsorted" "$transaction/$label.copied.manifest.unsorted" || return 1
-    rm -f -- "$transaction/$label.source.manifest.paths" "$transaction/$label.copied.manifest.paths" \
-      "$transaction/$label.source.manifest.sorted-paths" "$transaction/$label.copied.manifest.sorted-paths" || return 1
-  done
-  return 0
+  local transaction="$1"
+  rm -f -- "$transaction"/*.full "$transaction"/*.state "$transaction"/*.tmp 2>/dev/null || return 1
 }
 
 backup_transaction() {
   local claude_backup="$HOME/.claude-backup" codex_backup="$HOME/.codex-backup"
-  local tx='' claude_tmp codex_tmp
+  local tx='' claude_tmp codex_tmp attempt result claude_inode codex_inode
   [[ ! -e "$claude_backup" && ! -L "$claude_backup" ]] || {
     error "backup already exists: $claude_backup"
     return 1
@@ -204,16 +187,30 @@ backup_transaction() {
   }
   setup_register_temp "$tx"
   SETUP_PHASE='backup_staging'
-  claude_tmp="$tx/claude-backup"
-  codex_tmp="$tx/codex-backup"
-  if ! copy_agent_tree "$HOME/.claude" "$claude_tmp" ||
-       ! verify_backup_tree "$HOME/.claude" "$claude_tmp" "$tx" claude ||
-       ! copy_agent_tree "$HOME/.codex" "$codex_tmp" ||
-       ! verify_backup_tree "$HOME/.codex" "$codex_tmp" "$tx" codex; then
-    error "cannot create complete agent backups"
-    cleanup_setup_dir "$tx" "$HOME" .nexus-setup-backup. || :
-    return 1
-  fi
+  for attempt in 1 2; do
+    export BACKUP_ATTEMPT="$attempt"
+    claude_tmp="$tx/claude-backup"
+    codex_tmp="$tx/codex-backup"
+    [[ "$attempt" == 1 ]] || { rm -rf -- "$claude_tmp" "$codex_tmp"; }
+    verify_backup_attempt "$HOME/.claude" "$claude_tmp" "$tx" claude; result=$?
+    if (( result == 0 )); then
+      verify_backup_attempt "$HOME/.codex" "$codex_tmp" "$tx" codex; result=$?
+    fi
+    (( result == 0 )) && break
+    if (( result == 1 )); then
+      error "cannot create complete agent backups"
+      cleanup_setup_dir "$tx" "$HOME" .nexus-setup-backup. || :
+      return 1
+    fi
+    [[ "$attempt" == 1 ]] || {
+      error "agent state changed during backup; close Claude and Codex and retry"
+      cleanup_setup_dir "$tx" "$HOME" .nexus-setup-backup. || :
+      return 1
+    }
+  done
+  unset BACKUP_ATTEMPT
+  claude_inode="$(stat -c '%d:%i:%F' -- "$claude_tmp")" || return 1
+  codex_inode="$(stat -c '%d:%i:%F' -- "$codex_tmp")" || return 1
   if ! backup_move "$claude_tmp" "$claude_backup"; then
     error "cannot promote Claude backup"
     cleanup_setup_dir "$tx" "$HOME" .nexus-setup-backup. || :
@@ -229,13 +226,12 @@ backup_transaction() {
     cleanup_setup_dir "$tx" "$HOME" .nexus-setup-backup. || :
     return 1
   fi
-  if ! verify_backup_tree "$HOME/.claude" "$claude_backup" "$tx" claude-final ||
-       ! verify_backup_tree "$HOME/.codex" "$codex_backup" "$tx" codex-final; then
-    cleanup_backup_manifests "$tx" || error "backup verification transaction retained: $tx"
-    rmdir -- "$tx" || error "backup verification transaction retained: $tx"
-    error "final backup verification failed; backups retained at: $claude_backup and $codex_backup"
+  [[ ! -e "$claude_tmp" && ! -L "$claude_tmp" ]] || { error "Claude backup promotion did not consume verified tree"; return 1; }
+  [[ ! -e "$codex_tmp" && ! -L "$codex_tmp" ]] || { error "Codex backup promotion did not consume verified tree"; return 1; }
+  [[ "$(stat -c '%d:%i:%F' -- "$claude_backup")" == "$claude_inode" && "$(stat -c '%d:%i:%F' -- "$codex_backup")" == "$codex_inode" ]] || {
+    error "backup promotion changed verified tree identity"
     return 1
-  fi
+  }
   if ! cleanup_backup_manifests "$tx"; then
     error "backup verification transaction retained: $tx"
     return 1

@@ -116,7 +116,7 @@ Setup refuses to overwrite either `~/.claude-backup` or `~/.codex-backup`.
 
 ### Backups
 
-Setup copies, rather than moves, the complete `~/.claude` and `~/.codex` directories. It uses `cp -a` temporary sibling destinations and verifies paths, entry types, regular-file contents, hardlink topology, literal symlink targets, mode, uid/gid where available, and nanosecond mtime before publication. ACLs, xattrs, atime, and other filesystem-specific metadata are outside the v1 verification promise. A successful temporary copy is renamed to:
+Setup copies, rather than moves, the complete `~/.claude` and `~/.codex` directories using normal GNU `cp -a` archive semantics. It verifies paths, entry types, regular-file contents, hardlink topology, literal symlink target bytes, mode, uid/gid, and nanosecond mtime before publication. ACLs, xattrs, atime, and other filesystem-specific metadata are outside the v1 verification promise. A successful temporary copy is renamed to:
 
 ```text
 ~/.claude-backup
@@ -125,7 +125,7 @@ Setup copies, rather than moves, the complete `~/.claude` and `~/.codex` directo
 
 The original agent directories remain in place and active. This permits Claude or Codex to call setup itself. Because a running agent may update live state while files are being copied, the backup is a preserved filesystem copy rather than a globally atomic point-in-time snapshot; setup never mutates the source state being backed up.
 
-If either source agent directory is absent, setup creates an empty corresponding backup directory and reports that fact. If either backup operation fails, setup does not install links or create the Nexus lockfile.
+If either source agent directory is absent, setup creates an empty corresponding backup directory and reports that fact. A live-state mismatch is retried once with fresh staging; after two unstable attempts setup removes the transaction, leaves live state and publication paths untouched, and asks the user to close Claude and Codex and retry. This is bounded verification of an ordinary archive copy, not a globally atomic point-in-time snapshot. Hard traversal, read, or unsupported-entry errors fail immediately; any backup failure prevents links or the Nexus lockfile from being installed.
 
 ### Lock migration and initial linking
 

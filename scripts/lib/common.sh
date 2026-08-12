@@ -85,7 +85,7 @@ skill_target() {
 
 command_requirements() {
   local command
-  for command in jq cp mv mktemp realpath cmp find sort stat sha256sum awk wc chmod chown touch; do
+  for command in jq python3 cp mv mktemp realpath cmp find sort stat sha256sum awk wc chmod chown touch; do
     command -v -- "$command" >/dev/null 2>&1 || {
       error "required command not available: $command"
       return 1
