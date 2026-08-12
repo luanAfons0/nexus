@@ -78,7 +78,7 @@ skill_target() {
 
 command_requirements() {
   local command
-  for command in jq cp mv mktemp realpath cmp; do
+  for command in jq cp mv mktemp realpath cmp find sort stat sha256sum awk; do
     command -v -- "$command" >/dev/null 2>&1 || {
       error "required command not available: $command"
       return 1
@@ -529,13 +529,24 @@ atomic_copy() {
     error "cannot copy source: $source"
     return 1
   fi
+  if [[ "$TEST_FAIL" == *lock_copy_corrupt* ]]; then
+    printf '%s\n' 'test seam: corrupted staged Nexus lock' >"$temp"
+  fi
+  if ! cmp -s -- "$source" "$temp"; then
+    cleanup_setup_file "$temp" "$parent" .nexus-setup-copy. || :
+    error "atomic copy staging verification failed: $destination"
+    return 1
+  fi
   if ! mv -Tf -- "$temp" "$destination"; then
     cleanup_setup_file "$temp" "$parent" .nexus-setup-copy. || :
     error "cannot promote copied file: $destination"
     return 1
   fi
+  if [[ "$TEST_FAIL" == *lock_post_publish_corrupt* ]]; then
+    printf '%s\n' 'test seam: corrupted published Nexus lock' >"$destination"
+  fi
   if ! cmp -s -- "$source" "$destination"; then
-    error "atomic copy verification failed: $destination"
+    error "atomic copy post-publication verification failed: $destination"
     return 1
   fi
   return 0
@@ -578,6 +589,53 @@ copy_agent_tree() {
   "$NEXUS_BACKUP_CP" -a -- "$source/." "$destination/"
 }
 
+tree_manifest() {
+  local root="$1" manifest="$2" item relative kind mode mtime link hash
+  : >"$manifest" || return 1
+  [[ -e "$root" || -L "$root" ]] || return 0
+  [[ -d "$root" && ! -L "$root" ]] || return 1
+  while IFS= read -r -d '' item; do
+    relative="${item#"$root"/}"
+    mode="$(stat -c '%a' -- "$item")" || return 1
+    mtime="$(stat -c '%Y' -- "$item")" || return 1
+    if [[ -L "$item" ]]; then
+      kind='l'
+      link="$(readlink -- "$item")" || return 1
+      printf '%q|%s|%s|%q\n' "$relative" "$kind:$mode:$mtime" '-' "$link" >>"$manifest"
+    elif [[ -f "$item" ]]; then
+      kind='f'
+      hash="$(sha256sum -- "$item" | awk '{print $1}')" || return 1
+      printf '%q|%s|%s|%q\n' "$relative" "$kind:$mode:$mtime" "$hash" '' >>"$manifest"
+    elif [[ -d "$item" ]]; then
+      kind='d'
+      printf '%q|%s|%s|%q\n' "$relative" "$kind:$mode:$mtime" '-' '' >>"$manifest"
+    else
+      error "unsupported agent backup entry: $item"
+      return 1
+    fi
+  done < <(find -P "$root" -mindepth 1 -print0 | LC_ALL=C sort -z)
+  return 0
+}
+
+verify_backup_tree() {
+  local source="$1" copied="$2" transaction="$3" label="$4"
+  local source_manifest="$transaction/$label.source.manifest" copied_manifest="$transaction/$label.copied.manifest"
+  if ! tree_manifest "$source" "$source_manifest" || ! tree_manifest "$copied" "$copied_manifest" ||
+       ! cmp -s -- "$source_manifest" "$copied_manifest"; then
+    error "backup verification failed for $source"
+    return 1
+  fi
+  return 0
+}
+
+cleanup_backup_manifests() {
+  local transaction="$1" label
+  for label in claude codex claude-final codex-final; do
+    rm -f -- "$transaction/$label.source.manifest" "$transaction/$label.copied.manifest" || return 1
+  done
+  return 0
+}
+
 backup_transaction() {
   local claude_backup="$HOME/.claude-backup" codex_backup="$HOME/.codex-backup"
   local tx='' claude_tmp codex_tmp
@@ -599,7 +657,10 @@ backup_transaction() {
   }
   claude_tmp="$tx/claude-backup"
   codex_tmp="$tx/codex-backup"
-  if ! copy_agent_tree "$HOME/.claude" "$claude_tmp" || ! copy_agent_tree "$HOME/.codex" "$codex_tmp"; then
+  if ! copy_agent_tree "$HOME/.claude" "$claude_tmp" ||
+       ! verify_backup_tree "$HOME/.claude" "$claude_tmp" "$tx" claude ||
+       ! copy_agent_tree "$HOME/.codex" "$codex_tmp" ||
+       ! verify_backup_tree "$HOME/.codex" "$codex_tmp" "$tx" codex; then
     error "cannot create complete agent backups"
     cleanup_setup_dir "$tx" "$HOME" .nexus-setup-backup. || :
     return 1
@@ -616,6 +677,17 @@ backup_transaction() {
       return 1
     fi
     cleanup_setup_dir "$tx" "$HOME" .nexus-setup-backup. || :
+    return 1
+  fi
+  if ! verify_backup_tree "$HOME/.claude" "$claude_backup" "$tx" claude-final ||
+       ! verify_backup_tree "$HOME/.codex" "$codex_backup" "$tx" codex-final; then
+    cleanup_backup_manifests "$tx" || error "backup verification transaction retained: $tx"
+    rmdir -- "$tx" || error "backup verification transaction retained: $tx"
+    error "final backup verification failed; backups retained at: $claude_backup and $codex_backup"
+    return 1
+  fi
+  if ! cleanup_backup_manifests "$tx"; then
+    error "backup verification transaction retained: $tx"
     return 1
   fi
   rmdir -- "$tx" || {
@@ -728,8 +800,15 @@ materialize_canonical_links() {
   return 0
 }
 
+post_publication_failure() {
+  local detail="$1"
+  error "$detail"
+  error "setup is now initialized/disabled; retained Nexus lock: $LOCK_FILE; retained backups: $SETUP_CLAUDE_BACKUP and $SETUP_CODEX_BACKUP"
+  error "correct the reported issue, then run /nexus:link or \$nexus-link (CLI: $NEXUS_HOME/scripts/nexus link)"
+}
+
 setup() {
-  local selected
+  local selected third_party_count linked_entries
   ERRORS=0
   if [[ -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
     info "already initialized; run /nexus:link or \$nexus-link to reconcile skills"
@@ -749,18 +828,24 @@ setup() {
   fi
   if ! publish_setup_lock "$SETUP_LOCK_SNAPSHOT"; then
     cleanup_setup_file "$SETUP_LOCK_SNAPSHOT" "$NEXUS_HOME" .nexus-setup-source. || :
-    error "backups retained at: $SETUP_CLAUDE_BACKUP and $SETUP_CODEX_BACKUP"
+    if [[ -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
+      post_publication_failure "Nexus lock publication verification failed"
+    else
+      error "backups retained at: $SETUP_CLAUDE_BACKUP and $SETUP_CODEX_BACKUP"
+    fi
     return 1
   fi
   cleanup_setup_file "$SETUP_LOCK_SNAPSHOT" "$NEXUS_HOME" .nexus-setup-source. || {
-    error "selected lock snapshot retained: $SETUP_LOCK_SNAPSHOT"
+    post_publication_failure "selected lock snapshot retained: $SETUP_LOCK_SNAPSHOT"
     return 1
   }
   if ! materialize_canonical_links || ! link_all true; then
-    error "setup published backups and lock; correct the reported issue, then run /nexus:link or \$nexus-link"
+    post_publication_failure "setup encountered a post-publication failure"
     return 1
   fi
-  info "setup complete: source lock $selected; backups $SETUP_CLAUDE_BACKUP and $SETUP_CODEX_BACKUP"
+  third_party_count="${#SETUP_LOCK_NAMES[@]}"
+  linked_entries="$(( (third_party_count + ${#CONTROL_SKILLS[@]}) * 2 ))"
+  info "setup complete: source lock: $selected; Claude backup: $SETUP_CLAUDE_BACKUP; Codex backup: $SETUP_CODEX_BACKUP; third-party skills: $third_party_count; linked agent skill entries: $linked_entries (two agents; includes ${#CONTROL_SKILLS[@]} controls)"
   return 0
 }
 

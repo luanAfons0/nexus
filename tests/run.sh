@@ -516,6 +516,7 @@ test_setup_happy_and_idempotent() {
   [[ -f "$home/.codex/skills/.system/marker" ]] || failed=1
   cmp -s "$source" "$home/.nexus/skill-lock.json" || failed=1
   [[ "$output" == *"$source"* && "$output" == *"$home/.claude-backup"* && "$output" == *"$home/.codex-backup"* ]] || failed=1
+  [[ "$output" == *'third-party skills: 2'* && "$output" == *'linked agent skill entries: 10'* ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
   before="$(snapshot_tree "$home/.nexus")|$(snapshot_tree "$home/.agents")|$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")|$(snapshot_tree "$home/.claude-backup")|$(snapshot_tree "$home/.codex-backup")"
   output="$(run_nexus "$home" setup 2>&1)" || failed=1
@@ -583,6 +584,37 @@ test_setup_backup_transaction_and_absent_roots() {
   [[ -s "$home/backup-cp.log" && "$before" == "$after" && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" && "$source_hash" == "$(sha256sum "$home/.agents/.skill-lock.json")" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
 
+  home="$(new_home setup_backup_false_success)"
+  write_lock "$home/.agents/.skill-lock.json"
+  mkdir -p "$home/.claude" "$home/.codex"
+  printf 'hidden-original\n' >"$home/.claude/.hidden"
+  ln -s -- /external/ordinary "$home/.claude/ordinary-link"
+  before="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
+  output="$(NEXUS_BACKUP_CP=true run_nexus "$home" setup 2>&1)" && failed=1
+  after="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
+  [[ "$output" == *'backup verification failed'* && "$before" == "$after" && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  assert_no_setup_residue "$home" || failed=1
+
+  home="$(new_home setup_backup_corrupt_success)"
+  write_lock "$home/.agents/.skill-lock.json"
+  mkdir -p "$home/.claude" "$home/.codex"
+  printf 'hidden-original\n' >"$home/.claude/.hidden"; chmod 644 "$home/.claude/.hidden"
+  seam="$home/backup-corrupt-seam"
+  printf '%s\n' '#!/usr/bin/env bash' 'command cp "$@"' 'destination="${!#}"' 'chmod 600 "$destination/.hidden"' >"$seam"; chmod 755 "$seam"
+  output="$(NEXUS_BACKUP_CP="$seam" run_nexus "$home" setup 2>&1)" && failed=1
+  [[ "$output" == *'backup verification failed'* && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  assert_no_setup_residue "$home" || failed=1
+
+  home="$(new_home setup_final_backup_corrupt)"
+  write_lock "$home/.agents/.skill-lock.json"
+  mkdir -p "$home/.claude" "$home/.codex"
+  printf 'hidden-original\n' >"$home/.claude/.hidden"; chmod 644 "$home/.claude/.hidden"
+  seam="$home/backup-move-corrupt-seam"
+  printf '%s\n' '#!/usr/bin/env bash' 'command mv "$@"' 'destination="${!#}"' 'if [[ "$destination" == "$HOME/.codex-backup" ]]; then chmod 600 "$HOME/.claude-backup/.hidden"; fi' >"$seam"; chmod 755 "$seam"
+  output="$(NEXUS_BACKUP_MV="$seam" run_nexus "$home" setup 2>&1)" && failed=1
+  [[ "$output" == *'final backup verification failed'* && -d "$home/.claude-backup" && -d "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  assert_no_setup_residue "$home" || failed=1
+
   home="$(new_home setup_promotion_failure)"
   write_lock "$home/.agents/.skill-lock.json"
   output="$(NEXUS_TEST_FAIL=backup_promote_second run_nexus "$home" setup 2>&1)" && failed=1
@@ -607,6 +639,27 @@ test_setup_backup_transaction_and_absent_roots() {
   if (( failed == 0 )); then pass setup_backup_transaction_and_absent_roots; else fail setup_backup_transaction_and_absent_roots; fi
 }
 
+test_setup_lock_publication_verification() {
+  local failed=0 home output before after
+  home="$(new_home setup_lock_staging_corrupt)"
+  write_lock "$home/.agents/.skill-lock.json"
+  mkdir -p "$home/.claude" "$home/.codex"
+  printf 'live\n' >"$home/.claude/marker"
+  before="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")|$(snapshot_tree "$home/.agents")"
+  output="$(NEXUS_TEST_FAIL=lock_copy_corrupt run_nexus "$home" setup 2>&1)" && failed=1
+  after="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")|$(snapshot_tree "$home/.agents")"
+  [[ "$output" == *'atomic copy staging verification failed'* && "$before" == "$after" && ! -e "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" ]] || failed=1
+  assert_no_setup_residue "$home" || failed=1
+
+  home="$(new_home setup_lock_post_publish_corrupt)"
+  write_lock "$home/.agents/.skill-lock.json"
+  mkdir -p "$home/.claude" "$home/.codex"
+  output="$(NEXUS_TEST_FAIL=lock_post_publish_corrupt run_nexus "$home" setup 2>&1)" && failed=1
+  [[ -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" && "$output" == *'setup is now initialized/disabled'* && "$output" == *'/nexus:link'* && "$output" == *'$nexus-link'* ]] || failed=1
+  assert_no_setup_residue "$home" || failed=1
+  if (( failed == 0 )); then pass setup_lock_publication_verification; else fail setup_lock_publication_verification; fi
+}
+
 test_setup_canonical_failures_retain_publication() {
   local failed=0 home output original retained_temp
   home="$(new_home setup_broken_canonical)"
@@ -614,7 +667,7 @@ test_setup_canonical_failures_retain_publication() {
   mkdir -p "$home/.agents/skills" "$home/.claude/skills/alpha" "$home/.codex/skills/alpha"
   ln -s -- /missing/alpha "$home/.agents/skills/alpha"
   output="$(run_nexus "$home" setup 2>&1)" && failed=1
-  [[ "$output" == *'broken symlink'* && -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" ]] || failed=1
+  [[ "$output" == *'broken symlink'* && -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" && "$output" == *'setup is now initialized/disabled'* && "$output" == *'/nexus:link'* && "$output" == *'$nexus-link'* ]] || failed=1
   [[ -d "$home/.claude/skills/alpha" && -d "$home/.codex/skills/alpha" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
 
@@ -701,6 +754,7 @@ test_link_snapshot_safety
 test_setup_happy_and_idempotent
 test_setup_preflight_and_lock_discovery
 test_setup_backup_transaction_and_absent_roots
+test_setup_lock_publication_verification
 test_setup_canonical_failures_retain_publication
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))
