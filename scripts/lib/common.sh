@@ -6,19 +6,16 @@ nexus_init() {
   CODEX_SKILLS="$HOME/.codex/skills"
   declare -g -a CONTROL_SKILLS=(nexus-setup nexus-link nexus-install)
   ERRORS=0
-  # Failure injection is test-only.  Normal invocations deliberately ignore every
-  # NEXUS_TEST_* variable so environment state cannot alter live migrations.
-  TEST_FAIL=''
-  [[ "${NEXUS_TEST_MODE:-}" == 1 ]] && TEST_FAIL="${NEXUS_TEST_FAIL:-}"
-  NEXUS_BACKUP_CP="${NEXUS_BACKUP_CP:-cp}"
-  NEXUS_BACKUP_MV="${NEXUS_BACKUP_MV:-mv}"
-  NEXUS_CANONICAL_CP="${NEXUS_CANONICAL_CP:-cp}"
-  NEXUS_CANONICAL_MV="${NEXUS_CANONICAL_MV:-mv}"
   CANONICAL_CURRENT=''
   DISCOVERED_LOCK=''
   SETUP_CLAUDE_BACKUP=''
   SETUP_CODEX_BACKUP=''
   declare -g -a SETUP_LOCK_NAMES=()
+  declare -g -a SETUP_OWNED_TEMPS=()
+  declare -g -a SETUP_OWNED_RECOVERY=()
+  SETUP_PHASE='idle'
+  SETUP_INTERRUPTED=0
+  SETUP_MUTEX=''
   declare -g -A DESIRED_SET=()
   declare -g -a DESIRED_NAMES=()
 }
@@ -102,15 +99,6 @@ desired_contains() {
 }
 
 stage_move() {
-  if [[ "$TEST_FAIL" == promote && "$1" == *'/.nexus-tmp.'* && "$2" == "$CURRENT_LINK" ]] ||
-     [[ "$TEST_FAIL" == restore && "$1" == *'/.nexus-tmp.'* && "$2" == "$CURRENT_LINK" ]]; then
-    error "test seam: staged move failed"
-    return 1
-  fi
-  if [[ "$TEST_FAIL" == restore && "$1" == *'/original' && "$2" == "$CURRENT_LINK" ]]; then
-    error "test seam: restore move failed"
-    return 1
-  fi
   mv -Tf -- "$1" "$2"
 }
 
@@ -144,10 +132,6 @@ put_link() {
     error "cannot calculate relative target for $link"; return 1;
   }
   tmp="$parent/.nexus-tmp.$$.${RANDOM}"
-  if [[ "$TEST_FAIL" == stage ]]; then
-    error "test seam: staged link creation failed"
-    return 1
-  fi
   ln -s -- "$relative" "$tmp" || { error "cannot create temporary link for $link"; return 1; }
   if ! links_exactly_to "$tmp" "$target"; then
     [[ -L "$tmp" ]] && rm -- "$tmp"
@@ -187,10 +171,7 @@ put_link() {
       return 1
     fi
     current=''
-    if [[ "$TEST_FAIL" == verify ]]; then
-      current=''
-    fi
-    if [[ "$TEST_FAIL" == verify ]] || ! links_exactly_to "$link" "$target"; then
+    if ! links_exactly_to "$link" "$target"; then
       rm -- "$link" || error "cannot remove incorrect link: $link"
       if ! stage_move "$original" "$link"; then
         error "recovery container retained: $backup"
@@ -216,5 +197,3 @@ put_link() {
   fi
   return 0
 }
-
-

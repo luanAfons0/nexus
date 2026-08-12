@@ -37,11 +37,6 @@ load_validated_lock_names() {
     cleanup_lock_snapshot "$snapshot_dir" || :
     return 1
   fi
-  if [[ "$TEST_FAIL" == lock_extract ]]; then
-    error "test seam: lock key extraction failed"
-    cleanup_lock_snapshot "$snapshot_dir" || :
-    return 1
-  fi
   if ! jq -er -s '
     def valid_lock:
       type == "object" and
@@ -59,13 +54,6 @@ load_validated_lock_names() {
     error "invalid version-3 lock: $file must be one JSON object with numeric version 3, object skills, and safe skill names"
     cleanup_lock_snapshot "$snapshot_dir" || :
     return 1
-  fi
-  if [[ "$TEST_FAIL" == lock_replace ]]; then
-    if ! printf '%s\n' '{"version":3,"skills":{"../escape":{}}}' >"$file"; then
-      error "test seam: lock replacement failed"
-      cleanup_lock_snapshot "$snapshot_dir" || :
-      return 1
-    fi
   fi
   while IFS= read -r name || [[ -n "$name" ]]; do
     if [[ "$name" == __NEXUS_LOCK_END__ ]]; then
@@ -110,6 +98,7 @@ discover_lock() {
     error "cannot reserve candidate lock snapshots"
     return 1
   }
+  setup_register_temp "$DISCOVERY_SNAPSHOT_DIR"
   for candidate in "${candidates[@]}"; do
     [[ -e "$candidate" || -L "$candidate" ]] || continue
     found+=("$candidate")
@@ -166,7 +155,6 @@ cleanup_discovered_lock_snapshots() {
     error "candidate lock snapshots retained: $DISCOVERY_SNAPSHOT_DIR"
     return 1
   }
+  setup_unregister_path "$DISCOVERY_SNAPSHOT_DIR"
   DISCOVERY_SNAPSHOT_DIR=''
 }
-
-

@@ -40,6 +40,7 @@ snapshot_setup_lock() {
     return 1
   fi
   SETUP_LOCK_SNAPSHOT="$snapshot"
+  setup_register_temp "$snapshot"
   return 0
 }
 
@@ -59,9 +60,6 @@ atomic_copy() {
     error "cannot copy source: $source"
     return 1
   fi
-  if [[ "$TEST_FAIL" == *lock_copy_corrupt* ]]; then
-    printf '%s\n' 'test seam: corrupted staged Nexus lock' >"$temp"
-  fi
   if ! cmp -s -- "$source" "$temp"; then
     cleanup_setup_file "$temp" "$parent" .nexus-setup-copy. || :
     error "atomic copy staging verification failed: $destination"
@@ -72,9 +70,6 @@ atomic_copy() {
     error "cannot promote copied file: $destination"
     return 1
   fi
-  if [[ "$TEST_FAIL" == *lock_post_publish_corrupt* ]]; then
-    printf '%s\n' 'test seam: corrupted published Nexus lock' >"$destination"
-  fi
   if ! cmp -s -- "$source" "$destination"; then
     error "atomic copy post-publication verification failed: $destination"
     return 1
@@ -84,29 +79,13 @@ atomic_copy() {
 
 backup_move() {
   local source="$1" destination="$2"
-  if [[ "$TEST_FAIL" == *backup_promote_second* && "$destination" == "$HOME/.codex-backup" ]]; then
-    error "test seam: second backup promotion failed"
-    return 1
-  fi
-  if [[ "$TEST_FAIL" == *backup_rollback* && "$source" == "$HOME/.claude-backup" ]]; then
-    error "test seam: backup rollback failed"
-    return 1
-  fi
-  "$NEXUS_BACKUP_MV" -Tn -- "$source" "$destination" || return 1
+  mv -Tn -- "$source" "$destination" || return 1
   [[ ! -e "$source" && ! -L "$source" ]]
 }
 
 canonical_move() {
   local source="$1" destination="$2"
-  if [[ "$TEST_FAIL" == *canonical_promote* && "$source" == *'/.nexus-canonical-tmp.'* && "$destination" == "$CANONICAL_CURRENT" ]]; then
-    error "test seam: canonical promotion failed"
-    return 1
-  fi
-  if [[ "$TEST_FAIL" == *canonical_restore* && "$destination" == "$CANONICAL_CURRENT" && "$source" == */original ]]; then
-    error "test seam: canonical restore failed"
-    return 1
-  fi
-  "$NEXUS_CANONICAL_MV" -Tn -- "$source" "$destination" || return 1
+  mv -Tn -- "$source" "$destination" || return 1
   [[ ! -e "$source" && ! -L "$source" ]]
 }
 
@@ -118,13 +97,10 @@ copy_agent_tree() {
     error "agent root is not a directory: $source"
     return 1
   }
-  "$NEXUS_BACKUP_CP" -a -- "$source/." "$destination/" &&
+  cp -a -- "$source/." "$destination/" &&
     chmod --reference="$source" -- "$destination" &&
     chown --reference="$source" -- "$destination" &&
     touch -r "$source" -- "$destination" || return 1
-  if [[ "$TEST_FAIL" == *backup_root_corrupt* && "$source" == "$HOME/.claude" ]]; then
-    chmod 700 -- "$destination" && touch -d '2026-01-01 00:00:00.987654321' -- "$destination"
-  fi
   return 0
 }
 
@@ -226,6 +202,8 @@ backup_transaction() {
     error "invalid setup backup transaction: $tx"
     return 1
   }
+  setup_register_temp "$tx"
+  SETUP_PHASE='backup_staging'
   claude_tmp="$tx/claude-backup"
   codex_tmp="$tx/codex-backup"
   if ! copy_agent_tree "$HOME/.claude" "$claude_tmp" ||
@@ -241,6 +219,7 @@ backup_transaction() {
     cleanup_setup_dir "$tx" "$HOME" .nexus-setup-backup. || :
     return 1
   fi
+  SETUP_PHASE='backup_promoting'
   if ! backup_move "$codex_tmp" "$codex_backup"; then
     error "cannot promote Codex backup"
     if ! backup_move "$claude_backup" "$claude_tmp"; then
@@ -267,6 +246,8 @@ backup_transaction() {
   }
   SETUP_CLAUDE_BACKUP="$claude_backup"
   SETUP_CODEX_BACKUP="$codex_backup"
+  setup_unregister_path "$tx"
+  SETUP_PHASE='backups_complete'
   return 0
 }
 
@@ -343,10 +324,6 @@ validate_canonical_skill() {
 
 cleanup_canonical_temp() {
   local temp="$1"
-  if [[ "$TEST_FAIL" == *canonical_cleanup* ]]; then
-    error "test seam: canonical temp cleanup failed"
-    return 1
-  fi
   cleanup_setup_dir "$temp" "$CANONICAL_DIR" .nexus-canonical-tmp.
 }
 
@@ -367,7 +344,8 @@ materialize_canonical_link() {
     error "cannot reserve canonical materialization temp for $current"
     return 1
   }
-  if ! "$NEXUS_CANONICAL_CP" -aL -- "$target/." "$temp/" || ! valid_physical_skill "$temp"; then
+  setup_register_temp "$temp"
+  if ! cp -aL -- "$target/." "$temp/" || ! valid_physical_skill "$temp"; then
     cleanup_canonical_temp "$temp" || error "canonical temp retained: $temp"
     error "cannot materialize canonical skill: $current"
     return 1
@@ -377,6 +355,7 @@ materialize_canonical_link() {
     error "cannot reserve canonical recovery for $current"
     return 1
   }
+  setup_register_recovery "$recovery"
   original="$recovery/original"
   if ! canonical_move "$current" "$original"; then
     cleanup_canonical_temp "$temp" || error "canonical temp retained: $temp"
@@ -405,6 +384,8 @@ materialize_canonical_link() {
   fi
   rm -- "$original" || { error "canonical recovery retained: $recovery"; return 1; }
   rmdir -- "$recovery" || { error "canonical recovery retained: $recovery"; return 1; }
+  setup_unregister_path "$temp"
+  setup_unregister_path "$recovery"
   return 0
 }
 
@@ -428,7 +409,94 @@ setup_lock_acquire() {
     error "invalid setup lock directory: $SETUP_MUTEX"
     return 1
   }
+  setup_install_traps
   return 0
+}
+
+setup_register_temp() {
+  local path="$1"
+  [[ -n "$path" ]] || return 0
+  SETUP_OWNED_TEMPS+=("$path")
+}
+
+setup_register_recovery() {
+  local path="$1"
+  [[ -n "$path" ]] || return 0
+  SETUP_OWNED_RECOVERY+=("$path")
+}
+
+setup_unregister_path() {
+  local path="$1" item
+  local -a keep=()
+  for item in "${SETUP_OWNED_TEMPS[@]}"; do [[ "$item" == "$path" ]] || keep+=("$item"); done
+  SETUP_OWNED_TEMPS=("${keep[@]}"); keep=()
+  for item in "${SETUP_OWNED_RECOVERY[@]}"; do [[ "$item" == "$path" ]] || keep+=("$item"); done
+  SETUP_OWNED_RECOVERY=("${keep[@]}")
+}
+
+setup_cleanup_owned_paths() {
+  local path
+  for path in "${SETUP_OWNED_TEMPS[@]}" "${SETUP_OWNED_RECOVERY[@]}"; do
+    [[ -n "$path" ]] || continue
+    case "$path" in
+      "$HOME"/.nexus-setup-backup.*|"$CANONICAL_DIR"/.nexus-canonical-tmp.*|"$CANONICAL_DIR"/.nexus-canonical-old.*|"$NEXUS_HOME"/.nexus-setup-source.*|"$NEXUS_HOME"/.nexus-lock-candidates.*)
+        [[ -e "$path" || -L "$path" ]] || continue
+        rm -rf -- "$path" || :
+        ;;
+    esac
+  done
+}
+
+setup_restore_traps() {
+  local saved
+  for saved in "${SETUP_PREV_EXIT:-}" "${SETUP_PREV_INT:-}" "${SETUP_PREV_TERM:-}"; do
+    [[ -n "$saved" ]] && eval "$saved" || :
+  done
+  SETUP_TRAPS_ACTIVE=0
+}
+
+setup_signal_handler() {
+  local sig="$1" code
+  case "$sig" in INT) code=130 ;; TERM) code=143 ;; *) code=1 ;; esac
+  trap - EXIT INT TERM
+  SETUP_INTERRUPTED=1
+  if [[ -e "$HOME/.claude-backup" || -e "$HOME/.codex-backup" || -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
+    error "setup interrupted; retained final/recovery paths: $HOME/.claude-backup $HOME/.codex-backup $LOCK_FILE"
+    ((${#SETUP_OWNED_TEMPS[@]})) && error "retained setup temps: ${SETUP_OWNED_TEMPS[*]}"
+    ((${#SETUP_OWNED_RECOVERY[@]})) && error "retained setup recovery paths: ${SETUP_OWNED_RECOVERY[*]}"
+    error "rerun setup only after reviewing retained paths; use nexus link for published lock recovery"
+  else
+    setup_cleanup_owned_paths
+  fi
+  setup_lock_release || :
+  exit "$code"
+}
+
+setup_exit_handler() {
+  local status=$?
+  trap - EXIT INT TERM
+  if (( status != 0 )); then
+    if [[ -e "$HOME/.claude-backup" || -e "$HOME/.codex-backup" || -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
+      error "setup failed; retained final/recovery paths: $HOME/.claude-backup $HOME/.codex-backup $LOCK_FILE"
+      ((${#SETUP_OWNED_TEMPS[@]})) && error "retained setup temps: ${SETUP_OWNED_TEMPS[*]}"
+      ((${#SETUP_OWNED_RECOVERY[@]})) && error "retained setup recovery paths: ${SETUP_OWNED_RECOVERY[*]}"
+    else
+      setup_cleanup_owned_paths
+    fi
+  fi
+  setup_lock_release || :
+  setup_restore_traps
+  return "$status"
+}
+
+setup_install_traps() {
+  SETUP_PREV_EXIT="$(trap -p EXIT)"
+  SETUP_PREV_INT="$(trap -p INT)"
+  SETUP_PREV_TERM="$(trap -p TERM)"
+  trap 'setup_exit_handler' EXIT
+  trap 'setup_signal_handler INT' INT
+  trap 'setup_signal_handler TERM' TERM
+  SETUP_TRAPS_ACTIVE=1
 }
 
 setup_lock_release() {
@@ -473,6 +541,7 @@ setup_inner() {
     fi
     return 1
   fi
+  SETUP_PHASE='lock_published'
   if ! materialize_canonical_links || ! link_all true || ! materialize_canonical_links; then
     post_publication_failure "setup encountered a post-publication failure"
     return 1
@@ -493,7 +562,7 @@ setup() {
   setup_inner || status=$?
   cleanup_discovered_lock_snapshots || status=1
   setup_lock_release || status=1
+  setup_restore_traps
+  SETUP_PHASE='idle'
   return "$status"
 }
-
-
