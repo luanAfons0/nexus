@@ -485,7 +485,7 @@ assert_no_setup_residue() {
 }
 
 test_setup_happy_and_idempotent() {
-  local failed=0 home source output before after mode
+  local failed=0 home source output before after mode newline_hash
   home="$(new_home setup_happy)"
   source="$home/.agents/.skill-lock.json"
   write_lock "$source" alpha beta
@@ -493,6 +493,7 @@ test_setup_happy_and_idempotent() {
   printf 'hidden\n' >"$home/.claude/.hidden"
   printf 'executable\n' >"$home/.claude/run-me"; chmod 751 "$home/.claude/run-me"
   ln -s -- /ordinary/link "$home/.claude/ordinary-link"
+  ln -s -- $'literal-target\n' "$home/.claude/trailing-newline-link"
   printf 'alpha-content\n' >"$home/.claude/skills/alpha/SKILL.md"
   printf 'replace-file\n' >"$home/.claude/skills/beta"
   ln -s -- /external/beta "$home/.codex/skills/beta"
@@ -505,6 +506,8 @@ test_setup_happy_and_idempotent() {
   output="$(run_nexus "$home" setup 2>&1)" || { printf '%s\n' "$output" >&2; failed=1; }
   [[ -d "$home/.claude" && -d "$home/.codex" ]] || failed=1
   [[ -f "$home/.claude-backup/.hidden" && -L "$home/.claude-backup/ordinary-link" ]] || failed=1
+  newline_hash="$(readlink -n -- "$home/.claude/trailing-newline-link" | sha256sum | awk '{print $1}')"
+  [[ -L "$home/.claude-backup/trailing-newline-link" && "$newline_hash" == "$(readlink -n -- "$home/.claude-backup/trailing-newline-link" | sha256sum | awk '{print $1}')" ]] || failed=1
   mode="$(stat -c '%a' "$home/.claude-backup/run-me")"; [[ "$mode" == 751 ]] || failed=1
   [[ -d "$home/.claude-backup/skills/alpha" && -f "$home/.claude-backup/skills/alpha/SKILL.md" ]] || failed=1
   [[ -f "$home/.codex-backup/skills/.system/marker" ]] || failed=1
@@ -624,6 +627,16 @@ test_setup_backup_transaction_and_absent_roots() {
   touch -d '2026-01-01 00:00:00.123456789' "$home/.claude/child"
   seam="$home/backup-child-metadata-seam"
   printf '%s\n' '#!/usr/bin/env bash' 'command cp "$@"' 'destination="${!#}"' 'touch -d "2026-01-01 00:00:00.987654321" "$destination/child"' >"$seam"; chmod 755 "$seam"
+  output="$(NEXUS_BACKUP_CP="$seam" run_nexus "$home" setup 2>&1)" && failed=1
+  [[ "$output" == *'backup verification failed'* && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  assert_no_setup_residue "$home" || failed=1
+
+  home="$(new_home setup_backup_trailing_newline_symlink_corrupt)"
+  write_lock "$home/.agents/.skill-lock.json"
+  mkdir -p "$home/.claude" "$home/.codex"
+  ln -s -- $'literal-target\n' "$home/.claude/trailing-newline-link"
+  seam="$home/backup-symlink-corrupt-seam"
+  printf '%s\n' '#!/usr/bin/env bash' 'command cp "$@"' 'destination="${!#}"' 'rm -- "$destination/trailing-newline-link"' 'ln -s -- literal-target "$destination/trailing-newline-link"' >"$seam"; chmod 755 "$seam"
   output="$(NEXUS_BACKUP_CP="$seam" run_nexus "$home" setup 2>&1)" && failed=1
   [[ "$output" == *'backup verification failed'* && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1

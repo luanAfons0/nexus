@@ -78,7 +78,7 @@ skill_target() {
 
 command_requirements() {
   local command
-  for command in jq cp mv mktemp realpath cmp find sort stat sha256sum awk chmod chown touch; do
+  for command in jq cp mv mktemp realpath cmp find sort stat sha256sum awk wc chmod chown touch; do
     command -v -- "$command" >/dev/null 2>&1 || {
       error "required command not available: $command"
       return 1
@@ -598,7 +598,7 @@ copy_agent_tree() {
 }
 
 tree_manifest() {
-  local root="$1" manifest="$2" unsorted="$2.unsorted" item relative kind metadata link hash
+  local root="$1" manifest="$2" unsorted="$2.unsorted" item relative kind metadata hash link_hash link_bytes
   : >"$unsorted" || return 1
   [[ -d "$root" && ! -L "$root" ]] || return 1
   emit_manifest_entry() {
@@ -606,8 +606,9 @@ tree_manifest() {
     metadata="$(stat -c '%a|%u|%g|%y' -- "$path")" || return 1
     if [[ -L "$path" ]]; then
       kind='l'
-      link="$(readlink -- "$path")" || return 1
-      printf '%q|%s|%s|%q\0' "$label" "$kind" "$metadata" "$link" >>"$unsorted"
+      link_hash="$(readlink -n -- "$path" | sha256sum | awk '{print $1}')" || return 1
+      link_bytes="$(readlink -n -- "$path" | wc -c)" || return 1
+      printf '%q|%s|%s|%s|%s\0' "$label" "$kind" "$metadata" "$link_bytes" "$link_hash" >>"$unsorted"
     elif [[ -f "$path" ]]; then
       kind='f'
       hash="$(sha256sum -- "$path" | awk '{print $1}')" || return 1
