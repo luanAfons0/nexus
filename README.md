@@ -48,8 +48,9 @@ publishes its lock, canonicalizes managed skill symlinks under
 Backup verification covers mode, uid, gid, nanosecond mtime, content, hardlink
 topology, and literal symlink targets. It does not promise ACL, xattr, atime,
 or a globally atomic snapshot guarantee. If live agent state changes during a
-backup, Nexus retries once and then retains recovery paths and asks you to
-close Claude/Codex and retry. A setup failure after publication is deliberately
+backup, Nexus retries once and then removes the temporary transaction, leaves
+live and published paths untouched, and asks you to close Claude/Codex and
+retry. A setup failure after publication is deliberately
 recoverable: the lock and backups are retained, and output points to
 `/nexus:link` or `$nexus-link`. Review retained temporary or recovery paths
 before retrying; do not delete them blindly.
