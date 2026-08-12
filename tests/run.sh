@@ -1071,7 +1071,16 @@ test_metadata() {
   fi
 }
 
+test_readme_documentation() {
+  local failed=0 term
+  for term in '~/.agents/skills' 'skill-lock.json' '.claude-backup' '.codex-backup' '/nexus:setup' '$nexus-setup' 'npx skills' 'recovery' 'another agent'; do
+    assert_contains README.md "$term" || failed=1
+  done
+  if (( failed == 0 )); then pass readme_documentation; else fail readme_documentation; fi
+}
+
 test_metadata
+test_readme_documentation
 test_source_hygiene
 test_shell_syntax
 test_bootstrap
