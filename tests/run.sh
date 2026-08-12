@@ -59,6 +59,78 @@ assert_line() {
   fi
 }
 
+new_home() {
+  local name="$1" home="$TEST_ROOT/$1"
+  mkdir -p "$home/.nexus"
+  cp -R -- "$REPO_ROOT/skills" "$home/.nexus/"
+  printf '%s\n' "$home"
+}
+
+run_nexus() {
+  local home="$1"
+  shift
+  HOME="$home" NEXUS_HOME="$home/.nexus" "$REPO_ROOT/scripts/nexus" "$@"
+}
+
+assert_link_to() {
+  local link="$1" expected="$2" actual
+  if [[ ! -L "$link" ]]; then
+    printf '  not a symlink: %s\n' "$link" >&2
+    return 1
+  fi
+  actual="$(realpath -m -- "$link")"
+  expected="$(realpath -m -- "$expected")"
+  if [[ "$actual" == "$expected" ]]; then
+    return 0
+  fi
+  printf '  wrong target for %s: %s (expected %s)\n' "$link" "$actual" "$expected" >&2
+  return 1
+}
+
+test_bootstrap() {
+  local failed=0 home output before after name command link target
+  home="$(new_home bootstrap)"
+  output="$(run_nexus "$home" bootstrap 2>&1)" || { printf '%s\n' "$output" >&2; failed=1; }
+
+  for name in nexus-setup nexus-link nexus-install; do
+    link="$home/.claude/skills/$name"; target="$home/.nexus/skills/$name"
+    assert_link_to "$link" "$target" || failed=1
+    [[ "$(readlink -- "$link")" != /* ]] || { printf '  absolute Claude link: %s\n' "$link" >&2; failed=1; }
+    link="$home/.codex/skills/$name"
+    assert_link_to "$link" "$target" || failed=1
+    [[ "$(readlink -- "$link")" != /* ]] || { printf '  absolute Codex link: %s\n' "$link" >&2; failed=1; }
+    command="${name#nexus-}.md"
+    link="$home/.claude/commands/nexus/$command"; target="$home/.nexus/skills/$name/claude-command.md"
+    assert_link_to "$link" "$target" || failed=1
+    [[ "$(readlink -- "$link")" != /* ]] || { printf '  absolute adapter link: %s\n' "$link" >&2; failed=1; }
+  done
+  [[ ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  [[ ! -e "$home/.claude-backup" ]] || failed=1
+  [[ ! -e "$home/.codex-backup" ]] || failed=1
+
+  before="$(find "$home/.claude" "$home/.codex" -type l -print -exec readlink -- {} \; | sort)"
+  run_nexus "$home" bootstrap >/dev/null 2>&1 || failed=1
+  after="$(find "$home/.claude" "$home/.codex" -type l -print -exec readlink -- {} \; | sort)"
+  [[ "$before" == "$after" ]] || { printf '  second run changed links\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass bootstrap; else fail bootstrap; fi
+}
+
+test_bootstrap_collision() {
+  local failed=0 home output
+  home="$(new_home collision)"
+  mkdir -p "$home/.claude/skills/nexus-setup"
+  printf 'preserve\n' >"$home/.claude/skills/nexus-setup/marker"
+  mkdir -p "$home/.codex/skills"
+  ln -s /external/target "$home/.codex/skills/nexus-link"
+  output="$(run_nexus "$home" bootstrap 2>&1)" && failed=1
+  [[ "$output" == *collision* ]] || { printf '  collision not reported\n%s\n' "$output" >&2; failed=1; }
+  [[ -f "$home/.claude/skills/nexus-setup/marker" ]] || failed=1
+  [[ "$(readlink -- "$home/.codex/skills/nexus-link")" == /external/target ]] || failed=1
+  assert_link_to "$home/.claude/skills/nexus-link" "$home/.nexus/skills/nexus-link" || failed=1
+  assert_link_to "$home/.codex/skills/nexus-setup" "$home/.nexus/skills/nexus-setup" || failed=1
+  if (( failed == 0 )); then pass bootstrap_collision; else fail bootstrap_collision; fi
+}
+
 test_metadata() {
   local failed=0
   assert_contains .gitignore 'skill-lock.json' || failed=1
@@ -91,5 +163,7 @@ test_metadata() {
 }
 
 test_metadata
+test_bootstrap
+test_bootstrap_collision
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))

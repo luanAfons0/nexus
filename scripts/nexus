@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+NEXUS_HOME="${NEXUS_HOME:-$HOME/.nexus}"
+LOCK_FILE="$NEXUS_HOME/skill-lock.json"
+CANONICAL_DIR="$HOME/.agents/skills"
+CLAUDE_SKILLS="$HOME/.claude/skills"
+CODEX_SKILLS="$HOME/.codex/skills"
+CONTROL_SKILLS=(nexus-setup nexus-link nexus-install)
+ERRORS=0
+
+info() { printf 'nexus: %s\n' "$*"; }
+error() { printf 'nexus: error: %s\n' "$*" >&2; ERRORS=$((ERRORS + 1)); }
+die() { error "$*"; return 1; }
+
+resolved_link_target() {
+  local link="$1" raw parent
+  raw="$(readlink -- "$link")" || return 1
+  if [[ "$raw" == /* ]]; then
+    realpath -m -- "$raw"
+  else
+    parent="$(dirname -- "$link")"
+    realpath -m -- "$parent/$raw"
+  fi
+}
+
+is_managed_path() {
+  local path="$1" canonical nexus
+  canonical="$(realpath -m -- "$CANONICAL_DIR")"
+  nexus="$(realpath -m -- "$NEXUS_HOME/skills")"
+  path="$(realpath -m -- "$path")"
+  [[ "$path" == "$canonical" || "$path" == "$canonical"/* ||
+     "$path" == "$nexus" || "$path" == "$nexus"/* ]]
+}
+
+put_link() {
+  local target="$1" link="$2" force="${3:-false}" parent relative tmp current
+  if [[ ! -e "$target" ]]; then
+    error "missing link target: $target"
+    return 1
+  fi
+  parent="$(dirname -- "$link")"
+  mkdir -p -- "$parent" || { error "cannot create parent: $parent"; return 1; }
+
+  if [[ -L "$link" ]]; then
+    current="$(resolved_link_target "$link")" || current=''
+    if [[ "$current" == "$(realpath -m -- "$target")" ]]; then
+      return 0
+    fi
+    if [[ "$force" != true ]] && ! is_managed_path "$current"; then
+      error "collision at $link (external symlink)"
+      return 1
+    fi
+    rm -- "$link" || { error "cannot replace $link"; return 1; }
+  elif [[ -e "$link" ]]; then
+    if [[ "$force" == true ]]; then
+      rm -rf -- "$link" || { error "cannot replace $link"; return 1; }
+    else
+      error "collision at $link"
+      return 1
+    fi
+  fi
+
+  relative="$(realpath --relative-to="$parent" -- "$target")" || {
+    error "cannot calculate relative target for $link"; return 1;
+  }
+  tmp="$parent/.nexus-tmp.$$.${RANDOM}"
+  ln -s -- "$relative" "$tmp" || { error "cannot create temporary link for $link"; return 1; }
+  if ! mv -Tf -- "$tmp" "$link"; then
+    [[ -L "$tmp" ]] && rm -- "$tmp"
+    error "cannot install link: $link"
+    return 1
+  fi
+  current="$(resolved_link_target "$link")" || current=''
+  if [[ "$current" != "$(realpath -m -- "$target")" ]]; then
+    error "link verification failed: $link"
+    return 1
+  fi
+  return 0
+}
+
+bootstrap() {
+  local name adapter
+  ERRORS=0
+  for name in "${CONTROL_SKILLS[@]}"; do
+    put_link "$NEXUS_HOME/skills/$name" "$CLAUDE_SKILLS/$name" || :
+    put_link "$NEXUS_HOME/skills/$name" "$CODEX_SKILLS/$name" || :
+    adapter="${name#nexus-}.md"
+    put_link "$NEXUS_HOME/skills/$name/claude-command.md" "$HOME/.claude/commands/nexus/$adapter" || :
+  done
+  if (( ERRORS != 0 )); then
+    error "bootstrap failed with $ERRORS error(s)"
+    return 1
+  fi
+  info "bootstrap complete: control skills and Claude command adapters linked"
+  return 0
+}
+
+usage() {
+  cat <<'EOF'
+Usage: nexus <bootstrap|setup|link|install|help>
+EOF
+}
+
+main() {
+  local command="${1:-}"
+  case "$command" in
+    bootstrap)
+      [[ "$#" -eq 1 ]] || { usage >&2; return 2; }
+      bootstrap ;;
+    setup|link|install)
+      info "$command is not implemented yet" >&2
+      return 1 ;;
+    help|-h|--help)
+      [[ "$#" -eq 1 ]] || { usage >&2; return 2; }
+      usage ;;
+    *)
+      usage >&2
+      return 2 ;;
+  esac
+}
+
+main "$@"
