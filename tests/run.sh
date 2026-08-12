@@ -1073,7 +1073,7 @@ test_metadata() {
 
 test_readme_documentation() {
   local failed=0 term
-  for term in '~/.agents/skills' 'skill-lock.json' '.claude-backup' '.codex-backup' '/nexus:setup' '$nexus-setup' 'npx skills' 'recovery' 'another agent'; do
+  for term in '~/.agents/skills' 'skill-lock.json' '.claude-backup' '.codex-backup' '/nexus:setup' '$nexus-setup' 'npx skills' 'python3' 'recovery' 'another agent'; do
     assert_contains README.md "$term" || failed=1
   done
   assert_contains README.md 'retries once and then removes the temporary transaction, leaves' || failed=1

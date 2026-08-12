@@ -10,8 +10,10 @@ not take ownership of unrelated physical entries, external links, or Codex's
 
 ## Requirements and first use
 
-Use Bash 5, GNU coreutils, `jq`, Git, and NVM/npm/npx. A directly available
-`npm`/`npx` is sufficient; NVM is a fallback when `npx` is not on `PATH`.
+Use Bash 5, GNU coreutils, `jq`, Git, Python 3 (`python3`), and NVM/npm/npx.
+Setup preflight checks these required commands, including `python3`. A directly
+available `npm`/`npx` is sufficient; NVM is a fallback when `npx` is not on
+`PATH`.
 
 From a shell, initialize only Nexus's control links with:
 
