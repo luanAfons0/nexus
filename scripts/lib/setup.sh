@@ -57,6 +57,7 @@ atomic_copy() {
     error "cannot reserve atomic copy destination for $destination"
     return 1
   }
+  setup_register_temp "$temp"
   if ! cp -- "$source" "$temp"; then
     cleanup_setup_file "$temp" "$parent" .nexus-setup-copy. || :
     error "cannot copy source: $source"
@@ -72,6 +73,7 @@ atomic_copy() {
     error "cannot promote copied file: $destination"
     return 1
   fi
+  setup_unregister_path "$temp"
   if ! cmp -s -- "$source" "$destination"; then
     error "atomic copy post-publication verification failed: $destination"
     return 1
@@ -434,16 +436,18 @@ setup_unregister_path() {
   SETUP_OWNED_RECOVERY=("${keep[@]}")
 }
 
-setup_cleanup_owned_paths() {
+setup_cleanup_owned_temps() {
   local path
-  for path in "${SETUP_OWNED_TEMPS[@]}" "${SETUP_OWNED_RECOVERY[@]}"; do
+  for path in "${SETUP_OWNED_TEMPS[@]}"; do
     [[ -n "$path" ]] || continue
     case "$path" in
-      "$HOME"/.nexus-setup-backup.*|"$CANONICAL_DIR"/.nexus-canonical-tmp.*|"$CANONICAL_DIR"/.nexus-canonical-old.*|"$NEXUS_HOME"/.nexus-setup-source.*|"$NEXUS_HOME"/.nexus-lock.*|"$NEXUS_HOME"/.nexus-lock-candidates.*)
-        [[ -e "$path" || -L "$path" ]] || continue
-        rm -rf -- "$path" || :
+      "$HOME"/.nexus-setup-backup.*|"$CANONICAL_DIR"/.nexus-canonical-tmp.*|"$NEXUS_HOME"/.nexus-setup-source.*|"$NEXUS_HOME"/.nexus-setup-copy.*|"$NEXUS_HOME"/.nexus-lock.*|"$NEXUS_HOME"/.nexus-lock-candidates.*)
+        if [[ -e "$path" || -L "$path" ]]; then
+          rm -rf -- "$path" || continue
+        fi
         ;;
     esac
+    setup_unregister_path "$path"
   done
 }
 
@@ -463,13 +467,12 @@ setup_signal_handler() {
   case "$sig" in INT) code=130 ;; TERM) code=143 ;; *) code=1 ;; esac
   trap - EXIT INT TERM
   SETUP_INTERRUPTED=1
+  setup_cleanup_owned_temps
   if [[ -e "$HOME/.claude-backup" || -e "$HOME/.codex-backup" || -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
     error "setup interrupted; retained final/recovery paths: $HOME/.claude-backup $HOME/.codex-backup $LOCK_FILE"
-    ((${#SETUP_OWNED_TEMPS[@]})) && error "retained setup temps: ${SETUP_OWNED_TEMPS[*]}"
     ((${#SETUP_OWNED_RECOVERY[@]})) && error "retained setup recovery paths: ${SETUP_OWNED_RECOVERY[*]}"
     error "rerun setup only after reviewing retained paths; correct the issue, then run /nexus:link or \$nexus-link (CLI: $NEXUS_HOME/scripts/nexus link)"
   else
-    setup_cleanup_owned_paths
     error "setup interrupted before publication; no final backups or Nexus lock were published; rerun setup"
   fi
   setup_lock_release || :
@@ -480,12 +483,10 @@ setup_exit_handler() {
   local status=$?
   trap - EXIT INT TERM
   if (( status != 0 )); then
+    setup_cleanup_owned_temps
     if [[ -e "$HOME/.claude-backup" || -e "$HOME/.codex-backup" || -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
       error "setup failed; retained final/recovery paths: $HOME/.claude-backup $HOME/.codex-backup $LOCK_FILE"
-      ((${#SETUP_OWNED_TEMPS[@]})) && error "retained setup temps: ${SETUP_OWNED_TEMPS[*]}"
       ((${#SETUP_OWNED_RECOVERY[@]})) && error "retained setup recovery paths: ${SETUP_OWNED_RECOVERY[*]}"
-    else
-      setup_cleanup_owned_paths
     fi
   fi
   setup_lock_release || :

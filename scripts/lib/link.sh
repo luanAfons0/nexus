@@ -17,7 +17,6 @@ build_desired_names() {
     unset 'remaining[$smallest]'
   done
 }
-
 desired_names() {
   printf '%s\n' "${DESIRED_NAMES[@]}"
 }
@@ -111,5 +110,3 @@ bootstrap() {
   info "bootstrap complete: control skills and Claude command adapters linked"
   return 0
 }
-
-

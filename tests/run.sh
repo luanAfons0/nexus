@@ -1010,7 +1010,54 @@ test_term_recovery() {
   grep -Fq '$nexus-link' "$home/post-output" || failed=1
   [[ ! -e "$home/.nexus/.nexus-setup.lock" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
+  [[ "$home/post-output" != *'.nexus-lock.'* && "$home/post-output" != *'.nexus-lock-candidates.'* && "$home/post-output" != *'.nexus-setup-source.'* && "$home/post-output" != *'.nexus-setup-copy.'* ]] || failed=1
   if (( failed == 0 )); then pass term_recovery; else fail term_recovery; fi
+}
+
+test_nested_source_symlink_safety() {
+  local failed=0 home output canonical outside
+
+  home="$(new_home nested_escape)"; write_lock "$home/.agents/.skill-lock.json" alpha
+  mkdir -p "$home/.claude/skills/alpha" "$home/.agents/skills" "$home/.codex/skills"
+  printf 'alpha\n' >"$home/.claude/skills/alpha/SKILL.md"
+  outside="$TEST_ROOT/nested-secret"; printf 'secret\n' >"$outside"
+  ln -s -- "$outside" "$home/.claude/skills/alpha/secret"
+  canonical="$home/.agents/skills/alpha"; ln -s -- ../../.claude/skills/alpha "$canonical"
+  ln -s -- /external/agent-alpha "$home/.codex/skills/alpha"
+  output="$(run_nexus "$home" setup 2>&1)" && failed=1
+  [[ "$output" == *'nested source symlink'* && -f "$outside" && "$(readlink "$canonical")" == '../../.claude/skills/alpha' ]] || failed=1
+  [[ -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" ]] || failed=1
+  [[ "$(readlink "$home/.codex/skills/alpha")" == /external/agent-alpha ]] || failed=1
+  [[ "$output" == *'/nexus:link'* && "$output" == *'$nexus-link'* ]] || failed=1
+
+  home="$(new_home nested_broken)"; write_lock "$home/.agents/.skill-lock.json" alpha
+  mkdir -p "$home/.claude/skills/alpha" "$home/.agents/skills"
+  printf 'alpha\n' >"$home/.claude/skills/alpha/SKILL.md"
+  ln -s -- missing "$home/.claude/skills/alpha/broken"
+  canonical="$home/.agents/skills/alpha"; ln -s -- ../../.claude/skills/alpha "$canonical"
+  output="$(run_nexus "$home" setup 2>&1)" && failed=1
+  [[ "$output" == *'nested source symlink'* && "$(readlink "$canonical")" == '../../.claude/skills/alpha' ]] || failed=1
+  [[ -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" ]] || failed=1
+
+  home="$(new_home nested_cyclic)"; write_lock "$home/.agents/.skill-lock.json" alpha
+  mkdir -p "$home/.claude/skills/alpha" "$home/.agents/skills"
+  printf 'alpha\n' >"$home/.claude/skills/alpha/SKILL.md"
+  ln -s -- cycle-b "$home/.claude/skills/alpha/cycle-a"
+  ln -s -- cycle-a "$home/.claude/skills/alpha/cycle-b"
+  canonical="$home/.agents/skills/alpha"; ln -s -- ../../.claude/skills/alpha "$canonical"
+  output="$(run_nexus "$home" setup 2>&1)" && failed=1
+  [[ "$output" == *'nested source symlink'* && "$(readlink "$canonical")" == '../../.claude/skills/alpha' ]] || failed=1
+  [[ -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" ]] || failed=1
+
+  home="$(new_home nested_internal)"; write_lock "$home/.agents/.skill-lock.json" alpha
+  mkdir -p "$home/.claude/skills/alpha" "$home/.agents/skills"
+  printf 'alpha\n' >"$home/.claude/skills/alpha/SKILL.md"
+  printf 'nested\n' >"$home/.claude/skills/alpha/target"
+  ln -s -- target "$home/.claude/skills/alpha/nested"
+  canonical="$home/.agents/skills/alpha"; ln -s -- ../../.claude/skills/alpha "$canonical"
+  output="$(run_nexus "$home" setup 2>&1)" || failed=1
+  [[ -d "$canonical" && ! -L "$canonical" && -f "$canonical/nested" && ! -L "$canonical/nested" ]] || failed=1
+  if (( failed == 0 )); then pass nested_source_symlink_safety; else fail nested_source_symlink_safety; fi
 }
 
 test_setup_traps_restore() {
@@ -1032,6 +1079,7 @@ test_setup_traps_restore() {
 
 test_term_recovery
 test_setup_traps_restore
+test_nested_source_symlink_safety
 
 if python3 "$REPO_ROOT/tests/backup_manifest_test.py" >/dev/null; then
   pass backup_manifest_fixtures
