@@ -9,6 +9,7 @@ CODEX_SKILLS="$HOME/.codex/skills"
 CONTROL_SKILLS=(nexus-setup nexus-link nexus-install)
 ERRORS=0
 TEST_FAIL="${NEXUS_TEST_FAIL:-}"
+declare -A DESIRED_SET=()
 
 info() { printf 'nexus: %s\n' "$*"; }
 error() { printf 'nexus: error: %s\n' "$*" >&2; ERRORS=$((ERRORS + 1)); }
@@ -55,6 +56,113 @@ is_managed_link() {
   fi
   resolved="$(resolved_link_target "$link")" || return 1
   is_managed_path "$lexical" || is_managed_path "$resolved"
+}
+
+validate_lock() {
+  local file="$1"
+  if [[ ! -f "$file" || -L "$file" ]]; then
+    error "invalid version-3 lock: expected regular file at $file"
+    return 1
+  fi
+  if ! jq -e '
+    type == "object" and
+    (.version == 3 and (.version | type) == "number") and
+    (.skills | type == "object") and
+    all(.skills | keys[];
+      test("^[A-Za-z0-9][A-Za-z0-9._-]*$") and . != "." and . != "..")
+  ' "$file" >/dev/null 2>&1; then
+    error "invalid version-3 lock: $file must be JSON object with numeric version 3, object skills, and safe skill names"
+    return 1
+  fi
+  return 0
+}
+
+desired_names() {
+  {
+    jq -r '.skills | keys[]' "$LOCK_FILE"
+    printf '%s\n' "${CONTROL_SKILLS[@]}"
+  } | LC_ALL=C sort -u
+}
+
+skill_target() {
+  local name="$1"
+  case "$name" in
+    nexus-setup|nexus-link|nexus-install) printf '%s\n' "$NEXUS_HOME/skills/$name" ;;
+    *) printf '%s\n' "$CANONICAL_DIR/$name" ;;
+  esac
+}
+
+desired_contains() {
+  [[ -n "${DESIRED_SET[$1]+present}" ]]
+}
+
+remove_stale_links() {
+  local dir="$1" child name dotglob_setting nullglob_setting failed=0
+  [[ -d "$dir" ]] || return 0
+  dotglob_setting="$(shopt -p dotglob)"
+  nullglob_setting="$(shopt -p nullglob)"
+  shopt -s dotglob nullglob
+  for child in "$dir"/*; do
+    name="$(basename -- "$child")"
+    [[ "$name" == .system || ! -L "$child" ]] && continue
+    desired_contains "$name" && continue
+    if is_managed_link "$child"; then
+      if rm -- "$child"; then
+        info "removed stale managed link: $child"
+      else
+        error "cannot remove stale managed link: $child"
+        failed=1
+      fi
+    fi
+  done
+  eval "$dotglob_setting"
+  eval "$nullglob_setting"
+  return "$failed"
+}
+
+remove_missing_managed_link() {
+  local link="$1"
+  [[ -L "$link" ]] || return 0
+  is_managed_link "$link" || return 0
+  if rm -- "$link"; then
+    info "removed missing managed link: $link"
+    return 0
+  fi
+  error "cannot remove missing managed link: $link"
+  return 1
+}
+
+link_all() {
+  local force="${1:-false}" name target
+  local -a names=()
+  ERRORS=0
+  validate_lock "$LOCK_FILE" || return 1
+
+  DESIRED_SET=()
+  mapfile -t names < <(desired_names)
+  for name in "${names[@]}"; do
+    DESIRED_SET["$name"]=1
+  done
+
+  remove_stale_links "$CLAUDE_SKILLS" || :
+  remove_stale_links "$CODEX_SKILLS" || :
+  for name in "${names[@]}"; do
+    target="$(skill_target "$name")"
+    if [[ ! -f "$target/SKILL.md" ]]; then
+      error "missing skill: $name (expected $target/SKILL.md)"
+      remove_missing_managed_link "$CLAUDE_SKILLS/$name" || :
+      remove_missing_managed_link "$CODEX_SKILLS/$name" || :
+      continue
+    fi
+    put_link "$target" "$CLAUDE_SKILLS/$name" "$force" || :
+    put_link "$target" "$CODEX_SKILLS/$name" "$force" || :
+  done
+  if (( ERRORS != 0 )); then
+    printf 'nexus: error: link failed with %s error(s)\n' "$ERRORS" >&2
+    return 1
+  fi
+  info "link complete: skills reconciled"
+  return 0
 }
 
 stage_move() {
@@ -205,9 +313,12 @@ main() {
     bootstrap)
       [[ "$#" -eq 1 ]] || { usage >&2; return 2; }
       bootstrap ;;
-    setup|link|install)
+    setup|install)
       info "$command is not implemented yet" >&2
       return 1 ;;
+    link)
+      [[ "$#" -eq 1 ]] || { usage >&2; return 2; }
+      link_all false ;;
     help|-h|--help)
       [[ "$#" -eq 1 ]] || { usage >&2; return 2; }
       usage ;;

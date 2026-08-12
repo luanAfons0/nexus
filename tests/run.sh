@@ -93,6 +93,44 @@ assert_link_to() {
   return 1
 }
 
+write_skill() {
+  local dir="$1" name="$2"
+  mkdir -p -- "$dir/$name"
+  printf '%s\n' "---" "name: $name" "---" >"$dir/$name/SKILL.md"
+}
+
+write_lock() {
+  local path="$1"
+  shift
+  mkdir -p -- "$(dirname -- "$path")"
+  jq -n '
+    {
+      version: 3,
+      source: "test",
+      sourceType: "local",
+      sourceUrl: "https://example.invalid/skills",
+      skillFolderHash: "test-hash",
+      installedAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      skills: (reduce $ARGS.positional[] as $name ({};
+        .[$name] = {
+          source: "test",
+          sourceType: "local",
+          sourceUrl: "https://example.invalid/skills",
+          skillFolderHash: "test-hash",
+          installedAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z"
+        }))
+    }' --args "$@" >"$path"
+}
+
+snapshot_tree() {
+  local root="$1"
+  if [[ -d "$root" ]]; then
+    find "$root" -mindepth 1 -printf '%y|%P|%l\n' | LC_ALL=C sort
+  fi
+}
+
 test_bootstrap() {
   local failed=0 home output before after name command link target
   home="$(new_home bootstrap)"
@@ -242,10 +280,14 @@ test_dispatcher() {
   [[ "$status" -eq 0 && -z "$output" ]] || failed=1
   output="$(run_nexus "$home" bootstrap extra 2>&1)"; status=$?
   [[ "$status" -eq 2 && "$output" == *'Usage:'* ]] || failed=1
-  for command in setup link install; do
+  for command in setup install; do
     output="$(run_nexus "$home" "$command" 2>&1)"; status=$?
     [[ "$status" -eq 1 && "$output" == *'not implemented yet'* ]] || failed=1
   done
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -eq 1 && "$output" == *'invalid version-3 lock'* ]] || failed=1
+  output="$(run_nexus "$home" link extra 2>&1)"; status=$?
+  [[ "$status" -eq 2 && "$output" == *'Usage:'* ]] || failed=1
   if (( failed == 0 )); then pass dispatcher; else fail dispatcher; fi
 }
 
@@ -258,6 +300,136 @@ test_force_env_does_not_bypass_bootstrap() {
   [[ "$output" == *collision* ]] || failed=1
   [[ -f "$home/.claude/skills/nexus-setup/marker" ]] || failed=1
   if (( failed == 0 )); then pass force_env_ignored; else fail force_env_ignored; fi
+}
+
+test_link_invalid_locks_do_not_mutate() {
+  local failed=0 home lock case output status before after bad_name
+  home="$(new_home link_invalid_locks)"
+  lock="$home/.nexus/skill-lock.json"
+  mkdir -p "$home/.claude/skills" "$home/.codex/skills"
+  ln -s -- "../../.nexus/skills/nexus-setup" "$home/.claude/skills/existing"
+  ln -s -- "../../.nexus/skills/nexus-link" "$home/.codex/skills/existing"
+
+  for case in missing malformed version skills_object '' '.' '..' 'bad/name' '../escape' '-bad' '_bad'; do
+    rm -f -- "$lock"
+    case "$case" in
+      missing) ;;
+      malformed) printf '%s\n' '{not json' >"$lock" ;;
+      version) jq -n '{version: 2, skills: {alpha: {}}}' >"$lock" ;;
+      skills_object) jq -n '{version: 3, skills: []}' >"$lock" ;;
+      *)
+        bad_name="$case"
+        jq -n --arg name "$bad_name" '{version: 3, skills: {($name): {}}}' >"$lock"
+        ;;
+    esac
+    before="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
+    output="$(run_nexus "$home" link 2>&1)"; status=$?
+    after="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
+    [[ "$status" -ne 0 && "$output" == *'invalid version-3 lock'* ]] || {
+      printf '  invalid lock case did not fail clearly: %q\n%s\n' "$case" "$output" >&2
+      failed=1
+    }
+    [[ "$before" == "$after" ]] || {
+      printf '  invalid lock case mutated agent trees: %q\n' "$case" >&2
+      failed=1
+    }
+  done
+  if (( failed == 0 )); then pass link_invalid_locks_do_not_mutate; else fail link_invalid_locks_do_not_mutate; fi
+}
+
+test_link_reconciliation() {
+  local failed=0 home canonical lock output status before after
+  home="$(new_home link_reconciliation)"
+  canonical="$home/.agents/skills"
+  lock="$home/.nexus/skill-lock.json"
+  write_skill "$canonical" alpha
+  write_skill "$canonical" beta
+  write_skill "$canonical" stale
+  write_lock "$lock" alpha beta missing
+  mkdir -p "$home/.claude/skills" "$home/.codex/skills/.system"
+  printf 'keep\n' >"$home/.codex/skills/.system/marker"
+  ln -s -- "../../.agents/skills/beta" "$home/.claude/skills/alpha"
+  ln -s -- "../../.agents/skills/stale" "$home/.claude/skills/stale"
+  ln -s -- "../../.agents/skills/stale" "$home/.codex/skills/stale"
+  ln -s -- "../../.agents/skills/missing" "$home/.claude/skills/missing"
+  ln -s -- "../../.agents/skills/missing" "$home/.codex/skills/missing"
+  mkdir -p "$home/.agents/skills-elsewhere"
+  ln -s -- "../../.agents/skills-elsewhere/keep" "$home/.claude/skills/prefix-lookalike"
+  ln -s -- /external/keep "$home/.codex/skills/external-link"
+  printf 'physical\n' >"$home/.claude/skills/unrelated-file"
+  mkdir -p "$home/.codex/skills/unrelated-dir"
+
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -ne 0 && "$output" == *'missing skill: missing'* ]] || {
+    printf '  missing skill was not reported after reconciliation\n%s\n' "$output" >&2; failed=1;
+  }
+  [[ "$output" != *prefix-lookalike* && "$output" != *external-link* && "$output" != *unrelated-file* && "$output" != *unrelated-dir* ]] || failed=1
+  for name in alpha beta nexus-setup nexus-link nexus-install; do
+    if [[ "$name" == nexus-* ]]; then
+      assert_link_to "$home/.claude/skills/$name" "$home/.nexus/skills/$name" || failed=1
+      assert_link_to "$home/.codex/skills/$name" "$home/.nexus/skills/$name" || failed=1
+    else
+      assert_link_to "$home/.claude/skills/$name" "${canonical}/$name" || failed=1
+      assert_link_to "$home/.codex/skills/$name" "${canonical}/$name" || failed=1
+    fi
+    [[ "$(readlink -- "$home/.claude/skills/$name")" != /* ]] || failed=1
+    [[ "$(readlink -- "$home/.codex/skills/$name")" != /* ]] || failed=1
+  done
+  [[ ! -e "$home/.claude/skills/stale" && ! -L "$home/.claude/skills/stale" ]] || failed=1
+  [[ ! -e "$home/.codex/skills/stale" && ! -L "$home/.codex/skills/stale" ]] || failed=1
+  [[ ! -e "$home/.claude/skills/missing" && ! -L "$home/.claude/skills/missing" ]] || failed=1
+  [[ ! -e "$home/.codex/skills/missing" && ! -L "$home/.codex/skills/missing" ]] || failed=1
+  [[ -f "$home/.claude/skills/unrelated-file" ]] || failed=1
+  [[ -d "$home/.codex/skills/unrelated-dir" && -f "$home/.codex/skills/.system/marker" ]] || failed=1
+  [[ -L "$home/.claude/skills/prefix-lookalike" && "$(readlink -- "$home/.claude/skills/prefix-lookalike")" == '../../.agents/skills-elsewhere/keep' ]] || failed=1
+  [[ -L "$home/.codex/skills/external-link" && "$(readlink -- "$home/.codex/skills/external-link")" == /external/keep ]] || failed=1
+  [[ -z "$(find "$home/.claude/skills" "$home/.codex/skills" -maxdepth 1 -name '.nexus-tmp.*' -print -quit)" ]] || failed=1
+  before="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  after="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
+  [[ "$status" -ne 0 && "$output" == *'missing skill: missing'* && "$before" == "$after" ]] || failed=1
+  if (( failed == 0 )); then pass link_reconciliation; else fail link_reconciliation; fi
+}
+
+test_link_stale_ownership_and_empty_lock() {
+  local failed=0 home canonical lock output status
+  home="$(new_home link_stale_ownership)"
+  canonical="$home/.agents/skills"
+  lock="$home/.nexus/skill-lock.json"
+  mkdir -p -- "$canonical"
+  mv -- "$canonical" "$home/.agents/skills-real"
+  ln -s -- skills-real "$canonical"
+  write_skill "$canonical" stale
+  ln -s -- /external/target "$canonical/alias"
+  write_lock "$lock"
+  mkdir -p "$home/.claude/skills" "$home/.codex/skills"
+  ln -s -- "../../.agents/skills/alias/stale" "$home/.claude/skills/lexical-stale"
+  ln -s -- "$home/.agents/skills-real/stale" "$home/.codex/skills/resolved-stale"
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '%s\n' "$output" >&2; failed=1; }
+  [[ ! -L "$home/.claude/skills/lexical-stale" && ! -L "$home/.codex/skills/resolved-stale" ]] || failed=1
+  for name in nexus-setup nexus-link nexus-install; do
+    assert_link_to "$home/.claude/skills/$name" "$home/.nexus/skills/$name" || failed=1
+    assert_link_to "$home/.codex/skills/$name" "$home/.nexus/skills/$name" || failed=1
+  done
+  if (( failed == 0 )); then pass link_stale_ownership_and_empty_lock; else fail link_stale_ownership_and_empty_lock; fi
+}
+
+test_link_desired_collisions_are_preserved() {
+  local failed=0 home canonical lock output status
+  home="$(new_home link_desired_collisions)"
+  canonical="$home/.agents/skills"
+  lock="$home/.nexus/skill-lock.json"
+  write_skill "$canonical" alpha
+  write_lock "$lock" alpha
+  mkdir -p "$home/.claude/skills/alpha" "$home/.codex/skills"
+  printf 'keep\n' >"$home/.claude/skills/alpha/marker"
+  ln -s -- /external/alpha "$home/.codex/skills/alpha"
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -ne 0 && "$output" == *'collision at'* ]] || failed=1
+  [[ -f "$home/.claude/skills/alpha/marker" ]] || failed=1
+  [[ -L "$home/.codex/skills/alpha" && "$(readlink -- "$home/.codex/skills/alpha")" == /external/alpha ]] || failed=1
+  if (( failed == 0 )); then pass link_desired_collisions_are_preserved; else fail link_desired_collisions_are_preserved; fi
 }
 
 test_metadata() {
@@ -301,5 +473,9 @@ test_force_replacement
 test_force_recovery
 test_dispatcher
 test_force_env_does_not_bypass_bootstrap
+test_link_invalid_locks_do_not_mutate
+test_link_reconciliation
+test_link_stale_ownership_and_empty_lock
+test_link_desired_collisions_are_preserved
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))
