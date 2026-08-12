@@ -1160,7 +1160,7 @@ test_setup_canonical_scan_signal_cleanup() {
   write_lock "$home/.agents/.skill-lock.json" alpha
   printf 'skill\n' >"$canonical/alpha/SKILL.md"
   output="$home/output"
-  TMPDIR="$home/tmp" HOME="$home" NEXUS_HOME="$home/.nexus" NEXUS_FAULT=canonical_scan_window \
+  TMPDIR="$home/tmp/" HOME="$home" NEXUS_HOME="$home/.nexus" NEXUS_FAULT=canonical_scan_window \
     bash -c 'export NEXUS_FAULT="$3"; source "$1"; nexus_init; source "$2"; fault_setup; main setup' \
       bash "$REPO_ROOT/scripts/nexus" "$REPO_ROOT/tests/faults.sh" canonical_scan_window setup >"$output" 2>&1 &
   pid=$!

@@ -1,5 +1,11 @@
 BACKUP_MANIFEST_HELPER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/backup_manifest.py"
 
+setup_temp_parent() {
+  local parent="${TMPDIR:-/tmp}"
+  while [[ "$parent" != / && "$parent" == */ ]]; do parent="${parent%/}"; done
+  printf '%s\n' "$parent"
+}
+
 owned_setup_dir() {
   local path="$1" parent="$2" prefix="$3"
   [[ -d "$path" && "$(dirname -- "$path")" == "$parent" &&
@@ -337,8 +343,7 @@ validate_canonical_skill() {
     error "canonical skill escapes its physical tree: $skill"
     return 1
   }
-  scan_parent="${TMPDIR:-/tmp}"
-  while [[ "$scan_parent" != / && "$scan_parent" == */ ]]; do scan_parent="${scan_parent%/}"; done
+  scan_parent="$(setup_temp_parent)"
   links_file="$(mktemp -- "$scan_parent/.nexus-canonical-scan.XXXXXX")" || {
     error "cannot reserve canonical skill symlink scan"
     return 1
@@ -488,13 +493,14 @@ setup_unregister_path() {
 }
 
 setup_cleanup_owned_temps() {
-  local path owned
+  local path owned scan_parent
+  scan_parent="$(setup_temp_parent)"
   local -a remaining=()
   for path in "${SETUP_OWNED_TEMPS[@]}"; do
     [[ -n "$path" ]] || continue
     owned=0
     case "$path" in
-      "$HOME"/.nexus-setup-backup.*|"$CANONICAL_DIR"/.nexus-canonical-tmp.*|"$NEXUS_HOME"/.nexus-setup-source.*|"$NEXUS_HOME"/.nexus-setup-copy.*|"$NEXUS_HOME"/.nexus-lock.*|"$NEXUS_HOME"/.nexus-lock-candidates.*|"${TMPDIR:-/tmp}"/.nexus-canonical-scan.*)
+      "$HOME"/.nexus-setup-backup.*|"$CANONICAL_DIR"/.nexus-canonical-tmp.*|"$NEXUS_HOME"/.nexus-setup-source.*|"$NEXUS_HOME"/.nexus-setup-copy.*|"$NEXUS_HOME"/.nexus-lock.*|"$NEXUS_HOME"/.nexus-lock-candidates.*|"$scan_parent"/.nexus-canonical-scan.*)
         owned=1
         if [[ -e "$path" || -L "$path" ]]; then
           if ! rm -rf -- "$path"; then
