@@ -103,8 +103,21 @@ backup_move() {
 }
 
 canonical_move() {
-  local source="$1" destination="$2"
+  local source="$1" destination="$2" expected="${3:-}" source_id destination_id
+  if [[ -n "$expected" ]]; then
+    source_id="$(stat -c '%d:%i' -- "$source")" || return 1
+    [[ "$source_id" == "$expected" ]] || return 1
+  fi
   mv -Tn -- "$source" "$destination" || return 1
+  if [[ -n "$expected" ]]; then
+    destination_id="$(stat -c '%d:%i' -- "$destination")" || destination_id=''
+    if [[ "$destination_id" != "$expected" ]]; then
+      if [[ ! -e "$source" && ! -L "$source" ]]; then
+        mv -Tn -- "$destination" "$source" || :
+      fi
+      return 1
+    fi
+  fi
   [[ ! -e "$source" && ! -L "$source" ]]
 }
 
@@ -314,6 +327,7 @@ canonical_root_preflight() {
 
 validate_canonical_skill() {
   local skill="$1" skill_real file link resolved
+  local links_file
   [[ -d "$skill" && ! -L "$skill" && -f "$skill/SKILL.md" && ! -L "$skill/SKILL.md" ]] || {
     error "canonical skill must contain a physical SKILL.md: $skill"
     return 1
@@ -324,16 +338,28 @@ validate_canonical_skill() {
     error "canonical skill escapes its physical tree: $skill"
     return 1
   }
+  links_file="$(mktemp)" || {
+    error "cannot reserve canonical skill symlink scan"
+    return 1
+  }
+  if ! find -P "$skill" -type l -print0 >"$links_file"; then
+    rm -f -- "$links_file"
+    error "cannot scan canonical skill symlinks: $skill"
+    return 1
+  fi
   while IFS= read -r -d '' link; do
     resolved="$(realpath -e -- "$link")" || {
+      rm -f -- "$links_file"
       error "canonical skill has broken or cyclic symlink: $link"
       return 1
     }
     path_is_within "$resolved" "$skill_real" || {
+      rm -f -- "$links_file"
       error "canonical skill symlink escapes skill tree: $link"
       return 1
     }
-  done < <(find -P "$skill" -type l -print0)
+  done <"$links_file"
+  rm -f -- "$links_file"
   return 0
 }
 
@@ -343,7 +369,7 @@ cleanup_canonical_temp() {
 }
 
 materialize_canonical_link() {
-  local name="$1" current="$CANONICAL_DIR/$name" target='' temp='' recovery='' original
+  local name="$1" current="$CANONICAL_DIR/$name" target='' temp='' recovery='' original current_id
   CANONICAL_CURRENT="$current"
   [[ -L "$current" ]] || return 0
   target="$(realpath -- "$current")" || {
@@ -352,6 +378,10 @@ materialize_canonical_link() {
   }
   [[ -d "$target" && ! -L "$target" && -f "$target/SKILL.md" && ! -L "$target/SKILL.md" ]] || {
     error "managed canonical skill target lacks SKILL.md: $current; correct it, then run nexus link"
+    return 1
+  }
+  current_id="$(stat -c '%d:%i' -- "$current")" || {
+    error "cannot identify managed canonical skill: $current"
     return 1
   }
   if ! python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/validate_skill_tree.py" "$target"; then
@@ -376,7 +406,7 @@ materialize_canonical_link() {
   }
   setup_register_recovery "$recovery"
   original="$recovery/original"
-  if ! canonical_move "$current" "$original"; then
+  if ! canonical_move "$current" "$original" "$current_id"; then
     cleanup_canonical_temp "$temp" || error "canonical temp retained: $temp"
     rmdir -- "$recovery" || error "canonical recovery retained: $recovery"
     error "cannot stage canonical symlink: $current"

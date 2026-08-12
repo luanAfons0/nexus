@@ -925,6 +925,38 @@ test_setup_canonical_safety_preflight() {
   if (( failed == 0 )); then pass setup_canonical_safety_preflight; else fail setup_canonical_safety_preflight; fi
 }
 
+test_setup_canonical_late_collision_is_preserved() {
+  local failed=0 home output status canonical
+  home="$(new_home setup_canonical_late_collision)"
+  canonical="$home/.agents/skills"
+  write_lock "$home/.agents/.skill-lock.json" alpha
+  mkdir -p "$home/.claude/skills/alpha" "$canonical"
+  printf 'skill\n' >"$home/.claude/skills/alpha/SKILL.md"
+  ln -s -- ../../.claude/skills/alpha "$canonical/alpha"
+  output="$(run_nexus_overridden "$home" canonical_late_collision setup 2>&1)"; status=$?
+  [[ "$status" -ne 0 && -f "$canonical/alpha" && "$(<"$canonical/alpha")" == 'late collision' ]] || {
+    printf '  late canonical collision was not preserved\n%s\n' "$output" >&2
+    failed=1
+  }
+  if (( failed == 0 )); then pass setup_canonical_late_collision_is_preserved; else fail setup_canonical_late_collision_is_preserved; fi
+}
+
+test_setup_canonical_scan_failure_is_propagated() {
+  local failed=0 home output status canonical
+  home="$(new_home setup_canonical_scan_failure)"
+  canonical="$home/.agents/skills"
+  write_lock "$home/.agents/.skill-lock.json" alpha
+  mkdir -p "$canonical/alpha" "$home/.claude/skills/alpha"
+  printf 'skill\n' >"$canonical/alpha/SKILL.md"
+  printf 'skill\n' >"$home/.claude/skills/alpha/SKILL.md"
+  output="$(run_nexus_overridden "$home" canonical_find_fail setup 2>&1)"; status=$?
+  [[ "$status" -ne 0 && "$output" == *'cannot scan canonical skill symlinks'* ]] || {
+    printf '  canonical symlink scan failure was not propagated\n%s\n' "$output" >&2
+    failed=1
+  }
+  if (( failed == 0 )); then pass setup_canonical_scan_failure_is_propagated; else fail setup_canonical_scan_failure_is_propagated; fi
+}
+
 test_metadata() {
   local failed=0
   assert_contains .gitignore 'skill-lock.json' || failed=1
@@ -981,6 +1013,8 @@ test_setup_lock_publication_verification
 test_setup_rejects_reserved_control_skill_names
 test_setup_canonical_failures_retain_publication
 test_setup_canonical_safety_preflight
+test_setup_canonical_late_collision_is_preserved
+test_setup_canonical_scan_failure_is_propagated
 test_discover_lock_uses_immutable_snapshots
 
 test_term_recovery() {
