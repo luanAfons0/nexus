@@ -7,6 +7,7 @@ _nexus_source_libraries() {
   source "$SCRIPT_DIR/lib/lock.sh"
   source "$SCRIPT_DIR/lib/link.sh"
   source "$SCRIPT_DIR/lib/setup.sh"
+  source "$SCRIPT_DIR/lib/install.sh"
 }
 _nexus_source_libraries
 unset -f _nexus_source_libraries
@@ -27,8 +28,7 @@ main() {
       [[ "$#" -eq 1 ]] || { usage >&2; return 2; }
       setup ;;
     install)
-      info "$command is not implemented yet" >&2
-      return 1 ;;
+      install "${@:2}" ;;
     link)
       [[ "$#" -eq 1 ]] || { usage >&2; return 2; }
       link_all false ;;

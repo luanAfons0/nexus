@@ -358,6 +358,55 @@ test_force_recovery() {
   if (( failed == 0 )); then pass force_recovery; else fail force_recovery; fi
 }
 
+test_install_cli_and_nvm_fallback() {
+  local failed=0 home output args fake
+  home="$(new_home install_cli)"
+  fake="$home/fakebin"
+  mkdir -p "$fake"
+  cat >"$fake/npx" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"$HOME/npx-args"
+if [[ "${NEXUS_FAKE_NPX_MODE:-success}" == failure ]]; then
+  mkdir -p "$HOME/.agents/skills/alpha"
+  printf untracked >"$HOME/.agents/skills/alpha/marker"
+  exit 42
+fi
+mkdir -p "$HOME/.agents/skills/alpha" "$HOME/.agents/skills/beta"
+printf alpha >"$HOME/.agents/skills/alpha/SKILL.md"
+printf beta >"$HOME/.agents/skills/beta/SKILL.md"
+printf '%s\n' '{"version":3,"skills":{"alpha":{},"beta":{}}}' >"$HOME/.agents/.skill-lock.json"
+EOF
+  chmod 755 "$fake/npx"
+  output="$(PATH="$fake:$PATH" run_nexus "$home" install source --skill alpha --skill beta 2>&1)" || failed=1
+  args="$(cat "$home/npx-args")"
+  [[ "$args" == *$'--yes\nskills\nadd\nsource\n--global\n--agent\nuniversal\n--skill\nalpha\n--skill\nbeta\n--yes'* ]] || failed=1
+  cmp -s "$home/.agents/.skill-lock.json" "$home/.nexus/skill-lock.json" || failed=1
+  assert_link_to "$home/.claude/skills/alpha" "$home/.agents/skills/alpha" || failed=1
+  assert_link_to "$home/.codex/skills/beta" "$home/.agents/skills/beta" || failed=1
+
+  home="$(new_home install_failure)"
+  mkdir -p "$home/.nexus"; printf original >"$home/.nexus/skill-lock.json"
+  output="$(NEXUS_FAKE_NPX_MODE=failure PATH="$fake:$PATH" run_nexus "$home" install source --skill alpha 2>&1)"; [[ "$?" -eq 42 ]] || failed=1
+  [[ "$output" == *'untracked canonical skill directory'* && "$(cat "$home/.nexus/skill-lock.json")" == original ]] || failed=1
+
+  home="$(new_home install_nvm)"
+  unset NVM_DIR
+  mkdir -p "$home/.nvm" "$home/nvm-bin" "$home/onlybin"
+  for command in /usr/bin/*; do
+    [[ "$(basename -- "$command")" == npx ]] && continue
+    ln -s -- "$command" "$home/onlybin/$(basename -- "$command")" 2>/dev/null || :
+  done
+  unlink "$home/onlybin/npx" 2>/dev/null || :
+  cp -- "$fake/npx" "$home/nvm-bin/npx"
+  cat >"$home/.nvm/nvm.sh" <<'EOF'
+nvm() { PATH="$HOME/nvm-bin:$PATH"; export PATH; }
+EOF
+  PATH="$home/onlybin"; export PATH
+  output="$(run_nexus "$home" install source --skill alpha 2>&1)" || failed=1
+  [[ "$output" == *'installed alpha'* ]] || failed=1
+  if (( failed == 0 )); then pass install_cli_and_nvm_fallback; else fail install_cli_and_nvm_fallback; fi
+}
+
 test_dispatcher() {
   local failed=0 home output status command
   home="$(new_home dispatcher)"
@@ -376,7 +425,7 @@ test_dispatcher() {
   output="$(run_nexus "$home" setup extra 2>&1)"; status=$?
   [[ "$status" -eq 2 && "$output" == *'Usage:'* ]] || failed=1
   output="$(run_nexus "$home" install 2>&1)"; status=$?
-  [[ "$status" -eq 1 && "$output" == *'not implemented yet'* ]] || failed=1
+  [[ "$status" -eq 2 && "$output" == *'install requires one source'* ]] || failed=1
   output="$(run_nexus "$home" link 2>&1)"; status=$?
   [[ "$status" -eq 1 && "$output" == *'invalid version-3 lock'* ]] || failed=1
   output="$(run_nexus "$home" link extra 2>&1)"; status=$?
@@ -998,6 +1047,7 @@ test_bootstrap_lexical_managed_link
 test_bootstrap_symlinked_managed_root
 test_force_replacement
 test_force_recovery
+test_install_cli_and_nvm_fallback
 test_dispatcher
 test_force_env_does_not_bypass_bootstrap
 test_link_invalid_locks_do_not_mutate

@@ -1,0 +1,137 @@
+parse_install_args() {
+  local source='' name
+  INSTALL_SOURCE=''
+  INSTALL_SKILLS=()
+  while (( $# != 0 )); do
+    case "$1" in
+      --skill)
+        shift
+        if (( $# == 0 )) || [[ "$1" == -* ]] || ! safe_skill_name "$1" ||
+           [[ "$1" == nexus-setup || "$1" == nexus-link || "$1" == nexus-install ]]; then
+          error "install requires --skill NAME with a safe, non-control skill name"
+          return 2
+        fi
+        INSTALL_SKILLS+=("$1")
+        ;;
+      --*)
+        error "unknown install flag: $1"
+        return 2
+        ;;
+      *)
+        if [[ -n "$source" ]]; then
+          error "install accepts exactly one source"
+          return 2
+        fi
+        source="$1"
+        ;;
+    esac
+    shift
+  done
+  if [[ -z "$source" ]]; then
+    error "install requires one source"
+    return 2
+  fi
+  if (( ${#INSTALL_SKILLS[@]} == 0 )); then
+    error "install requires at least one --skill NAME"
+    return 2
+  fi
+  INSTALL_SOURCE="$source"
+  return 0
+}
+
+ensure_npx() {
+  command -v npx >/dev/null 2>&1 && return 0
+
+  local nvm_dir="${NVM_DIR:-$HOME/.nvm}" nvm_script
+  nvm_script="$nvm_dir/nvm.sh"
+  [[ -f "$nvm_script" ]] || {
+    error "npx is unavailable and NVM was not found"
+    return 1
+  }
+
+  local had_nounset=0 status=0
+  [[ "$-" == *u* ]] && had_nounset=1
+  set +u
+  # nvm.sh is third-party shell code and commonly references unset variables.
+  source "$nvm_script" || status=$?
+  if (( status == 0 )); then
+    nvm use default >/dev/null 2>&1 || status=$?
+  fi
+  (( had_nounset )) && set -u
+  if (( status != 0 )) || ! command -v npx >/dev/null 2>&1; then
+    error "NVM loaded but npx is unavailable"
+    return 1
+  fi
+  return 0
+}
+
+install_atomic_lock_copy() {
+  local source="$1" destination="$2" parent temp
+  parent="$(dirname -- "$destination")"
+  mkdir -p -- "$parent" || { error "cannot create lock destination: $parent"; return 1; }
+  temp="$(mktemp -- "$parent/.nexus-install-copy.XXXXXX")" || {
+    error "cannot reserve atomic lock copy"; return 1;
+  }
+  if ! cp -- "$source" "$temp" || ! cmp -s -- "$source" "$temp"; then
+    rm -f -- "$temp"
+    error "atomic install lock copy verification failed: $destination"
+    return 1
+  fi
+  if ! mv -Tf -- "$temp" "$destination"; then
+    rm -f -- "$temp"
+    error "cannot publish install lock: $destination"
+    return 1
+  fi
+  if ! cmp -s -- "$source" "$destination"; then
+    error "install lock post-publication verification failed: $destination"
+    return 1
+  fi
+  return 0
+}
+
+install_report_untracked() {
+  local name target
+  for name in "${INSTALL_SKILLS[@]}"; do
+    target="$CANONICAL_DIR/$name"
+    [[ -d "$target" ]] && info "untracked canonical skill directory: $target"
+  done
+}
+
+install() {
+  local status=0 name target
+  local upstream_lock="$HOME/.agents/.skill-lock.json"
+  parse_install_args "$@" || return $?
+  ensure_npx || return 1
+  local -a lock_names=() command=(npx --yes skills add "$INSTALL_SOURCE" --global --agent universal)
+  for name in "${INSTALL_SKILLS[@]}"; do
+    command+=(--skill "$name")
+  done
+  command+=(--yes)
+
+  env -u XDG_STATE_HOME "${command[@]}"
+  status=$?
+  if (( status != 0 )); then
+    error "upstream skill installation failed (status $status)"
+    install_report_untracked
+    return "$status"
+  fi
+
+  if ! load_validated_lock_names "$upstream_lock" lock_names; then
+    error "upstream did not produce a valid version-3 skill lock"
+    return 1
+  fi
+  for name in "${lock_names[@]}"; do
+    target="$CANONICAL_DIR/$name"
+    [[ -f "$target/SKILL.md" ]] || {
+      error "upstream lock skill is missing SKILL.md: $target/SKILL.md"
+      return 1
+    }
+  done
+  install_atomic_lock_copy "$upstream_lock" "$LOCK_FILE" || return 1
+  link_all false || return 1
+  for name in "${INSTALL_SKILLS[@]}"; do
+    target="$CANONICAL_DIR/$name"
+    info "installed $name: canonical $target; Claude $CLAUDE_SKILLS/$name; Codex $CODEX_SKILLS/$name"
+  done
+  return 0
+}
