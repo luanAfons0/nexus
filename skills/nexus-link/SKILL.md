@@ -5,6 +5,8 @@ description: Reconcile, repair, or remove stale Nexus-managed links; also trigge
 
 # Nexus link reconciliation
 
+Only run this mutating command when the user asks you to reconcile or repair links. For informational or diagnostic questions about Nexus links, explain the operation without executing anything.
+
 Run the Nexus link command exactly once:
 
 ```bash

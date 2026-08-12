@@ -5,6 +5,8 @@ description: Set up, initialize, migrate, or bootstrap Nexus; also trigger when 
 
 # Nexus setup
 
+Only run this mutating command when the user asks you to perform setup. For informational or diagnostic questions about how Nexus setup works, explain it without executing anything.
+
 Run the Nexus setup command exactly once:
 
 ```bash
