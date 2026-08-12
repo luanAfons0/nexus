@@ -78,7 +78,7 @@ skill_target() {
 
 command_requirements() {
   local command
-  for command in jq cp mv mktemp realpath cmp find sort stat sha256sum awk; do
+  for command in jq cp mv mktemp realpath cmp find sort stat sha256sum awk chmod chown touch; do
     command -v -- "$command" >/dev/null 2>&1 || {
       error "required command not available: $command"
       return 1
@@ -141,7 +141,8 @@ load_validated_lock_names() {
       (.version == 3 and (.version | type) == "number") and
       (.skills | type == "object") and
       all(.skills | keys[];
-        test("^[A-Za-z0-9][A-Za-z0-9._-]*\\z") and . != "." and . != "..");
+        test("^[A-Za-z0-9][A-Za-z0-9._-]*\\z") and . != "." and . != ".." and
+        . != "nexus-setup" and . != "nexus-link" and . != "nexus-install");
     if length == 1 and (.[0] | valid_lock) then
       ((.[0].skills | keys[]), "__NEXUS_LOCK_END__")
     else
@@ -586,40 +587,60 @@ copy_agent_tree() {
     error "agent root is not a directory: $source"
     return 1
   }
-  "$NEXUS_BACKUP_CP" -a -- "$source/." "$destination/"
+  "$NEXUS_BACKUP_CP" -a -- "$source/." "$destination/" &&
+    chmod --reference="$source" -- "$destination" &&
+    chown --reference="$source" -- "$destination" &&
+    touch -r "$source" -- "$destination" || return 1
+  if [[ "$TEST_FAIL" == *backup_root_corrupt* && "$source" == "$HOME/.claude" ]]; then
+    chmod 700 -- "$destination" && touch -d '2026-01-01 00:00:00.987654321' -- "$destination"
+  fi
+  return 0
 }
 
 tree_manifest() {
-  local root="$1" manifest="$2" item relative kind mode mtime link hash
-  : >"$manifest" || return 1
-  [[ -e "$root" || -L "$root" ]] || return 0
+  local root="$1" manifest="$2" unsorted="$2.unsorted" item relative kind metadata link hash
+  : >"$unsorted" || return 1
   [[ -d "$root" && ! -L "$root" ]] || return 1
-  while IFS= read -r -d '' item; do
-    relative="${item#"$root"/}"
-    mode="$(stat -c '%a' -- "$item")" || return 1
-    mtime="$(stat -c '%Y' -- "$item")" || return 1
-    if [[ -L "$item" ]]; then
+  emit_manifest_entry() {
+    local path="$1" label="$2"
+    metadata="$(stat -c '%a|%u|%g|%y' -- "$path")" || return 1
+    if [[ -L "$path" ]]; then
       kind='l'
-      link="$(readlink -- "$item")" || return 1
-      printf '%q|%s|%s|%q\n' "$relative" "$kind:$mode:$mtime" '-' "$link" >>"$manifest"
-    elif [[ -f "$item" ]]; then
+      link="$(readlink -- "$path")" || return 1
+      printf '%q|%s|%s|%q\0' "$label" "$kind" "$metadata" "$link" >>"$unsorted"
+    elif [[ -f "$path" ]]; then
       kind='f'
-      hash="$(sha256sum -- "$item" | awk '{print $1}')" || return 1
-      printf '%q|%s|%s|%q\n' "$relative" "$kind:$mode:$mtime" "$hash" '' >>"$manifest"
-    elif [[ -d "$item" ]]; then
+      hash="$(sha256sum -- "$path" | awk '{print $1}')" || return 1
+      printf '%q|%s|%s|%s\0' "$label" "$kind" "$metadata" "$hash" >>"$unsorted"
+    elif [[ -d "$path" ]]; then
       kind='d'
-      printf '%q|%s|%s|%q\n' "$relative" "$kind:$mode:$mtime" '-' '' >>"$manifest"
+      printf '%q|%s|%s|-\0' "$label" "$kind" "$metadata" >>"$unsorted"
     else
-      error "unsupported agent backup entry: $item"
+      error "unsupported agent backup entry: $path"
       return 1
     fi
-  done < <(find -P "$root" -mindepth 1 -print0 | LC_ALL=C sort -z)
+  }
+  emit_manifest_entry "$root" . || return 1
+  while IFS= read -r -d '' item; do
+    relative="${item#"$root"/}"
+    emit_manifest_entry "$item" "$relative" || return 1
+  done < <(find -P "$root" -mindepth 1 -print0)
+  LC_ALL=C sort -z -- "$unsorted" >"$manifest" || return 1
+  rm -f -- "$unsorted"
+  unset -f emit_manifest_entry
   return 0
 }
 
 verify_backup_tree() {
   local source="$1" copied="$2" transaction="$3" label="$4"
   local source_manifest="$transaction/$label.source.manifest" copied_manifest="$transaction/$label.copied.manifest"
+  if [[ ! -e "$source" && ! -L "$source" ]]; then
+    [[ -d "$copied" && ! -L "$copied" && -z "$(find -P "$copied" -mindepth 1 -print -quit)" ]] || {
+      error "backup verification failed for absent source $source"
+      return 1
+    }
+    return 0
+  fi
   if ! tree_manifest "$source" "$source_manifest" || ! tree_manifest "$copied" "$copied_manifest" ||
        ! cmp -s -- "$source_manifest" "$copied_manifest"; then
     error "backup verification failed for $source"
@@ -631,7 +652,8 @@ verify_backup_tree() {
 cleanup_backup_manifests() {
   local transaction="$1" label
   for label in claude codex claude-final codex-final; do
-    rm -f -- "$transaction/$label.source.manifest" "$transaction/$label.copied.manifest" || return 1
+    rm -f -- "$transaction/$label.source.manifest" "$transaction/$label.copied.manifest" \
+      "$transaction/$label.source.manifest.unsorted" "$transaction/$label.copied.manifest.unsorted" || return 1
   done
   return 0
 }

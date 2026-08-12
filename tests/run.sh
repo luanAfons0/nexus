@@ -312,7 +312,7 @@ test_link_invalid_locks_do_not_mutate() {
   ln -s -- "../../.nexus/skills/nexus-setup" "$home/.claude/skills/existing"
   ln -s -- "../../.nexus/skills/nexus-link" "$home/.codex/skills/existing"
 
-  for case in missing malformed version skills_object invalid_then_valid valid_then_another '' '.' '..' 'bad/name' '../escape' '-bad' '_bad' $'line\nbreak' $'tab\tkey' $'trailing\n'; do
+  for case in missing malformed version skills_object invalid_then_valid valid_then_another nexus-setup '' '.' '..' 'bad/name' '../escape' '-bad' '_bad' $'line\nbreak' $'tab\tkey' $'trailing\n'; do
     rm -f -- "$lock"
     case "$case" in
       missing) ;;
@@ -324,6 +324,9 @@ test_link_invalid_locks_do_not_mutate() {
         ;;
       valid_then_another)
         printf '%s\n%s\n' '{"version": 3, "skills": {}}' '{"version": 3, "skills": {"alpha": {}}}' >"$lock"
+        ;;
+      nexus-setup)
+        jq -n '{version: 3, skills: {"nexus-setup": {}}}' >"$lock"
         ;;
       *)
         bad_name="$case"
@@ -605,6 +608,26 @@ test_setup_backup_transaction_and_absent_roots() {
   [[ "$output" == *'backup verification failed'* && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
 
+  home="$(new_home setup_backup_root_metadata_false_success)"
+  write_lock "$home/.agents/.skill-lock.json"
+  mkdir -p "$home/.claude" "$home/.codex"
+  printf 'same-child\n' >"$home/.claude/child"
+  chmod 751 "$home/.claude"; touch -d '2026-01-01 00:00:00.123456789' "$home/.claude"
+  output="$(NEXUS_TEST_FAIL=backup_root_corrupt run_nexus "$home" setup 2>&1)" && failed=1
+  [[ "$output" == *'backup verification failed'* && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  assert_no_setup_residue "$home" || failed=1
+
+  home="$(new_home setup_backup_child_subsecond_false_success)"
+  write_lock "$home/.agents/.skill-lock.json"
+  mkdir -p "$home/.claude" "$home/.codex"
+  printf 'same-child\n' >"$home/.claude/child"
+  touch -d '2026-01-01 00:00:00.123456789' "$home/.claude/child"
+  seam="$home/backup-child-metadata-seam"
+  printf '%s\n' '#!/usr/bin/env bash' 'command cp "$@"' 'destination="${!#}"' 'touch -d "2026-01-01 00:00:00.987654321" "$destination/child"' >"$seam"; chmod 755 "$seam"
+  output="$(NEXUS_BACKUP_CP="$seam" run_nexus "$home" setup 2>&1)" && failed=1
+  [[ "$output" == *'backup verification failed'* && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  assert_no_setup_residue "$home" || failed=1
+
   home="$(new_home setup_final_backup_corrupt)"
   write_lock "$home/.agents/.skill-lock.json"
   mkdir -p "$home/.claude" "$home/.codex"
@@ -658,6 +681,18 @@ test_setup_lock_publication_verification() {
   [[ -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" && "$output" == *'setup is now initialized/disabled'* && "$output" == *'/nexus:link'* && "$output" == *'$nexus-link'* ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
   if (( failed == 0 )); then pass setup_lock_publication_verification; else fail setup_lock_publication_verification; fi
+}
+
+test_setup_rejects_reserved_control_skill_names() {
+  local failed=0 home output before after
+  home="$(new_home setup_reserved_control)"
+  write_lock "$home/.agents/.skill-lock.json" nexus-setup
+  before="$(snapshot_tree "$home")"
+  output="$(run_nexus "$home" setup 2>&1)" && failed=1
+  after="$(snapshot_tree "$home")"
+  [[ "$output" == *'invalid setup lock candidates'* && "$before" == "$after" && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  assert_no_setup_residue "$home" || failed=1
+  if (( failed == 0 )); then pass setup_rejects_reserved_control_skill_names; else fail setup_rejects_reserved_control_skill_names; fi
 }
 
 test_setup_canonical_failures_retain_publication() {
@@ -755,6 +790,7 @@ test_setup_happy_and_idempotent
 test_setup_preflight_and_lock_discovery
 test_setup_backup_transaction_and_absent_roots
 test_setup_lock_publication_verification
+test_setup_rejects_reserved_control_skill_names
 test_setup_canonical_failures_retain_publication
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))
