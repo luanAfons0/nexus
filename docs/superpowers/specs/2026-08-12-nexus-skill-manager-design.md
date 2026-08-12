@@ -131,6 +131,8 @@ If either source agent directory is absent, setup creates an empty corresponding
 
 After both backups succeed, setup atomically copies the validated source lockfile to `~/.nexus/skill-lock.json`. It then invokes link reconciliation in migration mode.
 
+Before replacing agent-side entries, setup enforces the canonical ownership model for every lockfile-managed skill. If `~/.agents/skills/<name>` is already a physical directory, it is left unchanged. If it is a symlink to a valid skill directory elsewhere—such as an existing link back into `~/.claude/skills`—setup copies the dereferenced contents into a verified temporary sibling directory and atomically promotes that directory to the canonical path. This prevents a later agent link from creating a symlink cycle. Untracked canonical entries and the original symlink targets are left unchanged.
+
 Migration mode may replace collisions inside `~/.claude/skills` and `~/.codex/skills` because their complete original state is available in the backups. It does not replace content elsewhere. Codex's `~/.codex/skills/.system` directory is always preserved.
 
 Setup concludes by verifying every created link and printing the selected source lockfile, skill counts, missing canonical skills, and backup paths.
@@ -224,14 +226,15 @@ The suite covers:
 2. Existing backup refusal.
 3. Setup disablement when the Nexus lockfile exists.
 4. Lockfile discovery, duplicate-equivalence handling, and conflicting-candidate refusal.
-5. Correct control and third-party link creation.
-6. Link idempotency.
-7. Explicit removal of stale and broken managed links.
-8. Preservation and reporting of unrelated collisions.
-9. Preservation of Codex `.system`.
-10. Successful install, lock publication, and automatic link reconciliation.
-11. Failed install preserving the prior Nexus lockfile.
-12. NVM-based `npx` resolution from a reduced PATH.
+5. Materialization of a managed canonical symlink before agent-link replacement, without creating a cycle.
+6. Correct control and third-party link creation.
+7. Link idempotency.
+8. Explicit removal of stale and broken managed links.
+9. Preservation and reporting of unrelated collisions.
+10. Preservation of Codex `.system`.
+11. Successful install, lock publication, and automatic link reconciliation.
+12. Failed install preserving the prior Nexus lockfile.
+13. NVM-based `npx` resolution from a reduced PATH.
 
 Before touching real agent directories, verification runs:
 
