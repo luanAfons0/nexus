@@ -138,7 +138,7 @@ test_bootstrap_staging_failure() {
   link="$home/.claude/skills/nexus-setup"
   ln -sfn -- "$home/.nexus/skills/nexus-link" "$link"
   old="$(readlink -- "$link")"
-  output="$(NEXUS_TEST_FAIL_STAGE=mv HOME="$home" NEXUS_HOME="$home/.nexus" "$REPO_ROOT/scripts/nexus" bootstrap 2>&1)" && failed=1
+  output="$(NEXUS_TEST_FAIL=promote HOME="$home" NEXUS_HOME="$home/.nexus" "$REPO_ROOT/scripts/nexus" bootstrap 2>&1)" && failed=1
   [[ "$output" == *'staged move failed'* ]] || failed=1
   [[ "$(readlink -- "$link")" == "$old" ]] || { printf '  staging failure changed existing link\n' >&2; failed=1; }
   if (( failed == 0 )); then pass bootstrap_staging_failure; else fail bootstrap_staging_failure; fi
@@ -169,6 +169,74 @@ test_bootstrap_symlinked_managed_root() {
   run_nexus "$home" bootstrap >/dev/null 2>&1 || failed=1
   assert_link_to "$link" "$home/.nexus/skills/nexus-setup" || failed=1
   if (( failed == 0 )); then pass bootstrap_symlinked_managed_root; else fail bootstrap_symlinked_managed_root; fi
+}
+
+test_force_replacement() {
+  local failed=0 home filehome output marker parent
+  home="$(new_home force_directory)"
+  parent="$home/.claude/skills"
+  mkdir -p "$parent/nexus-setup"
+  printf 'directory-marker\n' >"$parent/nexus-setup/marker"
+  mkdir -p "$parent/.nexus-backup.fixed"
+  printf 'sibling-marker\n' >"$parent/.nexus-backup.fixed/marker"
+  output="$(NEXUS_TEST_FORCE=true HOME="$home" NEXUS_HOME="$home/.nexus" "$REPO_ROOT/scripts/nexus" bootstrap 2>&1)" || failed=1
+  assert_link_to "$parent/nexus-setup" "$home/.nexus/skills/nexus-setup" || failed=1
+  [[ "$(cat "$parent/.nexus-backup.fixed/marker")" == sibling-marker ]] || failed=1
+  [[ -d "$parent/.nexus-backup.fixed" ]] || failed=1
+  [[ -z "$(find "$parent" -maxdepth 1 -type d -name '.nexus-backup.*' ! -name '.nexus-backup.fixed' -print -quit)" ]] || failed=1
+
+  filehome="$(new_home force_file)"
+  mkdir -p "$filehome/.claude/skills"
+  printf 'file-marker\n' >"$filehome/.claude/skills/nexus-setup"
+  output="$(NEXUS_TEST_FORCE=true HOME="$filehome" NEXUS_HOME="$filehome/.nexus" "$REPO_ROOT/scripts/nexus" bootstrap 2>&1)" || failed=1
+  assert_link_to "$filehome/.claude/skills/nexus-setup" "$filehome/.nexus/skills/nexus-setup" || failed=1
+  if (( failed == 0 )); then pass force_replacement; else fail force_replacement; fi
+}
+
+test_force_recovery() {
+  local failed=0 home output marker link backup
+  home="$(new_home force_promotion_failure)"
+  link="$home/.claude/skills/nexus-setup"
+  mkdir -p "$link"
+  printf 'restore-me\n' >"$link/marker"
+  output="$(NEXUS_TEST_FORCE=true NEXUS_TEST_FAIL=promote HOME="$home" NEXUS_HOME="$home/.nexus" "$REPO_ROOT/scripts/nexus" bootstrap 2>&1)" && failed=1
+  [[ -f "$link/marker" && "$(cat "$link/marker")" == restore-me ]] || failed=1
+  [[ -z "$(find "$home/.claude/skills" -maxdepth 1 -type d -name '.nexus-backup.*' -print -quit)" ]] || failed=1
+
+  home="$(new_home force_verify_failure)"
+  link="$home/.claude/skills/nexus-setup"
+  mkdir -p "$link"
+  printf 'verify-me\n' >"$link/marker"
+  output="$(NEXUS_TEST_FORCE=true NEXUS_TEST_FAIL=verify HOME="$home" NEXUS_HOME="$home/.nexus" "$REPO_ROOT/scripts/nexus" bootstrap 2>&1)" && failed=1
+  [[ -f "$link/marker" && "$(cat "$link/marker")" == verify-me ]] || failed=1
+
+  home="$(new_home force_restore_failure)"
+  link="$home/.claude/skills/nexus-setup"
+  mkdir -p "$link"
+  printf 'retain-me\n' >"$link/marker"
+  output="$(NEXUS_TEST_FORCE=true NEXUS_TEST_FAIL=restore HOME="$home" NEXUS_HOME="$home/.nexus" "$REPO_ROOT/scripts/nexus" bootstrap 2>&1)" && failed=1
+  backup="$(printf '%s\n' "$output" | sed -n 's/.*recovery container retained: //p' | tail -n 1)"
+  [[ -n "$backup" && -f "$backup/original/marker" ]] || failed=1
+  [[ "$(cat "$backup/original/marker" 2>/dev/null)" == retain-me ]] || failed=1
+  if (( failed == 0 )); then pass force_recovery; else fail force_recovery; fi
+}
+
+test_dispatcher() {
+  local failed=0 home output status command
+  home="$(new_home dispatcher)"
+  output="$(run_nexus "$home" 2>&1)"; status=$?
+  [[ "$status" -eq 2 && "$output" == *'Usage:'* ]] || failed=1
+  output="$(run_nexus "$home" nope 2>&1)"; status=$?
+  [[ "$status" -eq 2 && "$output" == *'Usage:'* ]] || failed=1
+  output="$(run_nexus "$home" help)"; status=$?
+  [[ "$status" -eq 0 && "$output" == *'Usage:'* ]] || failed=1
+  output="$(run_nexus "$home" bootstrap extra 2>&1)"; status=$?
+  [[ "$status" -eq 2 && "$output" == *'Usage:'* ]] || failed=1
+  for command in setup link install; do
+    output="$(run_nexus "$home" "$command" 2>&1)"; status=$?
+    [[ "$status" -eq 1 && "$output" == *'not implemented yet'* ]] || failed=1
+  done
+  if (( failed == 0 )); then pass dispatcher; else fail dispatcher; fi
 }
 
 test_metadata() {
@@ -208,5 +276,8 @@ test_bootstrap_collision
 test_bootstrap_staging_failure
 test_bootstrap_lexical_managed_link
 test_bootstrap_symlinked_managed_root
+test_force_replacement
+test_force_recovery
+test_dispatcher
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))
