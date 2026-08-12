@@ -10,10 +10,11 @@ not take ownership of unrelated physical entries, external links, or Codex's
 
 ## Requirements and first use
 
-Use Bash 5, GNU coreutils, `jq`, Git, Python 3 (`python3`), and NVM/npm/npx.
-Setup preflight checks these required commands, including `python3`. A directly
-available `npm`/`npx` is sufficient; NVM is a fallback when `npx` is not on
-`PATH`.
+Project scripts use Bash 5, GNU coreutils, `jq`, and Python 3 (`python3`). Git
+is needed for Git-based sources and normal development; npm/npx is an upstream
+prerequisite for installation. Setup preflight checks `jq`, `python3`, and the
+required core utilities; it does not check Git, npm, npx, or NVM. Install first
+uses a directly available `npx`; if it is unavailable, NVM is the fallback.
 
 From a shell, initialize only Nexus's control links with:
 

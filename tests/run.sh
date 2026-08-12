@@ -1076,6 +1076,9 @@ test_readme_documentation() {
   for term in '~/.agents/skills' 'skill-lock.json' '.claude-backup' '.codex-backup' '/nexus:setup' '$nexus-setup' 'npx skills' 'python3' 'recovery' 'another agent'; do
     assert_contains README.md "$term" || failed=1
   done
+  assert_contains README.md 'Setup preflight checks `jq`, `python3`, and the' || failed=1
+  assert_contains README.md 'it does not check Git, npm, npx, or NVM' || failed=1
+  assert_contains README.md 'directly available `npx`; if it is unavailable, NVM is the fallback' || failed=1
   assert_contains README.md 'retries once and then removes the temporary transaction, leaves' || failed=1
   if (( failed == 0 )); then pass readme_documentation; else fail readme_documentation; fi
 }
