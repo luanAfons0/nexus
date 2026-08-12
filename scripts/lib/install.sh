@@ -13,7 +13,7 @@ parse_install_args() {
         fi
         INSTALL_SKILLS+=("$1")
         ;;
-      --*)
+      -*)
         error "unknown install flag: $1"
         return 2
         ;;

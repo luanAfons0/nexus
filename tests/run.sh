@@ -389,6 +389,13 @@ EOF
   output="$(NEXUS_FAKE_NPX_MODE=failure PATH="$fake:$PATH" run_nexus "$home" install source --skill alpha 2>&1)"; [[ "$?" -eq 42 ]] || failed=1
   [[ "$output" == *'untracked canonical skill directory'* && "$(cat "$home/.nexus/skill-lock.json")" == original ]] || failed=1
 
+  home="$(new_home install_rejects_option_source)"
+  mkdir -p "$home/fakebin"
+  printf '%s\n' '#!/usr/bin/env bash' 'printf invoked >"$HOME/npx-invoked"' >"$home/fakebin/npx"
+  chmod 755 "$home/fakebin/npx"
+  output="$(PATH="$home/fakebin:$PATH" run_nexus "$home" install -bogus --skill alpha 2>&1)"; [[ "$?" -eq 2 ]] || failed=1
+  [[ "$output" == *'unknown install flag: -bogus'* && ! -e "$home/npx-invoked" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+
   home="$(new_home install_nvm)"
   unset NVM_DIR
   mkdir -p "$home/.nvm" "$home/nvm-bin" "$home/onlybin"
