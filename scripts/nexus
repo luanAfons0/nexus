@@ -25,13 +25,25 @@ resolved_link_target() {
   fi
 }
 
+path_is_within() {
+  local candidate="$1" root="$2"
+  [[ "$candidate" == "$root" || "$candidate" == "$root"/* ]]
+}
+
 is_managed_path() {
-  local path="$1" canonical nexus
-  canonical="$(realpath -m -s -- "$CANONICAL_DIR")"
-  nexus="$(realpath -m -s -- "$NEXUS_HOME/skills")"
-  path="$(realpath -m -s -- "$path")"
-  [[ "$path" == "$canonical" || "$path" == "$canonical"/* ||
-     "$path" == "$nexus" || "$path" == "$nexus"/* ]]
+  local path="$1" candidate_lexical candidate_resolved root root_lexical root_resolved
+  candidate_lexical="$(realpath -m -s -- "$path")"
+  candidate_resolved="$(realpath -m -- "$path")"
+  for root in "$CANONICAL_DIR" "$NEXUS_HOME/skills"; do
+    root_lexical="$(realpath -m -s -- "$root")"
+    root_resolved="$(realpath -m -- "$root")"
+    path_is_within "$candidate_lexical" "$root_lexical" ||
+      path_is_within "$candidate_lexical" "$root_resolved" ||
+      path_is_within "$candidate_resolved" "$root_lexical" ||
+      path_is_within "$candidate_resolved" "$root_resolved" || continue
+    return 0
+  done
+  return 1
 }
 
 is_managed_link() {

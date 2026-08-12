@@ -158,6 +158,19 @@ test_bootstrap_lexical_managed_link() {
   if (( failed == 0 )); then pass bootstrap_lexical_managed_link; else fail bootstrap_lexical_managed_link; fi
 }
 
+test_bootstrap_symlinked_managed_root() {
+  local failed=0 home link
+  home="$(new_home symlinked_root)"
+  mv -- "$home/.nexus/skills" "$home/.nexus/skills-real"
+  ln -s -- skills-real "$home/.nexus/skills"
+  link="$home/.claude/skills/nexus-setup"
+  mkdir -p "$(dirname -- "$link")"
+  ln -s -- "$home/.nexus/skills-real/nexus-link" "$link"
+  run_nexus "$home" bootstrap >/dev/null 2>&1 || failed=1
+  assert_link_to "$link" "$home/.nexus/skills/nexus-setup" || failed=1
+  if (( failed == 0 )); then pass bootstrap_symlinked_managed_root; else fail bootstrap_symlinked_managed_root; fi
+}
+
 test_metadata() {
   local failed=0
   assert_contains .gitignore 'skill-lock.json' || failed=1
@@ -194,5 +207,6 @@ test_bootstrap
 test_bootstrap_collision
 test_bootstrap_staging_failure
 test_bootstrap_lexical_managed_link
+test_bootstrap_symlinked_managed_root
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))
