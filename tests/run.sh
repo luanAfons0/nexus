@@ -64,8 +64,21 @@ assert_line() {
 new_home() {
   local name="$1" home="$TEST_ROOT/$1"
   mkdir -p "$home/.nexus" || return 1
+  : >"$home/.nexus-test-home" || return 1
   cp -R -- "$REPO_ROOT/skills" "$home/.nexus/" || return 1
   printf '%s\n' "$home"
+}
+
+run_nexus_overridden() {
+  local home="$1" fault="$2"; shift 2
+  local resolved
+  resolved="$(realpath -e -- "$home")" || return 125
+  [[ "$resolved" == "$(realpath -e -- "$TEST_ROOT")"/* && -f "$resolved/.nexus-test-home" ]] || {
+    printf 'refusing test override outside validated fake home\n' >&2; return 125;
+  }
+  HOME="$resolved" NEXUS_HOME="$resolved/.nexus" NEXUS_FAULT="$fault" \
+    bash -c 'source "$1"; nexus_init; source "$2"; fault_setup; if [[ "$3" == put_link_force ]]; then put_link "${4}" "${5}" true; else main "${@:3}"; fi' \
+      bash "$REPO_ROOT/scripts/nexus" "$REPO_ROOT/tests/faults.sh" "$@"
 }
 
 run_nexus() {
@@ -226,7 +239,7 @@ test_bootstrap_staging_failure() {
   link="$home/.claude/skills/nexus-setup"
   ln -sfn -- "$home/.nexus/skills/nexus-link" "$link"
   old="$(readlink -- "$link")"
-  output="$(NEXUS_TEST_FAIL=stage HOME="$home" NEXUS_HOME="$home/.nexus" "$REPO_ROOT/scripts/nexus" bootstrap 2>&1)" && failed=1
+  output="$(run_nexus_overridden "$home" stage bootstrap 2>&1)" && failed=1
   [[ "$output" == *'staged link creation failed'* ]] || failed=1
   [[ "$(readlink -- "$link")" == "$old" ]] || { printf '  staging failure changed existing link\n' >&2; failed=1; }
   if (( failed == 0 )); then pass bootstrap_staging_failure; else fail bootstrap_staging_failure; fi
@@ -287,7 +300,7 @@ test_force_recovery() {
   link="$home/.claude/skills/nexus-setup"
   mkdir -p "$link"
   printf 'restore-me\n' >"$link/marker"
-  output="$(NEXUS_TEST_FAIL=promote run_put_link_force "$home" "$home/.nexus/skills/nexus-setup" "$link" 2>&1)" && failed=1
+  output="$(run_nexus_overridden "$home" promote put_link_force "$home/.nexus/skills/nexus-setup" "$link" 2>&1)" && failed=1
   [[ -f "$link/marker" && "$(cat "$link/marker")" == restore-me ]] || failed=1
   [[ -z "$(find "$home/.claude/skills" -maxdepth 1 -type d -name '.nexus-backup.*' -print -quit)" ]] || failed=1
   [[ -z "$(find "$home/.claude/skills" -maxdepth 1 -name '.nexus-tmp.*' -print -quit)" ]] || failed=1
@@ -296,7 +309,7 @@ test_force_recovery() {
   link="$home/.claude/skills/nexus-setup"
   mkdir -p "$link"
   printf 'verify-me\n' >"$link/marker"
-  output="$(NEXUS_TEST_FAIL=verify run_put_link_force "$home" "$home/.nexus/skills/nexus-setup" "$link" 2>&1)" && failed=1
+  output="$(run_nexus_overridden "$home" verify put_link_force "$home/.nexus/skills/nexus-setup" "$link" 2>&1)" && failed=1
   [[ -f "$link/marker" && "$(cat "$link/marker")" == verify-me ]] || failed=1
   [[ -z "$(find "$home/.claude/skills" -maxdepth 1 \( -name '.nexus-tmp.*' -o -name '.nexus-backup.*' \) -print -quit)" ]] || failed=1
 
@@ -304,7 +317,7 @@ test_force_recovery() {
   link="$home/.claude/skills/nexus-setup"
   mkdir -p "$link"
   printf 'retain-me\n' >"$link/marker"
-  output="$(NEXUS_TEST_FAIL=restore run_put_link_force "$home" "$home/.nexus/skills/nexus-setup" "$link" 2>&1)" && failed=1
+  output="$(run_nexus_overridden "$home" restore put_link_force "$home/.nexus/skills/nexus-setup" "$link" 2>&1)" && failed=1
   backup="$(printf '%s\n' "$output" | sed -n 's/.*recovery container retained: //p' | tail -n 1)"
   [[ -n "$backup" && -f "$backup/original/marker" ]] || failed=1
   [[ "$(cat "$backup/original/marker" 2>/dev/null)" == retain-me ]] || failed=1
@@ -508,12 +521,12 @@ test_link_snapshot_safety() {
   ln -s -- "../../.agents/skills/stale" "$home/.codex/skills/stale"
 
   before="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
-  output="$(NEXUS_TEST_FAIL=lock_extract run_nexus "$home" link 2>&1)"; status=$?
+  output="$(run_nexus_overridden "$home" lock_extract link 2>&1)"; status=$?
   after="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
   [[ "$status" -ne 0 && "$output" == *'lock key extraction failed'* && "$before" == "$after" ]] || failed=1
   [[ -z "$(find "$home/.nexus" -maxdepth 1 -name '.nexus-lock.*' -print -quit)" ]] || failed=1
 
-  output="$(NEXUS_TEST_FAIL=lock_replace run_nexus "$home" link 2>&1)"; status=$?
+  output="$(run_nexus_overridden "$home" lock_replace link 2>&1)"; status=$?
   [[ "$status" -eq 0 ]] || { printf '%s\n' "$output" >&2; failed=1; }
   assert_link_to "$home/.claude/skills/alpha" "$canonical/alpha" || failed=1
   assert_link_to "$home/.codex/skills/alpha" "$canonical/alpha" || failed=1
@@ -637,9 +650,9 @@ test_setup_backup_transaction_and_absent_roots() {
   printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\\n" "$*" >>"$NEXUS_BACKUP_CP_LOG"' 'exit 1' >"$seam"; chmod 755 "$seam"
   source_hash="$(sha256sum "$home/.agents/.skill-lock.json")"
   before="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
-  output="$(NEXUS_BACKUP_CP="$seam" NEXUS_BACKUP_CP_LOG="$home/backup-cp.log" run_nexus "$home" setup 2>&1)" && failed=1
+  output="$(run_nexus_overridden "$home" backup_copy_fail setup 2>&1)" && failed=1
   after="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
-  [[ -s "$home/backup-cp.log" && "$before" == "$after" && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" && "$source_hash" == "$(sha256sum "$home/.agents/.skill-lock.json")" ]] || failed=1
+  [[ "$before" == "$after" && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" && "$source_hash" == "$(sha256sum "$home/.agents/.skill-lock.json")" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
 
   home="$(new_home setup_backup_false_success)"
@@ -648,7 +661,7 @@ test_setup_backup_transaction_and_absent_roots() {
   printf 'hidden-original\n' >"$home/.claude/.hidden"
   ln -s -- /external/ordinary "$home/.claude/ordinary-link"
   before="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
-  output="$(NEXUS_BACKUP_CP=true run_nexus "$home" setup 2>&1)" && failed=1
+  output="$(run_nexus_overridden "$home" backup_copy_false setup 2>&1)" && failed=1
   after="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
   [[ "$output" == *'backup verification failed'* && "$before" == "$after" && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
@@ -659,7 +672,7 @@ test_setup_backup_transaction_and_absent_roots() {
   printf 'hidden-original\n' >"$home/.claude/.hidden"; chmod 644 "$home/.claude/.hidden"
   seam="$home/backup-corrupt-seam"
   printf '%s\n' '#!/usr/bin/env bash' 'command cp "$@"' 'destination="${!#}"' 'chmod 600 "$destination/.hidden"' >"$seam"; chmod 755 "$seam"
-  output="$(NEXUS_BACKUP_CP="$seam" run_nexus "$home" setup 2>&1)" && failed=1
+  output="$(run_nexus_overridden "$home" backup_copy_corrupt setup 2>&1)" && failed=1
   [[ "$output" == *'backup verification failed'* && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
 
@@ -668,7 +681,7 @@ test_setup_backup_transaction_and_absent_roots() {
   mkdir -p "$home/.claude" "$home/.codex"
   printf 'same-child\n' >"$home/.claude/child"
   chmod 751 "$home/.claude"; touch -d '2026-01-01 00:00:00.123456789' "$home/.claude"
-  output="$(NEXUS_TEST_FAIL=backup_root_corrupt run_nexus "$home" setup 2>&1)" && failed=1
+  output="$(run_nexus_overridden "$home" backup_root_corrupt setup 2>&1)" && failed=1
   [[ "$output" == *'backup verification failed'* && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
 
@@ -679,7 +692,7 @@ test_setup_backup_transaction_and_absent_roots() {
   touch -d '2026-01-01 00:00:00.123456789' "$home/.claude/child"
   seam="$home/backup-child-metadata-seam"
   printf '%s\n' '#!/usr/bin/env bash' 'command cp "$@"' 'destination="${!#}"' 'touch -d "2026-01-01 00:00:00.987654321" "$destination/child"' >"$seam"; chmod 755 "$seam"
-  output="$(NEXUS_BACKUP_CP="$seam" run_nexus "$home" setup 2>&1)" && failed=1
+  output="$(run_nexus_overridden "$home" backup_child_corrupt setup 2>&1)" && failed=1
   [[ "$output" == *'backup verification failed'* && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
 
@@ -689,7 +702,7 @@ test_setup_backup_transaction_and_absent_roots() {
   ln -s -- $'literal-target\n' "$home/.claude/trailing-newline-link"
   seam="$home/backup-symlink-corrupt-seam"
   printf '%s\n' '#!/usr/bin/env bash' 'command cp "$@"' 'destination="${!#}"' 'rm -- "$destination/trailing-newline-link"' 'ln -s -- literal-target "$destination/trailing-newline-link"' >"$seam"; chmod 755 "$seam"
-  output="$(NEXUS_BACKUP_CP="$seam" run_nexus "$home" setup 2>&1)" && failed=1
+  output="$(run_nexus_overridden "$home" backup_symlink_corrupt setup 2>&1)" && failed=1
   [[ "$output" == *'backup verification failed'* && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
 
@@ -699,13 +712,13 @@ test_setup_backup_transaction_and_absent_roots() {
   printf 'hidden-original\n' >"$home/.claude/.hidden"; chmod 644 "$home/.claude/.hidden"
   seam="$home/backup-move-corrupt-seam"
   printf '%s\n' '#!/usr/bin/env bash' 'command mv "$@"' 'destination="${!#}"' 'if [[ "$destination" == "$HOME/.codex-backup" ]]; then chmod 600 "$HOME/.claude-backup/.hidden"; fi' >"$seam"; chmod 755 "$seam"
-  output="$(NEXUS_BACKUP_MV="$seam" run_nexus "$home" setup 2>&1)" && failed=1
+  output="$(run_nexus_overridden "$home" backup_final_corrupt setup 2>&1)" && failed=1
   [[ "$output" == *'final backup verification failed'* && -d "$home/.claude-backup" && -d "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
 
   home="$(new_home setup_promotion_failure)"
   write_lock "$home/.agents/.skill-lock.json"
-  output="$(NEXUS_TEST_FAIL=backup_promote_second run_nexus "$home" setup 2>&1)" && failed=1
+  output="$(run_nexus_overridden "$home" backup_promote_second setup 2>&1)" && failed=1
   [[ ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
 
@@ -713,7 +726,7 @@ test_setup_backup_transaction_and_absent_roots() {
   write_lock "$home/.agents/.skill-lock.json"
   mkdir -p "$home/.claude" "$home/.codex"
   printf 'claude-original\n' >"$home/.claude/marker"; printf 'codex-original\n' >"$home/.codex/marker"
-  output="$(NEXUS_TEST_FAIL=backup_promote_second,backup_rollback run_nexus "$home" setup 2>&1)" && failed=1
+  output="$(run_nexus_overridden "$home" backup_rollback setup 2>&1)" && failed=1
   recovery_tx="$(printf '%s\n' "$output" | sed -n 's/.*; \(.*\.nexus-setup-backup\.[^ ]*\) (Codex backup:.*/\1/p' | tail -n 1)"
   recovery_codex="$recovery_tx/codex-backup"
   [[ -d "$home/.claude-backup" && -f "$home/.claude-backup/marker" && -d "$recovery_tx" && -f "$recovery_codex/marker" && "$output" == *"$home/.claude-backup"* && "$output" == *"$recovery_tx"* && "$output" == *"$recovery_codex"* && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
@@ -734,7 +747,7 @@ test_setup_lock_publication_verification() {
   mkdir -p "$home/.claude" "$home/.codex"
   printf 'live\n' >"$home/.claude/marker"
   before="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")|$(snapshot_tree "$home/.agents")"
-  output="$(NEXUS_TEST_FAIL=lock_copy_corrupt run_nexus "$home" setup 2>&1)" && failed=1
+  output="$(run_nexus_overridden "$home" lock_copy_corrupt setup 2>&1)" && failed=1
   after="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")|$(snapshot_tree "$home/.agents")"
   [[ "$output" == *'atomic copy staging verification failed'* && "$before" == "$after" && ! -e "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
@@ -742,7 +755,7 @@ test_setup_lock_publication_verification() {
   home="$(new_home setup_lock_post_publish_corrupt)"
   write_lock "$home/.agents/.skill-lock.json"
   mkdir -p "$home/.claude" "$home/.codex"
-  output="$(NEXUS_TEST_FAIL=lock_post_publish_corrupt run_nexus "$home" setup 2>&1)" && failed=1
+  output="$(run_nexus_overridden "$home" lock_post_publish_corrupt setup 2>&1)" && failed=1
   [[ -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" && "$output" == *'setup is now initialized/disabled'* && "$output" == *'/nexus:link'* && "$output" == *'$nexus-link'* ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
   if (( failed == 0 )); then pass setup_lock_publication_verification; else fail setup_lock_publication_verification; fi
@@ -801,7 +814,7 @@ test_setup_canonical_failures_retain_publication() {
   mkdir -p "$home/.claude/skills/alpha" "$home/.agents/skills"
   printf 'skill\n' >"$home/.claude/skills/alpha/SKILL.md"
   ln -s -- "../../.claude/skills/alpha" "$home/.agents/skills/alpha"
-  output="$(NEXUS_TEST_FAIL=canonical_promote,canonical_restore run_nexus "$home" setup 2>&1)" && failed=1
+  output="$(run_nexus_overridden "$home" canonical_restore setup 2>&1)" && failed=1
   original="$(printf '%s\n' "$output" | sed -n 's/.*canonical recovery retained: //p' | tail -n 1)"
   [[ -n "$original" && -L "$original/original" && "$(readlink "$original/original")" == '../../.claude/skills/alpha' && -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" ]] || failed=1
   [[ -z "$(find "$home/.agents/skills" -maxdepth 1 -name '.nexus-canonical-tmp.*' -print -quit)" ]] || failed=1
@@ -812,7 +825,7 @@ test_setup_canonical_failures_retain_publication() {
   mkdir -p "$home/.claude/skills/alpha" "$home/.agents/skills"
   printf 'skill\n' >"$home/.claude/skills/alpha/SKILL.md"
   ln -s -- "../../.claude/skills/alpha" "$home/.agents/skills/alpha"
-  output="$(NEXUS_TEST_FAIL=canonical_promote,canonical_restore,canonical_cleanup run_nexus "$home" setup 2>&1)" && failed=1
+  output="$(run_nexus_overridden "$home" canonical_cleanup setup 2>&1)" && failed=1
   original="$(printf '%s\n' "$output" | sed -n 's/.*canonical recovery retained: //p' | tail -n 1)"
   retained_temp="$(printf '%s\n' "$output" | sed -n 's/.*canonical temp retained: //p' | tail -n 1)"
   [[ -L "$original/original" && -d "$retained_temp" && "$output" == *"$original"* && "$output" == *"$retained_temp"* ]] || failed=1
@@ -823,7 +836,7 @@ test_setup_canonical_failures_retain_publication() {
   printf 'skill\n' >"$home/.claude/skills/alpha/SKILL.md"
   ln -s -- "../../.claude/skills/alpha" "$home/.agents/skills/alpha"
   original="$(readlink "$home/.agents/skills/alpha")"
-  output="$(NEXUS_TEST_FAIL=canonical_promote run_nexus "$home" setup 2>&1)" && failed=1
+  output="$(run_nexus_overridden "$home" canonical_promote setup 2>&1)" && failed=1
   [[ -L "$home/.agents/skills/alpha" && "$(readlink "$home/.agents/skills/alpha")" == "$original" ]] || failed=1
   [[ -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
