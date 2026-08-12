@@ -77,7 +77,43 @@ run_nexus() {
 run_put_link_force() {
   local home="$1" target="$2" link="$3"
   HOME="$home" NEXUS_HOME="$home/.nexus" bash -c \
-    'source "$1"; put_link "$2" "$3" true' bash "$REPO_ROOT/scripts/nexus" "$target" "$link"
+    'source "$1"; nexus_init; put_link "$2" "$3" true' bash "$REPO_ROOT/scripts/lib/common.sh" "$target" "$link"
+}
+
+test_source_hygiene() {
+  local failed=0 home before after output
+  home="$(new_home source_hygiene)"
+  before="$(snapshot_tree "$home")"
+  output="$(HOME="$home" NEXUS_HOME="$home/.nexus" bash -c '
+    set +e +u +o pipefail
+    shopt -s nullglob
+    trap ":" USR1
+    before_flags="$-"
+    before_pipefail="$(set -o | awk '\''$1 == "pipefail" { print $2 }'\'')"
+    before_shopt="$(shopt -p nullglob)"
+    before_trap="$(trap -p USR1)"
+    source "$1"
+    after_flags="$-"
+    after_pipefail="$(set -o | awk '\''$1 == "pipefail" { print $2 }'\'')"
+    after_shopt="$(shopt -p nullglob)"
+    after_trap="$(trap -p USR1)"
+    [[ "$before_flags" == "$after_flags" &&
+       "$before_pipefail" == "$after_pipefail" &&
+       "$before_shopt" == "$after_shopt" &&
+       "$before_trap" == "$after_trap" ]]
+  ' bash "$REPO_ROOT/scripts/nexus" 2>&1)" || failed=1
+  after="$(snapshot_tree "$home")"
+  [[ -z "$output" ]] || { printf '  sourcing emitted output:\n%s\n' "$output" >&2; failed=1; }
+  [[ "$before" == "$after" ]] || { printf '  sourcing mutated fake HOME\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass source_hygiene; else fail source_hygiene; fi
+}
+
+test_shell_syntax() {
+  local failed=0 file
+  while IFS= read -r file; do
+    bash -n -- "$file" || failed=1
+  done < <(printf '%s\n' "$REPO_ROOT/scripts/nexus" "$REPO_ROOT"/scripts/lib/*.sh)
+  if (( failed == 0 )); then pass shell_syntax; else fail shell_syntax; fi
 }
 
 assert_link_to() {
@@ -731,6 +767,9 @@ test_discover_lock_uses_immutable_snapshots() {
   write_lock "$source" alpha
   output="$(HOME="$home" NEXUS_HOME="$home/.nexus" bash -c '
     source "$1"
+    source "$2"
+    source "$3"
+    nexus_init
     discover_lock || exit 1
     snapshot="$DISCOVERED_LOCK_SNAPSHOT"
     cp -- "$snapshot" "$HOME/expected"
@@ -740,7 +779,7 @@ test_discover_lock_uses_immutable_snapshots() {
     status=$?
     cleanup_discovered_lock_snapshots
     exit "$status"
-  ' bash "$REPO_ROOT/scripts/nexus" 2>&1)" || { printf '%s\n' "$output" >&2; failed=1; }
+  ' bash "$REPO_ROOT/scripts/lib/common.sh" "$REPO_ROOT/scripts/lib/lock.sh" "$REPO_ROOT/scripts/lib/setup.sh" 2>&1)" || { printf '%s\n' "$output" >&2; failed=1; }
   cmp -s "$home/expected" "$home/.nexus/skill-lock.json" || failed=1
   [[ -z "$(find "$home/.nexus" -maxdepth 1 -name '.nexus-lock-candidates.*' -print -quit)" ]] || failed=1
   if (( failed == 0 )); then pass discover_lock_uses_immutable_snapshots; else fail discover_lock_uses_immutable_snapshots; fi
@@ -845,6 +884,8 @@ test_metadata() {
 }
 
 test_metadata
+test_source_hygiene
+test_shell_syntax
 test_bootstrap
 test_bootstrap_collision
 test_bootstrap_staging_failure
