@@ -1172,10 +1172,26 @@ test_setup_canonical_scan_signal_cleanup() {
   if (( failed == 0 )); then pass setup_canonical_scan_signal_cleanup; else fail setup_canonical_scan_signal_cleanup; fi
 }
 
+test_setup_canonical_scan_trailing_tmpdir() {
+  local failed=0 home canonical output
+  home="$(new_home canonical_scan_trailing_tmpdir)"
+  canonical="$home/.agents/skills"
+  mkdir -p "$home/tmp" "$canonical/alpha" "$home/.claude" "$home/.codex"
+  write_lock "$home/.agents/.skill-lock.json" alpha
+  printf 'skill\n' >"$canonical/alpha/SKILL.md"
+  output="$(TMPDIR="$home/tmp/" HOME="$home" NEXUS_HOME="$home/.nexus" "$REPO_ROOT/scripts/nexus" setup 2>&1)" || {
+    printf '%s\n' "$output" >&2
+    failed=1
+  }
+  [[ -z "$(find "$home/tmp" -name '.nexus-canonical-scan.*' -print -quit)" ]] || failed=1
+  if (( failed == 0 )); then pass setup_canonical_scan_trailing_tmpdir; else fail setup_canonical_scan_trailing_tmpdir; fi
+}
+
 test_term_recovery
 test_setup_traps_restore
 test_setup_finalization_signal_window
 test_setup_canonical_scan_signal_cleanup
+test_setup_canonical_scan_trailing_tmpdir
 test_nested_source_symlink_safety
 
 if python3 "$REPO_ROOT/tests/backup_manifest_test.py" >/dev/null; then

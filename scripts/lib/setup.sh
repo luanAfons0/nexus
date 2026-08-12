@@ -338,6 +338,7 @@ validate_canonical_skill() {
     return 1
   }
   scan_parent="${TMPDIR:-/tmp}"
+  while [[ "$scan_parent" != / && "$scan_parent" == */ ]]; do scan_parent="${scan_parent%/}"; done
   links_file="$(mktemp -- "$scan_parent/.nexus-canonical-scan.XXXXXX")" || {
     error "cannot reserve canonical skill symlink scan"
     return 1
