@@ -1,0 +1,1 @@
+Run `/home/luanh/.nexus/scripts/nexus setup` exactly once and report its output. Complete copies of `~/.claude-backup` and `~/.codex-backup` must precede any skill-link changes. Do not bypass safety failures; report any failure and stop.
