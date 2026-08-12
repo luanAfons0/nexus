@@ -64,12 +64,14 @@ validate_lock() {
     error "invalid version-3 lock: expected regular file at $file"
     return 1
   fi
-  if ! jq -e '
-    type == "object" and
-    (.version == 3 and (.version | type) == "number") and
-    (.skills | type == "object") and
-    all(.skills | keys[];
-      test("^[A-Za-z0-9][A-Za-z0-9._-]*$") and . != "." and . != "..")
+  if ! jq -e -s '
+    length == 1 and
+    (.[0] |
+      type == "object" and
+      (.version == 3 and (.version | type) == "number") and
+      (.skills | type == "object") and
+      all(.skills | keys[];
+        test("^[A-Za-z0-9][A-Za-z0-9._-]*\\z") and . != "." and . != ".."))
   ' "$file" >/dev/null 2>&1; then
     error "invalid version-3 lock: $file must be JSON object with numeric version 3, object skills, and safe skill names"
     return 1

@@ -310,13 +310,19 @@ test_link_invalid_locks_do_not_mutate() {
   ln -s -- "../../.nexus/skills/nexus-setup" "$home/.claude/skills/existing"
   ln -s -- "../../.nexus/skills/nexus-link" "$home/.codex/skills/existing"
 
-  for case in missing malformed version skills_object '' '.' '..' 'bad/name' '../escape' '-bad' '_bad'; do
+  for case in missing malformed version skills_object invalid_then_valid valid_then_another '' '.' '..' 'bad/name' '../escape' '-bad' '_bad' $'line\nbreak' $'tab\tkey' $'trailing\n'; do
     rm -f -- "$lock"
     case "$case" in
       missing) ;;
       malformed) printf '%s\n' '{not json' >"$lock" ;;
       version) jq -n '{version: 2, skills: {alpha: {}}}' >"$lock" ;;
       skills_object) jq -n '{version: 3, skills: []}' >"$lock" ;;
+      invalid_then_valid)
+        printf '%s\n%s\n' '{"version": 2, "skills": {}}' '{"version": 3, "skills": {}}' >"$lock"
+        ;;
+      valid_then_another)
+        printf '%s\n%s\n' '{"version": 3, "skills": {}}' '{"version": 3, "skills": {"alpha": {}}}' >"$lock"
+        ;;
       *)
         bad_name="$case"
         jq -n --arg name "$bad_name" '{version: 3, skills: {($name): {}}}' >"$lock"
