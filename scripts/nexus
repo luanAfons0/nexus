@@ -9,6 +9,13 @@ CODEX_SKILLS="$HOME/.codex/skills"
 CONTROL_SKILLS=(nexus-setup nexus-link nexus-install)
 ERRORS=0
 TEST_FAIL="${NEXUS_TEST_FAIL:-}"
+NEXUS_CP="${NEXUS_CP:-cp}"
+NEXUS_MV="${NEXUS_MV:-mv}"
+CANONICAL_CURRENT=''
+DISCOVERED_LOCK=''
+SETUP_CLAUDE_BACKUP=''
+SETUP_CODEX_BACKUP=''
+SETUP_LOCK_NAMES=()
 declare -A DESIRED_SET=()
 DESIRED_NAMES=()
 
@@ -59,33 +66,23 @@ is_managed_link() {
   is_managed_path "$lexical" || is_managed_path "$resolved"
 }
 
-validate_lock() {
-  local file="$1"
-  if [[ ! -f "$file" || -L "$file" ]]; then
-    error "invalid version-3 lock: expected regular file at $file"
-    return 1
-  fi
-  if ! jq -e -s '
-    length == 1 and
-    (.[0] |
-      type == "object" and
-      (.version == 3 and (.version | type) == "number") and
-      (.skills | type == "object") and
-      all(.skills | keys[];
-        test("^[A-Za-z0-9][A-Za-z0-9._-]*\\z") and . != "." and . != ".."))
-  ' "$file" >/dev/null 2>&1; then
-    error "invalid version-3 lock: $file must be JSON object with numeric version 3, object skills, and safe skill names"
-    return 1
-  fi
-  return 0
-}
-
 skill_target() {
   local name="$1"
   case "$name" in
     nexus-setup|nexus-link|nexus-install) printf '%s\n' "$NEXUS_HOME/skills/$name" ;;
     *) printf '%s\n' "$CANONICAL_DIR/$name" ;;
   esac
+}
+
+command_requirements() {
+  local command
+  for command in jq cp mv mktemp realpath; do
+    command -v -- "$command" >/dev/null 2>&1 || {
+      error "required command not available: $command"
+      return 1
+    }
+  done
+  return 0
 }
 
 desired_contains() {
@@ -178,6 +175,50 @@ load_validated_lock_names() {
     return 1
   fi
   cleanup_lock_snapshot "$snapshot_dir" || return 1
+  return 0
+}
+
+lock_semantic_json() {
+  local file="$1"
+  # Callers must validate with load_validated_lock_names first, which rejects
+  # streams and unsafe names.  This only supplies a stable equality form.
+  jq -S -c . "$file"
+}
+
+discover_lock() {
+  local -a candidates=(
+    "$HOME/.agents/.skill-lock.json"
+    "$HOME/.agents/skill-lock.json"
+    "$HOME/.skills/.skill-lock.json"
+    "$HOME/.skills/skill-lock.json"
+  )
+  local candidate first='' first_json='' candidate_json
+  local -a names=() found=()
+  DISCOVERED_LOCK=''
+  for candidate in "${candidates[@]}"; do
+    [[ -e "$candidate" || -L "$candidate" ]] || continue
+    found+=("$candidate")
+    if ! load_validated_lock_names "$candidate" names; then
+      error "setup lock candidate is invalid: $candidate"
+      return 1
+    fi
+    candidate_json="$(lock_semantic_json "$candidate")" || {
+      error "cannot canonicalize lock candidate: $candidate"
+      return 1
+    }
+    if [[ -z "$first" ]]; then
+      first="$candidate"
+      first_json="$candidate_json"
+    elif [[ "$candidate_json" != "$first_json" ]]; then
+      error "conflicting setup lock candidates: ${found[*]}"
+      return 1
+    fi
+  done
+  if [[ -z "$first" ]]; then
+    error "no version-3 skill lock found (checked: ${candidates[*]})"
+    return 1
+  fi
+  DISCOVERED_LOCK="$first"
   return 0
 }
 
@@ -413,6 +454,259 @@ bootstrap() {
   return 0
 }
 
+owned_setup_dir() {
+  local path="$1" parent="$2" prefix="$3"
+  [[ -d "$path" && "$(dirname -- "$path")" == "$parent" &&
+     "$(basename -- "$path")" == "$prefix"* ]]
+}
+
+cleanup_setup_dir() {
+  local path="$1" parent="$2" prefix="$3"
+  if ! owned_setup_dir "$path" "$parent" "$prefix"; then
+    error "refusing to clean unowned setup path: $path"
+    return 1
+  fi
+  rm -rf -- "$path"
+}
+
+cleanup_setup_file() {
+  local path="$1" parent="$2" prefix="$3"
+  if [[ ! -f "$path" || -L "$path" || "$(dirname -- "$path")" != "$parent" ||
+        "$(basename -- "$path")" != "$prefix"* ]]; then
+    error "refusing to clean unowned setup file: $path"
+    return 1
+  fi
+  rm -f -- "$path"
+}
+
+snapshot_setup_lock() {
+  local source="$1" snapshot
+  snapshot="$(mktemp -- "$NEXUS_HOME/.nexus-setup-source.XXXXXX")" || {
+    error "cannot reserve selected lock snapshot"
+    return 1
+  }
+  if ! "$NEXUS_CP" -- "$source" "$snapshot"; then
+    cleanup_setup_file "$snapshot" "$NEXUS_HOME" .nexus-setup-source. || :
+    error "cannot snapshot selected lock: $source"
+    return 1
+  fi
+  SETUP_LOCK_SNAPSHOT="$snapshot"
+  return 0
+}
+
+atomic_copy() {
+  local source="$1" destination="$2" allow_existing="${3:-false}" parent temp
+  parent="$(dirname -- "$destination")"
+  if [[ "$allow_existing" != true && ( -e "$destination" || -L "$destination" ) ]]; then
+    error "destination already exists: $destination"
+    return 1
+  fi
+  temp="$(mktemp -- "$parent/.nexus-setup-copy.XXXXXX")" || {
+    error "cannot reserve atomic copy destination for $destination"
+    return 1
+  }
+  if ! "$NEXUS_CP" -- "$source" "$temp"; then
+    cleanup_setup_file "$temp" "$parent" .nexus-setup-copy. || :
+    error "cannot copy source: $source"
+    return 1
+  fi
+  if ! setup_move "$temp" "$destination"; then
+    cleanup_setup_file "$temp" "$parent" .nexus-setup-copy. || :
+    error "cannot promote copied file: $destination"
+    return 1
+  fi
+  return 0
+}
+
+setup_move() {
+  local source="$1" destination="$2"
+  if [[ "$TEST_FAIL" == backup_promote_second && "$destination" == "$HOME/.codex-backup" ]]; then
+    error "test seam: second backup promotion failed"
+    return 1
+  fi
+  if [[ "$TEST_FAIL" == canonical_promote && "$source" == *'/.nexus-canonical-tmp.'* && "$destination" == "$CANONICAL_CURRENT" ]]; then
+    error "test seam: canonical promotion failed"
+    return 1
+  fi
+  if [[ "$TEST_FAIL" == canonical_restore && "$destination" == "$CANONICAL_CURRENT" && "$source" == */original ]]; then
+    error "test seam: canonical restore failed"
+    return 1
+  fi
+  "$NEXUS_MV" -Tf -- "$source" "$destination"
+}
+
+copy_agent_tree() {
+  local source="$1" destination="$2"
+  mkdir -p -- "$destination" || return 1
+  [[ -e "$source" || -L "$source" ]] || return 0
+  [[ -d "$source" && ! -L "$source" ]] || {
+    error "agent root is not a directory: $source"
+    return 1
+  }
+  "$NEXUS_CP" -a -- "$source/." "$destination/"
+}
+
+backup_transaction() {
+  local claude_backup="$HOME/.claude-backup" codex_backup="$HOME/.codex-backup"
+  local tx='' claude_tmp codex_tmp
+  [[ ! -e "$claude_backup" && ! -L "$claude_backup" ]] || {
+    error "backup already exists: $claude_backup"
+    return 1
+  }
+  [[ ! -e "$codex_backup" && ! -L "$codex_backup" ]] || {
+    error "backup already exists: $codex_backup"
+    return 1
+  }
+  tx="$(mktemp -d -- "$HOME/.nexus-setup-backup.XXXXXX")" || {
+    error "cannot reserve setup backup transaction"
+    return 1
+  }
+  owned_setup_dir "$tx" "$HOME" .nexus-setup-backup. || {
+    error "invalid setup backup transaction: $tx"
+    return 1
+  }
+  claude_tmp="$tx/claude-backup"
+  codex_tmp="$tx/codex-backup"
+  if ! copy_agent_tree "$HOME/.claude" "$claude_tmp" || ! copy_agent_tree "$HOME/.codex" "$codex_tmp"; then
+    error "cannot create complete agent backups"
+    cleanup_setup_dir "$tx" "$HOME" .nexus-setup-backup. || :
+    return 1
+  fi
+  if ! setup_move "$claude_tmp" "$claude_backup"; then
+    error "cannot promote Claude backup"
+    cleanup_setup_dir "$tx" "$HOME" .nexus-setup-backup. || :
+    return 1
+  fi
+  if ! setup_move "$codex_tmp" "$codex_backup"; then
+    error "cannot promote Codex backup"
+    if ! setup_move "$claude_backup" "$claude_tmp"; then
+      error "backup recovery retained at: $claude_backup"
+      return 1
+    fi
+    cleanup_setup_dir "$tx" "$HOME" .nexus-setup-backup. || :
+    return 1
+  fi
+  rmdir -- "$tx" || {
+    error "setup backup transaction retained: $tx"
+    return 1
+  }
+  SETUP_CLAUDE_BACKUP="$claude_backup"
+  SETUP_CODEX_BACKUP="$codex_backup"
+  return 0
+}
+
+publish_setup_lock() {
+  local source="$1"
+  [[ ! -e "$LOCK_FILE" && ! -L "$LOCK_FILE" ]] || {
+    error "Nexus lock already exists: $LOCK_FILE"
+    return 1
+  }
+  mkdir -p -- "$NEXUS_HOME" || { error "cannot create Nexus home: $NEXUS_HOME"; return 1; }
+  if ! atomic_copy "$source" "$LOCK_FILE" false; then
+    error "cannot publish Nexus lock"
+    return 1
+  fi
+  return 0
+}
+
+valid_physical_skill() {
+  [[ -d "$1" && ! -L "$1" && -f "$1/SKILL.md" ]]
+}
+
+materialize_canonical_link() {
+  local name="$1" current="$CANONICAL_DIR/$name" target='' temp='' recovery='' original
+  CANONICAL_CURRENT="$current"
+  [[ -L "$current" ]] || return 0
+  target="$(realpath -- "$current")" || {
+    error "managed canonical skill is a broken symlink: $current; correct it, then run nexus link"
+    return 1
+  }
+  [[ -d "$target" && -f "$target/SKILL.md" ]] || {
+    error "managed canonical skill target lacks SKILL.md: $current; correct it, then run nexus link"
+    return 1
+  }
+  mkdir -p -- "$CANONICAL_DIR" || { error "cannot create canonical directory: $CANONICAL_DIR"; return 1; }
+  temp="$(mktemp -d -- "$CANONICAL_DIR/.nexus-canonical-tmp.XXXXXX")" || {
+    error "cannot reserve canonical materialization temp for $current"
+    return 1
+  }
+  if ! "$NEXUS_CP" -aL -- "$target/." "$temp/" || ! valid_physical_skill "$temp"; then
+    cleanup_setup_dir "$temp" "$CANONICAL_DIR" .nexus-canonical-tmp. || :
+    error "cannot materialize canonical skill: $current"
+    return 1
+  fi
+  recovery="$(mktemp -d -- "$CANONICAL_DIR/.nexus-canonical-old.XXXXXX")" || {
+    cleanup_setup_dir "$temp" "$CANONICAL_DIR" .nexus-canonical-tmp. || :
+    error "cannot reserve canonical recovery for $current"
+    return 1
+  }
+  original="$recovery/original"
+  if ! setup_move "$current" "$original"; then
+    cleanup_setup_dir "$temp" "$CANONICAL_DIR" .nexus-canonical-tmp. || :
+    rmdir -- "$recovery" || error "canonical recovery retained: $recovery"
+    error "cannot stage canonical symlink: $current"
+    return 1
+  fi
+  if ! setup_move "$temp" "$current" || ! valid_physical_skill "$current"; then
+    [[ -d "$current" && ! -L "$current" ]] && rm -rf -- "$current"
+    if ! setup_move "$original" "$current"; then
+      error "canonical recovery retained: $recovery"
+      return 1
+    fi
+    rmdir -- "$recovery" || error "canonical recovery retained: $recovery"
+    [[ -d "$temp" ]] && cleanup_setup_dir "$temp" "$CANONICAL_DIR" .nexus-canonical-tmp. || :
+    error "cannot promote canonical skill: $current"
+    return 1
+  fi
+  rm -- "$original" || { error "canonical recovery retained: $recovery"; return 1; }
+  rmdir -- "$recovery" || { error "canonical recovery retained: $recovery"; return 1; }
+  return 0
+}
+
+materialize_canonical_links() {
+  local name
+  for name in "${SETUP_LOCK_NAMES[@]}"; do
+    materialize_canonical_link "$name" || return 1
+  done
+  return 0
+}
+
+setup() {
+  local selected
+  ERRORS=0
+  if [[ -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
+    info "already initialized; run /nexus:link or \$nexus-link to reconcile skills"
+    return 0
+  fi
+  command_requirements || return 1
+  discover_lock || return 1
+  selected="$DISCOVERED_LOCK"
+  snapshot_setup_lock "$selected" || return 1
+  if ! load_validated_lock_names "$SETUP_LOCK_SNAPSHOT" SETUP_LOCK_NAMES; then
+    cleanup_setup_file "$SETUP_LOCK_SNAPSHOT" "$NEXUS_HOME" .nexus-setup-source. || :
+    return 1
+  fi
+  if ! backup_transaction; then
+    cleanup_setup_file "$SETUP_LOCK_SNAPSHOT" "$NEXUS_HOME" .nexus-setup-source. || :
+    return 1
+  fi
+  if ! publish_setup_lock "$SETUP_LOCK_SNAPSHOT"; then
+    cleanup_setup_file "$SETUP_LOCK_SNAPSHOT" "$NEXUS_HOME" .nexus-setup-source. || :
+    error "backups retained at: $SETUP_CLAUDE_BACKUP and $SETUP_CODEX_BACKUP"
+    return 1
+  fi
+  cleanup_setup_file "$SETUP_LOCK_SNAPSHOT" "$NEXUS_HOME" .nexus-setup-source. || {
+    error "selected lock snapshot retained: $SETUP_LOCK_SNAPSHOT"
+    return 1
+  }
+  if ! materialize_canonical_links || ! link_all true; then
+    error "setup published backups and lock; correct the reported issue, then run /nexus:link or \$nexus-link"
+    return 1
+  fi
+  info "setup complete: source lock $selected; backups $SETUP_CLAUDE_BACKUP and $SETUP_CODEX_BACKUP"
+  return 0
+}
+
 usage() {
   cat <<'EOF'
 Usage: nexus <bootstrap|setup|link|install|help>
@@ -425,7 +719,10 @@ main() {
     bootstrap)
       [[ "$#" -eq 1 ]] || { usage >&2; return 2; }
       bootstrap ;;
-    setup|install)
+    setup)
+      [[ "$#" -eq 1 ]] || { usage >&2; return 2; }
+      setup ;;
+    install)
       info "$command is not implemented yet" >&2
       return 1 ;;
     link)

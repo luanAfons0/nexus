@@ -280,10 +280,12 @@ test_dispatcher() {
   [[ "$status" -eq 0 && -z "$output" ]] || failed=1
   output="$(run_nexus "$home" bootstrap extra 2>&1)"; status=$?
   [[ "$status" -eq 2 && "$output" == *'Usage:'* ]] || failed=1
-  for command in setup install; do
-    output="$(run_nexus "$home" "$command" 2>&1)"; status=$?
-    [[ "$status" -eq 1 && "$output" == *'not implemented yet'* ]] || failed=1
-  done
+  output="$(run_nexus "$home" setup 2>&1)"; status=$?
+  [[ "$status" -eq 1 && "$output" == *'no version-3 skill lock found'* ]] || failed=1
+  output="$(run_nexus "$home" setup extra 2>&1)"; status=$?
+  [[ "$status" -eq 2 && "$output" == *'Usage:'* ]] || failed=1
+  output="$(run_nexus "$home" install 2>&1)"; status=$?
+  [[ "$status" -eq 1 && "$output" == *'not implemented yet'* ]] || failed=1
   output="$(run_nexus "$home" link 2>&1)"; status=$?
   [[ "$status" -eq 1 && "$output" == *'invalid version-3 lock'* ]] || failed=1
   output="$(run_nexus "$home" link extra 2>&1)"; status=$?
@@ -462,6 +464,7 @@ test_link_snapshot_safety() {
   output="$(NEXUS_TEST_FAIL=lock_extract run_nexus "$home" link 2>&1)"; status=$?
   after="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
   [[ "$status" -ne 0 && "$output" == *'lock key extraction failed'* && "$before" == "$after" ]] || failed=1
+  [[ -z "$(find "$home/.nexus" -maxdepth 1 -name '.nexus-lock.*' -print -quit)" ]] || failed=1
 
   output="$(NEXUS_TEST_FAIL=lock_replace run_nexus "$home" link 2>&1)"; status=$?
   [[ "$status" -eq 0 ]] || { printf '%s\n' "$output" >&2; failed=1; }
@@ -469,7 +472,139 @@ test_link_snapshot_safety() {
   assert_link_to "$home/.codex/skills/alpha" "$canonical/alpha" || failed=1
   [[ ! -L "$home/.claude/skills/stale" && ! -L "$home/.codex/skills/stale" ]] || failed=1
   [[ ! -e "$home/.claude/escape" && ! -e "$home/.codex/escape" && ! -e "$home/.agents/escape" ]] || failed=1
+  [[ -z "$(find "$home/.nexus" -maxdepth 1 -name '.nexus-lock.*' -print -quit)" ]] || failed=1
   if (( failed == 0 )); then pass link_snapshot_safety; else fail link_snapshot_safety; fi
+}
+
+assert_no_setup_residue() {
+  local home="$1"
+  [[ -z "$(find "$home" -maxdepth 3 \( -name '.nexus-lock.*' -o -name '.nexus-setup-backup.*' -o -name '.nexus-setup-lock.*' -o -name '.nexus-setup-source.*' -o -name '.nexus-setup-copy.*' -o -name '.nexus-canonical-tmp.*' -o -name '.nexus-canonical-old.*' \) -print -quit)" ]]
+}
+
+test_setup_happy_and_idempotent() {
+  local failed=0 home source output before after mode
+  home="$(new_home setup_happy)"
+  source="$home/.agents/.skill-lock.json"
+  write_lock "$source" alpha beta
+  mkdir -p "$home/.claude/skills/alpha" "$home/.codex/skills/.system"
+  printf 'hidden\n' >"$home/.claude/.hidden"
+  printf 'executable\n' >"$home/.claude/run-me"; chmod 751 "$home/.claude/run-me"
+  ln -s -- /ordinary/link "$home/.claude/ordinary-link"
+  printf 'alpha-content\n' >"$home/.claude/skills/alpha/SKILL.md"
+  printf 'replace-file\n' >"$home/.claude/skills/beta"
+  ln -s -- /external/beta "$home/.codex/skills/beta"
+  printf 'state\n' >"$home/.codex/state"
+  printf 'system\n' >"$home/.codex/skills/.system/marker"
+  mkdir -p "$home/.agents/skills"
+  ln -s -- "../../.claude/skills/alpha" "$home/.agents/skills/alpha"
+  write_skill "$home/.agents/skills" beta
+  ln -s -- /external/unmanaged "$home/.agents/skills/unmanaged"
+  output="$(run_nexus "$home" setup 2>&1)" || { printf '%s\n' "$output" >&2; failed=1; }
+  [[ -d "$home/.claude" && -d "$home/.codex" ]] || failed=1
+  [[ -f "$home/.claude-backup/.hidden" && -L "$home/.claude-backup/ordinary-link" ]] || failed=1
+  mode="$(stat -c '%a' "$home/.claude-backup/run-me")"; [[ "$mode" == 751 ]] || failed=1
+  [[ -d "$home/.claude-backup/skills/alpha" && -f "$home/.claude-backup/skills/alpha/SKILL.md" ]] || failed=1
+  [[ -f "$home/.codex-backup/skills/.system/marker" ]] || failed=1
+  [[ -d "$home/.agents/skills/alpha" && ! -L "$home/.agents/skills/alpha" ]] || failed=1
+  [[ "$(cat "$home/.agents/skills/alpha/SKILL.md")" == alpha-content ]] || failed=1
+  assert_link_to "$home/.claude/skills/alpha" "$home/.agents/skills/alpha" || failed=1
+  assert_link_to "$home/.codex/skills/alpha" "$home/.agents/skills/alpha" || failed=1
+  assert_link_to "$home/.claude/skills/beta" "$home/.agents/skills/beta" || failed=1
+  assert_link_to "$home/.codex/skills/beta" "$home/.agents/skills/beta" || failed=1
+  [[ -f "$home/.claude-backup/skills/beta" && -L "$home/.codex-backup/skills/beta" ]] || failed=1
+  [[ -L "$home/.agents/skills/unmanaged" && "$(readlink "$home/.agents/skills/unmanaged")" == /external/unmanaged ]] || failed=1
+  [[ -f "$home/.codex/skills/.system/marker" ]] || failed=1
+  cmp -s "$source" "$home/.nexus/skill-lock.json" || failed=1
+  [[ "$output" == *"$source"* && "$output" == *"$home/.claude-backup"* && "$output" == *"$home/.codex-backup"* ]] || failed=1
+  assert_no_setup_residue "$home" || failed=1
+  before="$(snapshot_tree "$home/.nexus")|$(snapshot_tree "$home/.agents")|$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")|$(snapshot_tree "$home/.claude-backup")|$(snapshot_tree "$home/.codex-backup")"
+  output="$(run_nexus "$home" setup 2>&1)" || failed=1
+  after="$(snapshot_tree "$home/.nexus")|$(snapshot_tree "$home/.agents")|$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")|$(snapshot_tree "$home/.claude-backup")|$(snapshot_tree "$home/.codex-backup")"
+  [[ "$output" == *'already initialized'* && "$output" == *'/nexus:link'* && "$output" == *'$nexus-link'* && "$before" == "$after" ]] || failed=1
+  if (( failed == 0 )); then pass setup_happy_and_idempotent; else fail setup_happy_and_idempotent; fi
+}
+
+test_setup_preflight_and_lock_discovery() {
+  local failed=0 home one two output before after
+  home="$(new_home setup_preflight)"
+  write_lock "$home/.agents/.skill-lock.json" alpha
+  mkdir -p "$home/.claude-backup"; printf 'keep\n' >"$home/.claude-backup/marker"
+  before="$(snapshot_tree "$home")"
+  output="$(run_nexus "$home" setup 2>&1)" && failed=1
+  after="$(snapshot_tree "$home")"
+  [[ "$output" == *'backup already exists'* && "$before" == "$after" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+
+  home="$(new_home setup_candidates)"
+  one="$home/.agents/.skill-lock.json"; two="$home/.skills/skill-lock.json"
+  write_lock "$one" alpha; cp -- "$one" "$two" 2>/dev/null || { mkdir -p "$(dirname "$two")"; cp -- "$one" "$two"; }
+  mkdir -p "$home/.agents/skills/alpha"; printf 'ok\n' >"$home/.agents/skills/alpha/SKILL.md"
+  run_nexus "$home" setup >/dev/null 2>&1 || failed=1
+  cmp -s "$one" "$home/.nexus/skill-lock.json" || failed=1
+
+  home="$(new_home setup_conflicts)"
+  write_lock "$home/.agents/.skill-lock.json" alpha
+  write_lock "$home/.agents/skill-lock.json" beta
+  before="$(snapshot_tree "$home")"
+  output="$(run_nexus "$home" setup 2>&1)" && failed=1
+  after="$(snapshot_tree "$home")"
+  [[ "$output" == *'conflicting setup lock candidates'* && "$output" == *'.skill-lock.json'* && "$output" == *'skill-lock.json'* && "$before" == "$after" ]] || failed=1
+
+  home="$(new_home setup_invalid_candidate)"
+  mkdir -p "$home/.agents"
+  printf '{bad\n' >"$home/.agents/.skill-lock.json"
+  write_lock "$home/.agents/skill-lock.json" alpha
+  output="$(run_nexus "$home" setup 2>&1)" && failed=1
+  [[ "$output" == *'setup lock candidate is invalid'* && ! -e "$home/.claude-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  if (( failed == 0 )); then pass setup_preflight_and_lock_discovery; else fail setup_preflight_and_lock_discovery; fi
+}
+
+test_setup_backup_transaction_and_absent_roots() {
+  local failed=0 home output before after seam
+  home="$(new_home setup_backup_failure)"
+  write_lock "$home/.agents/.skill-lock.json"
+  mkdir -p "$home/.claude" "$home/.codex"
+  printf 'live\n' >"$home/.claude/marker"; printf 'live\n' >"$home/.codex/marker"
+  before="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
+  output="$(NEXUS_CP=false run_nexus "$home" setup 2>&1)" && failed=1
+  after="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
+  [[ "$before" == "$after" && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  assert_no_setup_residue "$home" || failed=1
+
+  home="$(new_home setup_promotion_failure)"
+  write_lock "$home/.agents/.skill-lock.json"
+  output="$(NEXUS_TEST_FAIL=backup_promote_second run_nexus "$home" setup 2>&1)" && failed=1
+  [[ ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  assert_no_setup_residue "$home" || failed=1
+
+  home="$(new_home setup_absent_roots)"
+  write_lock "$home/.agents/.skill-lock.json"
+  run_nexus "$home" setup >/dev/null 2>&1 || failed=1
+  [[ -d "$home/.claude-backup" && -d "$home/.codex-backup" ]] || failed=1
+  if (( failed == 0 )); then pass setup_backup_transaction_and_absent_roots; else fail setup_backup_transaction_and_absent_roots; fi
+}
+
+test_setup_canonical_failures_retain_publication() {
+  local failed=0 home output original
+  home="$(new_home setup_broken_canonical)"
+  write_lock "$home/.agents/.skill-lock.json" alpha
+  mkdir -p "$home/.agents/skills" "$home/.claude/skills/alpha" "$home/.codex/skills/alpha"
+  ln -s -- /missing/alpha "$home/.agents/skills/alpha"
+  output="$(run_nexus "$home" setup 2>&1)" && failed=1
+  [[ "$output" == *'broken symlink'* && -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" ]] || failed=1
+  [[ -d "$home/.claude/skills/alpha" && -d "$home/.codex/skills/alpha" ]] || failed=1
+  assert_no_setup_residue "$home" || failed=1
+
+  home="$(new_home setup_canonical_restore)"
+  write_lock "$home/.agents/.skill-lock.json" alpha
+  mkdir -p "$home/.claude/skills/alpha" "$home/.agents/skills"
+  printf 'skill\n' >"$home/.claude/skills/alpha/SKILL.md"
+  ln -s -- "../../.claude/skills/alpha" "$home/.agents/skills/alpha"
+  original="$(readlink "$home/.agents/skills/alpha")"
+  output="$(NEXUS_TEST_FAIL=canonical_promote run_nexus "$home" setup 2>&1)" && failed=1
+  [[ -L "$home/.agents/skills/alpha" && "$(readlink "$home/.agents/skills/alpha")" == "$original" ]] || failed=1
+  [[ -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" ]] || failed=1
+  assert_no_setup_residue "$home" || failed=1
+  if (( failed == 0 )); then pass setup_canonical_failures_retain_publication; else fail setup_canonical_failures_retain_publication; fi
 }
 
 test_metadata() {
@@ -518,5 +653,9 @@ test_link_reconciliation
 test_link_stale_ownership_and_empty_lock
 test_link_desired_collisions_are_preserved
 test_link_snapshot_safety
+test_setup_happy_and_idempotent
+test_setup_preflight_and_lock_discovery
+test_setup_backup_transaction_and_absent_roots
+test_setup_canonical_failures_retain_publication
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))
