@@ -81,6 +81,40 @@ run_nexus_overridden() {
       bash "$REPO_ROOT/scripts/nexus" "$REPO_ROOT/tests/faults.sh" "$@"
 }
 
+start_nexus_overridden() {
+  local home="$1" fault="$2" output="$3"; shift 3
+  local resolved
+  resolved="$(realpath -e -- "$home")" || return 125
+  [[ "$resolved" == "$(realpath -e -- "$TEST_ROOT")"/* && -f "$resolved/.nexus-test-home" ]] || {
+    printf 'refusing test override outside validated fake home\n' >&2; return 125;
+  }
+  HOME="$resolved" NEXUS_HOME="$resolved/.nexus" NEXUS_FAULT="$fault" \
+    bash -c 'export NEXUS_FAULT="$3"; source "$1"; nexus_init; source "$2"; fault_setup; if [[ "$4" == put_link_force ]]; then put_link "${5}" "${6}" true; else main "${@:4}"; fi' \
+      bash "$REPO_ROOT/scripts/nexus" "$REPO_ROOT/tests/faults.sh" "$fault" "$@" >"$output" 2>&1 &
+  NEXUS_TEST_PID=$!
+}
+
+wait_handshake() {
+  local marker="$1" pid="$2" i
+  for i in {1..200}; do
+    [[ -e "$marker" ]] && return 0
+    kill -0 "$pid" 2>/dev/null || return 1
+    sleep .02
+  done
+  return 1
+}
+
+stop_and_reap() {
+  local pid="$1" status
+  kill -TERM "$pid" 2>/dev/null || :
+  for _ in {1..100}; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep .02
+  done
+  wait "$pid" 2>/dev/null; status=$?
+  NEXUS_WAIT_STATUS="$status"
+}
+
 run_nexus() {
   local home="$1"
   shift
@@ -921,5 +955,55 @@ test_setup_rejects_reserved_control_skill_names
 test_setup_canonical_failures_retain_publication
 test_setup_canonical_safety_preflight
 test_discover_lock_uses_immutable_snapshots
+
+test_term_recovery() {
+  local failed=0 home pid output status
+  home="$(new_home term_pre)"; write_lock "$home/.agents/.skill-lock.json"; mkdir -p "$home/.claude" "$home/.codex"
+  printf live >"$home/.claude/marker"; printf live >"$home/.codex/marker"
+  start_nexus_overridden "$home" term_pre "$home/pre-output" setup || failed=1
+  pid="$NEXUS_TEST_PID"
+  wait_handshake "$home/pre-handshake" "$pid" || { failed=1; cat "$home/pre-output" >&2; }
+  stop_and_reap "$pid"; status="$NEXUS_WAIT_STATUS"
+  (( status != 0 && status != 127 )) || { cat "$home/pre-output" >&2; failed=1; }
+  [[ ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  [[ -f "$home/.claude/marker" && -f "$home/.codex/marker" ]] || failed=1
+  grep -Eq 'interrupted|rerun|retained' "$home/pre-output" || failed=1
+  assert_no_setup_residue "$home" || failed=1
+  [[ ! -e "$home/.nexus/.nexus-setup.lock" ]] || failed=1
+
+  home="$(new_home term_post)"; write_lock "$home/.agents/.skill-lock.json"; mkdir -p "$home/.claude" "$home/.codex"
+  start_nexus_overridden "$home" term_post "$home/post-output" setup || failed=1
+  pid="$NEXUS_TEST_PID"
+  wait_handshake "$home/post-handshake" "$pid" || { failed=1; cat "$home/post-output" >&2; }
+  [[ -d "$home/.claude-backup" && -d "$home/.codex-backup" && -f "$home/.nexus/skill-lock.json" ]] || failed=1
+  stop_and_reap "$pid"; status="$NEXUS_WAIT_STATUS"
+  (( status != 0 && status != 127 )) || { cat "$home/post-output" >&2; failed=1; }
+  grep -Fq "$home/.nexus/skill-lock.json" "$home/post-output" || failed=1
+  grep -Fq '/nexus:link' "$home/post-output" || failed=1
+  grep -Fq '$nexus-link' "$home/post-output" || failed=1
+  [[ ! -e "$home/.nexus/.nexus-setup.lock" ]] || failed=1
+  assert_no_setup_residue "$home" || failed=1
+  if (( failed == 0 )); then pass term_recovery; else fail term_recovery; fi
+}
+
+test_setup_traps_restore() {
+  local failed=0 home output
+  home="$(new_home trap_restore)"; write_lock "$home/.agents/.skill-lock.json"
+  output="$(HOME="$home" NEXUS_HOME="$home/.nexus" bash -c '
+    source "$1"; nexus_init
+    trap "printf EXIT-MARKER >&2" EXIT; trap "printf INT-MARKER >&2" INT; trap "printf TERM-MARKER >&2" TERM
+    before_exit="$(trap -p EXIT)"; before_int="$(trap -p INT)"; before_term="$(trap -p TERM)"
+    setup; a=$?; [[ "$before_exit" == "$(trap -p EXIT)" && "$before_int" == "$(trap -p INT)" && "$before_term" == "$(trap -p TERM)" ]] || exit 1
+    rm -f "$NEXUS_HOME/skill-lock.json"; setup >/dev/null 2>&1; b=$?
+    ok=$([[ "$before_exit" == "$(trap -p EXIT)" && "$before_int" == "$(trap -p INT)" && "$before_term" == "$(trap -p TERM)" && "$a" -eq 0 && "$b" -ne 0 ]] && echo yes || echo no)
+    trap - EXIT INT TERM
+    [[ "$ok" == yes ]]
+  ' bash "$REPO_ROOT/scripts/nexus" 2>&1)" || failed=1
+  [[ "$output" != *EXIT-MARKER* ]] || failed=1
+  if (( failed == 0 )); then pass setup_traps_restore; else fail setup_traps_restore; fi
+}
+
+test_term_recovery
+test_setup_traps_restore
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))

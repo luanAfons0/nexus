@@ -449,6 +449,9 @@ setup_cleanup_owned_paths() {
 
 setup_restore_traps() {
   local saved
+  # Clear handlers first: an empty saved definition means the signal was
+  # previously at its default action and must not retain Nexus's handler.
+  trap - EXIT INT TERM
   for saved in "${SETUP_PREV_EXIT:-}" "${SETUP_PREV_INT:-}" "${SETUP_PREV_TERM:-}"; do
     [[ -n "$saved" ]] && eval "$saved" || :
   done
@@ -464,9 +467,10 @@ setup_signal_handler() {
     error "setup interrupted; retained final/recovery paths: $HOME/.claude-backup $HOME/.codex-backup $LOCK_FILE"
     ((${#SETUP_OWNED_TEMPS[@]})) && error "retained setup temps: ${SETUP_OWNED_TEMPS[*]}"
     ((${#SETUP_OWNED_RECOVERY[@]})) && error "retained setup recovery paths: ${SETUP_OWNED_RECOVERY[*]}"
-    error "rerun setup only after reviewing retained paths; use nexus link for published lock recovery"
+    error "rerun setup only after reviewing retained paths; correct the issue, then run /nexus:link or \$nexus-link (CLI: $NEXUS_HOME/scripts/nexus link)"
   else
     setup_cleanup_owned_paths
+    error "setup interrupted before publication; no final backups or Nexus lock were published; rerun setup"
   fi
   setup_lock_release || :
   exit "$code"

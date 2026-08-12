@@ -30,4 +30,12 @@ fault_setup() {
     canonical_restore) canonical_move() { [[ "$1" == */original || "$1" == *'/.nexus-canonical-tmp.'* ]] && { error 'test seam: canonical restore failed'; return 1; }; __fault_orig_canonical_move "$@"; } ;;
     canonical_cleanup) cleanup_canonical_temp() { error 'test seam: canonical temp cleanup failed'; return 1; }; canonical_move() { [[ "$1" == *'/.nexus-canonical-tmp.'* ]] && { error 'test seam: canonical promotion failed'; return 1; }; [[ "$1" == */original ]] && { error 'test seam: canonical restore failed'; return 1; }; __fault_orig_canonical_move "$@"; } ;;
   esac
+  if [[ "${NEXUS_FAULT:-}" == term_pre ]]; then
+    fault_save copy_agent_tree
+    copy_agent_tree() { __fault_orig_copy_agent_tree "$@" || return; if [[ "$1" == "$HOME/.codex" ]]; then : >"$HOME/pre-handshake"; while [[ ! -e "$HOME/pre-release" ]]; do sleep .02; done; fi; return 0; }
+  fi
+  if [[ "${NEXUS_FAULT:-}" == term_post ]]; then
+    fault_save atomic_copy
+    atomic_copy() { __fault_orig_atomic_copy "$@" || return; : >"$HOME/post-handshake"; while [[ ! -e "$HOME/post-release" ]]; do sleep .02; done; }
+  fi
 }
