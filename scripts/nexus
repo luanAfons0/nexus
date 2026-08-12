@@ -8,7 +8,10 @@ CLAUDE_SKILLS="$HOME/.claude/skills"
 CODEX_SKILLS="$HOME/.codex/skills"
 CONTROL_SKILLS=(nexus-setup nexus-link nexus-install)
 ERRORS=0
-TEST_FAIL="${NEXUS_TEST_FAIL:-}"
+# Failure injection is test-only.  Normal invocations deliberately ignore every
+# NEXUS_TEST_* variable so environment state cannot alter live migrations.
+TEST_FAIL=''
+[[ "${NEXUS_TEST_MODE:-}" == 1 ]] && TEST_FAIL="${NEXUS_TEST_FAIL:-}"
 NEXUS_BACKUP_CP="${NEXUS_BACKUP_CP:-cp}"
 NEXUS_BACKUP_MV="${NEXUS_BACKUP_MV:-mv}"
 NEXUS_CANONICAL_CP="${NEXUS_CANONICAL_CP:-cp}"
@@ -32,6 +35,14 @@ resolved_link_target() {
     parent="$(dirname -- "$link")"
     realpath -m -- "$parent/$raw"
   fi
+}
+
+links_exactly_to() {
+  local link="$1" target="$2" installed expected
+  [[ -L "$link" ]] || return 1
+  installed="$(realpath -e -- "$link")" || return 1
+  expected="$(realpath -e -- "$target")" || return 1
+  [[ "$installed" == "$expected" ]]
 }
 
 path_is_within() {
@@ -358,7 +369,7 @@ put_link() {
 
   if [[ -L "$link" ]]; then
     current="$(resolved_link_target "$link")" || current=''
-    if [[ "$current" == "$(realpath -m -- "$target")" ]]; then
+    if links_exactly_to "$link" "$target"; then
       return 0
     fi
     if [[ "$force" != true ]] && ! is_managed_link "$link"; then
@@ -381,8 +392,7 @@ put_link() {
     return 1
   fi
   ln -s -- "$relative" "$tmp" || { error "cannot create temporary link for $link"; return 1; }
-  current="$(resolved_link_target "$tmp")" || current=''
-  if [[ "$current" != "$(realpath -m -- "$target")" ]]; then
+  if ! links_exactly_to "$tmp" "$target"; then
     [[ -L "$tmp" ]] && rm -- "$tmp"
     error "staged link verification failed: $link"
     return 1
@@ -419,11 +429,11 @@ put_link() {
       error "cannot install link: $link"
       return 1
     fi
-    current="$(resolved_link_target "$link")" || current=''
+    current=''
     if [[ "$TEST_FAIL" == verify ]]; then
       current=''
     fi
-    if [[ "$current" != "$(realpath -m -- "$target")" ]]; then
+    if [[ "$TEST_FAIL" == verify ]] || ! links_exactly_to "$link" "$target"; then
       rm -- "$link" || error "cannot remove incorrect link: $link"
       if ! stage_move "$original" "$link"; then
         error "recovery container retained: $backup"
@@ -443,8 +453,7 @@ put_link() {
     error "cannot install link: $link"
     return 1
   fi
-  current="$(resolved_link_target "$link")" || current=''
-  if [[ "$current" != "$(realpath -m -- "$target")" ]]; then
+  if ! links_exactly_to "$link" "$target"; then
     error "link verification failed: $link"
     return 1
   fi
@@ -576,7 +585,8 @@ canonical_move() {
     error "test seam: canonical restore failed"
     return 1
   fi
-  "$NEXUS_CANONICAL_MV" -Tf -- "$source" "$destination"
+  "$NEXUS_CANONICAL_MV" -Tn -- "$source" "$destination" || return 1
+  [[ ! -e "$source" && ! -L "$source" ]]
 }
 
 copy_agent_tree() {
@@ -598,7 +608,8 @@ copy_agent_tree() {
 }
 
 tree_manifest() {
-  local root="$1" manifest="$2" unsorted="$2.unsorted" item relative kind metadata hash link_hash link_bytes
+  local root="$1" manifest="$2" unsorted="$2.unsorted" paths="$2.paths" sorted_paths="$2.sorted-paths" item relative kind metadata hash link_hash link_bytes inode group
+  local -A hardlink_groups=()
   : >"$unsorted" || return 1
   [[ -d "$root" && ! -L "$root" ]] || return 1
   emit_manifest_entry() {
@@ -612,7 +623,10 @@ tree_manifest() {
     elif [[ -f "$path" ]]; then
       kind='f'
       hash="$(sha256sum -- "$path" | awk '{print $1}')" || return 1
-      printf '%q|%s|%s|%s\0' "$label" "$kind" "$metadata" "$hash" >>"$unsorted"
+      inode="$(stat -c '%d:%i' -- "$path")" || return 1
+      group="${hardlink_groups[$inode]:-$label}"
+      hardlink_groups["$inode"]="$group"
+      printf '%q|%s|%s|%s|%q\0' "$label" "$kind" "$metadata" "$hash" "$group" >>"$unsorted"
     elif [[ -d "$path" ]]; then
       kind='d'
       printf '%q|%s|%s|-\0' "$label" "$kind" "$metadata" >>"$unsorted"
@@ -622,10 +636,21 @@ tree_manifest() {
     fi
   }
   emit_manifest_entry "$root" . || return 1
+  if ! find -P "$root" -mindepth 1 -print0 >"$paths"; then
+    rm -f -- "$paths"
+    error "cannot traverse backup tree: $root"
+    return 1
+  fi
+  if ! LC_ALL=C sort -z -- "$paths" >"$sorted_paths"; then
+    rm -f -- "$paths" "$sorted_paths"
+    error "cannot sort backup tree traversal: $root"
+    return 1
+  fi
   while IFS= read -r -d '' item; do
     relative="${item#"$root"/}"
     emit_manifest_entry "$item" "$relative" || return 1
-  done < <(find -P "$root" -mindepth 1 -print0)
+  done <"$sorted_paths"
+  rm -f -- "$paths" "$sorted_paths"
   LC_ALL=C sort -z -- "$unsorted" >"$manifest" || return 1
   rm -f -- "$unsorted"
   unset -f emit_manifest_entry
@@ -655,6 +680,8 @@ cleanup_backup_manifests() {
   for label in claude codex claude-final codex-final; do
     rm -f -- "$transaction/$label.source.manifest" "$transaction/$label.copied.manifest" \
       "$transaction/$label.source.manifest.unsorted" "$transaction/$label.copied.manifest.unsorted" || return 1
+    rm -f -- "$transaction/$label.source.manifest.paths" "$transaction/$label.copied.manifest.paths" \
+      "$transaction/$label.source.manifest.sorted-paths" "$transaction/$label.copied.manifest.sorted-paths" || return 1
   done
   return 0
 }
@@ -754,6 +781,45 @@ valid_physical_skill() {
   [[ -d "$1" && ! -L "$1" && -f "$1/SKILL.md" ]]
 }
 
+canonical_root_preflight() {
+  [[ -d "$HOME/.agents" && ! -L "$HOME/.agents" ]] || {
+    error "canonical agent root must be a physical directory: $HOME/.agents"
+    return 1
+  }
+  if [[ -e "$CANONICAL_DIR" || -L "$CANONICAL_DIR" ]]; then
+    [[ -d "$CANONICAL_DIR" && ! -L "$CANONICAL_DIR" ]] || {
+      error "canonical skills root must be a physical directory: $CANONICAL_DIR"
+      return 1
+    }
+  fi
+  return 0
+}
+
+validate_canonical_skill() {
+  local skill="$1" skill_real file link resolved
+  [[ -d "$skill" && ! -L "$skill" && -f "$skill/SKILL.md" && ! -L "$skill/SKILL.md" ]] || {
+    error "canonical skill must contain a physical SKILL.md: $skill"
+    return 1
+  }
+  skill_real="$(realpath -e -- "$skill")" || return 1
+  file="$(realpath -e -- "$skill/SKILL.md")" || return 1
+  path_is_within "$skill_real" "$(realpath -e -- "$CANONICAL_DIR")" && path_is_within "$file" "$skill_real" || {
+    error "canonical skill escapes its physical tree: $skill"
+    return 1
+  }
+  while IFS= read -r -d '' link; do
+    resolved="$(realpath -e -- "$link")" || {
+      error "canonical skill has broken or cyclic symlink: $link"
+      return 1
+    }
+    path_is_within "$resolved" "$skill_real" || {
+      error "canonical skill symlink escapes skill tree: $link"
+      return 1
+    }
+  done < <(find -P "$skill" -type l -print0)
+  return 0
+}
+
 cleanup_canonical_temp() {
   local temp="$1"
   if [[ "$TEST_FAIL" == *canonical_cleanup* ]]; then
@@ -798,7 +864,13 @@ materialize_canonical_link() {
     return 1
   fi
   if ! canonical_move "$temp" "$current" || ! valid_physical_skill "$current"; then
-    [[ -d "$current" && ! -L "$current" ]] && rm -rf -- "$current"
+    if [[ -d "$current" && ! -L "$current" && -d "$temp" ]] &&
+       [[ "$(stat -c '%d:%i' -- "$current")" == "$(stat -c '%d:%i' -- "$temp")" ]]; then
+      cleanup_canonical_temp "$current" || error "canonical staged current retained: $current"
+    elif [[ -e "$current" || -L "$current" ]]; then
+      error "canonical promotion is ambiguous; retained current: $current; staged temp: $temp; recovery: $recovery"
+      return 1
+    fi
     if [[ -d "$temp" ]] && ! cleanup_canonical_temp "$temp"; then
       error "canonical temp retained: $temp"
     fi
@@ -819,6 +891,8 @@ materialize_canonical_links() {
   local name
   for name in "${SETUP_LOCK_NAMES[@]}"; do
     materialize_canonical_link "$name" || return 1
+    [[ -e "$CANONICAL_DIR/$name" || -L "$CANONICAL_DIR/$name" ]] || continue
+    validate_canonical_skill "$CANONICAL_DIR/$name" || return 1
   done
   return 0
 }
@@ -839,6 +913,7 @@ setup() {
   fi
   setup_backup_preflight || return 1
   discover_lock || return 1
+  canonical_root_preflight || return 1
   selected="$DISCOVERED_LOCK"
   snapshot_setup_lock "$selected" || return 1
   if ! load_validated_lock_names "$SETUP_LOCK_SNAPSHOT" SETUP_LOCK_NAMES; then
@@ -862,7 +937,7 @@ setup() {
     post_publication_failure "selected lock snapshot retained: $SETUP_LOCK_SNAPSHOT"
     return 1
   }
-  if ! materialize_canonical_links || ! link_all true; then
+  if ! materialize_canonical_links || ! link_all true || ! materialize_canonical_links; then
     post_publication_failure "setup encountered a post-publication failure"
     return 1
   fi

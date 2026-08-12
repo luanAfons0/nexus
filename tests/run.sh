@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+export NEXUS_TEST_MODE=1
+
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_ROOT="$(mktemp -d)" || exit 1
 if [[ -z "$TEST_ROOT" || ! -d "$TEST_ROOT" ]]; then
@@ -753,6 +755,28 @@ test_setup_canonical_failures_retain_publication() {
   if (( failed == 0 )); then pass setup_canonical_failures_retain_publication; else fail setup_canonical_failures_retain_publication; fi
 }
 
+test_setup_canonical_safety_preflight() {
+  local failed=0 home output before after
+  home="$(new_home setup_canonical_root_symlink)"
+  mkdir -p "$home/.claude/skills" "$home/.agents"
+  mv -- "$home/.agents" "$home/.agents-real"
+  ln -s -- .claude "$home/.agents"
+  write_lock "$home/.claude/.skill-lock.json" alpha
+  before="$(snapshot_tree "$home")"
+  output="$(run_nexus "$home" setup 2>&1)" && failed=1
+  after="$(snapshot_tree "$home")"
+  [[ "$output" == *'canonical agent root must be a physical directory'* && "$before" == "$after" && ! -e "$home/.claude-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+
+  home="$(new_home setup_skill_md_symlink)"
+  write_lock "$home/.agents/.skill-lock.json" alpha
+  mkdir -p "$home/.agents/skills/alpha" "$home/.claude/skills/alpha"
+  printf 'live\n' >"$home/.claude/skills/alpha/SKILL.md"
+  ln -s -- "../../../.claude/skills/alpha/SKILL.md" "$home/.agents/skills/alpha/SKILL.md"
+  output="$(run_nexus "$home" setup 2>&1)" && failed=1
+  [[ "$output" == *'physical SKILL.md'* && -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" && -d "$home/.claude/skills/alpha" ]] || failed=1
+  if (( failed == 0 )); then pass setup_canonical_safety_preflight; else fail setup_canonical_safety_preflight; fi
+}
+
 test_metadata() {
   local failed=0
   assert_contains .gitignore 'skill-lock.json' || failed=1
@@ -805,5 +829,6 @@ test_setup_backup_transaction_and_absent_roots
 test_setup_lock_publication_verification
 test_setup_rejects_reserved_control_skill_names
 test_setup_canonical_failures_retain_publication
+test_setup_canonical_safety_preflight
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))

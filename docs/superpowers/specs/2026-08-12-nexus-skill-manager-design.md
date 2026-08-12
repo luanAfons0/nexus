@@ -116,7 +116,7 @@ Setup refuses to overwrite either `~/.claude-backup` or `~/.codex-backup`.
 
 ### Backups
 
-Setup copies, rather than moves, the complete `~/.claude` and `~/.codex` directories. It uses temporary sibling destinations and preserves hidden files, permissions, timestamps, and symlinks. A successful temporary copy is renamed to:
+Setup copies, rather than moves, the complete `~/.claude` and `~/.codex` directories. It uses `cp -a` temporary sibling destinations and verifies paths, entry types, regular-file contents, hardlink topology, literal symlink targets, mode, uid/gid where available, and nanosecond mtime before publication. ACLs, xattrs, atime, and other filesystem-specific metadata are outside the v1 verification promise. A successful temporary copy is renamed to:
 
 ```text
 ~/.claude-backup
