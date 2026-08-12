@@ -3,6 +3,20 @@ safe_skill_name() {
   [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$name" != . && "$name" != .. ]]
 }
 
+register_validator_snapshot() {
+  local path="$1"
+  if [[ "${SETUP_TRAPS_ACTIVE:-0}" == 1 ]] && declare -F setup_register_temp >/dev/null 2>&1; then
+    setup_register_temp "$path"
+  fi
+}
+
+unregister_validator_snapshot() {
+  local path="$1"
+  if [[ "${SETUP_TRAPS_ACTIVE:-0}" == 1 ]] && declare -F setup_unregister_path >/dev/null 2>&1; then
+    setup_unregister_path "$path"
+  fi
+}
+
 cleanup_lock_snapshot() {
   local snapshot_dir="$1" snapshot="$snapshot_dir/lock.json" names="$snapshot_dir/names"
   if [[ ! -d "$snapshot_dir" || "$(dirname -- "$snapshot_dir")" != "$NEXUS_HOME" ||
@@ -15,6 +29,7 @@ cleanup_lock_snapshot() {
     error "cannot clean lock snapshot directory: $snapshot_dir"
     return 1
   fi
+  unregister_validator_snapshot "$snapshot_dir"
   return 0
 }
 
@@ -30,6 +45,7 @@ load_validated_lock_names() {
     error "cannot create lock snapshot directory under $NEXUS_HOME"
     return 1
   }
+  register_validator_snapshot "$snapshot_dir"
   snapshot="$snapshot_dir/lock.json"
   names="$snapshot_dir/names"
   if ! cp -- "$file" "$snapshot"; then
@@ -155,6 +171,8 @@ cleanup_discovered_lock_snapshots() {
     error "candidate lock snapshots retained: $DISCOVERY_SNAPSHOT_DIR"
     return 1
   }
-  setup_unregister_path "$DISCOVERY_SNAPSHOT_DIR"
+  if [[ "${SETUP_TRAPS_ACTIVE:-0}" == 1 ]] && declare -F setup_unregister_path >/dev/null 2>&1; then
+    setup_unregister_path "$DISCOVERY_SNAPSHOT_DIR"
+  fi
   DISCOVERY_SNAPSHOT_DIR=''
 }

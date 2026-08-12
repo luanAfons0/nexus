@@ -331,10 +331,14 @@ materialize_canonical_link() {
     error "managed canonical skill is a broken symlink: $current; correct it, then run nexus link"
     return 1
   }
-  [[ -d "$target" && -f "$target/SKILL.md" ]] || {
+  [[ -d "$target" && ! -L "$target" && -f "$target/SKILL.md" && ! -L "$target/SKILL.md" ]] || {
     error "managed canonical skill target lacks SKILL.md: $current; correct it, then run nexus link"
     return 1
   }
+  if ! python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/validate_skill_tree.py" "$target"; then
+    error "cannot materialize canonical skill safely: nested source symlink is broken, cyclic, or escapes $target"
+    return 1
+  fi
   mkdir -p -- "$CANONICAL_DIR" || { error "cannot create canonical directory: $CANONICAL_DIR"; return 1; }
   temp="$(mktemp -d -- "$CANONICAL_DIR/.nexus-canonical-tmp.XXXXXX")" || {
     error "cannot reserve canonical materialization temp for $current"
@@ -435,7 +439,7 @@ setup_cleanup_owned_paths() {
   for path in "${SETUP_OWNED_TEMPS[@]}" "${SETUP_OWNED_RECOVERY[@]}"; do
     [[ -n "$path" ]] || continue
     case "$path" in
-      "$HOME"/.nexus-setup-backup.*|"$CANONICAL_DIR"/.nexus-canonical-tmp.*|"$CANONICAL_DIR"/.nexus-canonical-old.*|"$NEXUS_HOME"/.nexus-setup-source.*|"$NEXUS_HOME"/.nexus-lock-candidates.*)
+      "$HOME"/.nexus-setup-backup.*|"$CANONICAL_DIR"/.nexus-canonical-tmp.*|"$CANONICAL_DIR"/.nexus-canonical-old.*|"$NEXUS_HOME"/.nexus-setup-source.*|"$NEXUS_HOME"/.nexus-lock.*|"$NEXUS_HOME"/.nexus-lock-candidates.*)
         [[ -e "$path" || -L "$path" ]] || continue
         rm -rf -- "$path" || :
         ;;
