@@ -525,49 +525,62 @@ test_setup_happy_and_idempotent() {
 }
 
 test_setup_preflight_and_lock_discovery() {
-  local failed=0 home one two output before after
+  local failed=0 home one two three output before after
   home="$(new_home setup_preflight)"
-  write_lock "$home/.agents/.skill-lock.json" alpha
-  mkdir -p "$home/.claude-backup"; printf 'keep\n' >"$home/.claude-backup/marker"
+  mkdir -p "$home/.agents" "$home/.claude-backup" "$home/.codex-backup"
+  printf '{broken\n' >"$home/.agents/.skill-lock.json"
+  printf 'keep\n' >"$home/.claude-backup/marker"
+  printf 'keep\n' >"$home/.codex-backup/marker"
   before="$(snapshot_tree "$home")"
   output="$(run_nexus "$home" setup 2>&1)" && failed=1
   after="$(snapshot_tree "$home")"
-  [[ "$output" == *'backup already exists'* && "$before" == "$after" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  [[ "$output" == *"$home/.claude-backup"* && "$output" == *"$home/.codex-backup"* && "$before" == "$after" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  assert_no_setup_residue "$home" || failed=1
 
   home="$(new_home setup_candidates)"
   one="$home/.agents/.skill-lock.json"; two="$home/.skills/skill-lock.json"
-  write_lock "$one" alpha; cp -- "$one" "$two" 2>/dev/null || { mkdir -p "$(dirname "$two")"; cp -- "$one" "$two"; }
+  write_lock "$one" alpha; mkdir -p "$(dirname "$two")"; jq -S . "$one" >"$two"
   mkdir -p "$home/.agents/skills/alpha"; printf 'ok\n' >"$home/.agents/skills/alpha/SKILL.md"
   run_nexus "$home" setup >/dev/null 2>&1 || failed=1
+  [[ "$(sha256sum "$one")" != "$(sha256sum "$two")" ]] || failed=1
   cmp -s "$one" "$home/.nexus/skill-lock.json" || failed=1
 
   home="$(new_home setup_conflicts)"
   write_lock "$home/.agents/.skill-lock.json" alpha
   write_lock "$home/.agents/skill-lock.json" beta
+  write_lock "$home/.skills/.skill-lock.json" gamma
   before="$(snapshot_tree "$home")"
   output="$(run_nexus "$home" setup 2>&1)" && failed=1
   after="$(snapshot_tree "$home")"
-  [[ "$output" == *'conflicting setup lock candidates'* && "$output" == *'.skill-lock.json'* && "$output" == *'skill-lock.json'* && "$before" == "$after" ]] || failed=1
+  [[ "$output" == *'conflicting setup lock candidates'* && "$output" == *"$home/.agents/.skill-lock.json"* && "$output" == *"$home/.agents/skill-lock.json"* && "$output" == *"$home/.skills/.skill-lock.json"* && "$before" == "$after" ]] || failed=1
+  assert_no_setup_residue "$home" || failed=1
 
   home="$(new_home setup_invalid_candidate)"
-  mkdir -p "$home/.agents"
+  mkdir -p "$home/.agents" "$home/.skills"
   printf '{bad\n' >"$home/.agents/.skill-lock.json"
-  write_lock "$home/.agents/skill-lock.json" alpha
+  printf '{also-bad\n' >"$home/.agents/skill-lock.json"
+  write_lock "$home/.skills/.skill-lock.json" alpha
+  before="$(snapshot_tree "$home")"
   output="$(run_nexus "$home" setup 2>&1)" && failed=1
-  [[ "$output" == *'setup lock candidate is invalid'* && ! -e "$home/.claude-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  after="$(snapshot_tree "$home")"
+  [[ "$output" == *'invalid setup lock candidates'* && "$output" == *"$home/.agents/.skill-lock.json"* && "$output" == *"$home/.agents/skill-lock.json"* && ! -e "$home/.claude-backup" && ! -e "$home/.nexus/skill-lock.json" && "$before" == "$after" ]] || failed=1
+  assert_no_setup_residue "$home" || failed=1
   if (( failed == 0 )); then pass setup_preflight_and_lock_discovery; else fail setup_preflight_and_lock_discovery; fi
 }
 
 test_setup_backup_transaction_and_absent_roots() {
-  local failed=0 home output before after seam
+  local failed=0 home output before after seam source_hash lock_hash recovery_tx recovery_codex
   home="$(new_home setup_backup_failure)"
   write_lock "$home/.agents/.skill-lock.json"
   mkdir -p "$home/.claude" "$home/.codex"
   printf 'live\n' >"$home/.claude/marker"; printf 'live\n' >"$home/.codex/marker"
+  seam="$home/backup-cp-seam"
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\\n" "$*" >>"$NEXUS_BACKUP_CP_LOG"' 'exit 1' >"$seam"; chmod 755 "$seam"
+  source_hash="$(sha256sum "$home/.agents/.skill-lock.json")"
   before="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
-  output="$(NEXUS_CP=false run_nexus "$home" setup 2>&1)" && failed=1
+  output="$(NEXUS_BACKUP_CP="$seam" NEXUS_BACKUP_CP_LOG="$home/backup-cp.log" run_nexus "$home" setup 2>&1)" && failed=1
   after="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
-  [[ "$before" == "$after" && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  [[ -s "$home/backup-cp.log" && "$before" == "$after" && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" && "$source_hash" == "$(sha256sum "$home/.agents/.skill-lock.json")" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
 
   home="$(new_home setup_promotion_failure)"
@@ -575,6 +588,17 @@ test_setup_backup_transaction_and_absent_roots() {
   output="$(NEXUS_TEST_FAIL=backup_promote_second run_nexus "$home" setup 2>&1)" && failed=1
   [[ ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
+
+  home="$(new_home setup_rollback_recovery)"
+  write_lock "$home/.agents/.skill-lock.json"
+  mkdir -p "$home/.claude" "$home/.codex"
+  printf 'claude-original\n' >"$home/.claude/marker"; printf 'codex-original\n' >"$home/.codex/marker"
+  output="$(NEXUS_TEST_FAIL=backup_promote_second,backup_rollback run_nexus "$home" setup 2>&1)" && failed=1
+  recovery_tx="$(printf '%s\n' "$output" | sed -n 's/.*; \(.*\.nexus-setup-backup\.[^ ]*\) (Codex backup:.*/\1/p' | tail -n 1)"
+  recovery_codex="$recovery_tx/codex-backup"
+  [[ -d "$home/.claude-backup" && -f "$home/.claude-backup/marker" && -d "$recovery_tx" && -f "$recovery_codex/marker" && "$output" == *"$home/.claude-backup"* && "$output" == *"$recovery_tx"* && "$output" == *"$recovery_codex"* && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+  [[ "$(find "$home" -maxdepth 1 -type d -name '.nexus-setup-backup.*' -print)" == "$recovery_tx" ]] || failed=1
+  [[ -z "$(find "$home" -maxdepth 2 \( -name '.nexus-setup-source.*' -o -name '.nexus-setup-copy.*' \) -print -quit)" ]] || failed=1
 
   home="$(new_home setup_absent_roots)"
   write_lock "$home/.agents/.skill-lock.json"
@@ -584,7 +608,7 @@ test_setup_backup_transaction_and_absent_roots() {
 }
 
 test_setup_canonical_failures_retain_publication() {
-  local failed=0 home output original
+  local failed=0 home output original retained_temp
   home="$(new_home setup_broken_canonical)"
   write_lock "$home/.agents/.skill-lock.json" alpha
   mkdir -p "$home/.agents/skills" "$home/.claude/skills/alpha" "$home/.codex/skills/alpha"
@@ -593,6 +617,27 @@ test_setup_canonical_failures_retain_publication() {
   [[ "$output" == *'broken symlink'* && -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" ]] || failed=1
   [[ -d "$home/.claude/skills/alpha" && -d "$home/.codex/skills/alpha" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
+
+  home="$(new_home setup_canonical_restore_failure)"
+  write_lock "$home/.agents/.skill-lock.json" alpha
+  mkdir -p "$home/.claude/skills/alpha" "$home/.agents/skills"
+  printf 'skill\n' >"$home/.claude/skills/alpha/SKILL.md"
+  ln -s -- "../../.claude/skills/alpha" "$home/.agents/skills/alpha"
+  output="$(NEXUS_TEST_FAIL=canonical_promote,canonical_restore run_nexus "$home" setup 2>&1)" && failed=1
+  original="$(printf '%s\n' "$output" | sed -n 's/.*canonical recovery retained: //p' | tail -n 1)"
+  [[ -n "$original" && -L "$original/original" && "$(readlink "$original/original")" == '../../.claude/skills/alpha' && -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" ]] || failed=1
+  [[ -z "$(find "$home/.agents/skills" -maxdepth 1 -name '.nexus-canonical-tmp.*' -print -quit)" ]] || failed=1
+  [[ -d "$home/.claude/skills/alpha" ]] || failed=1
+
+  home="$(new_home setup_canonical_cleanup_failure)"
+  write_lock "$home/.agents/.skill-lock.json" alpha
+  mkdir -p "$home/.claude/skills/alpha" "$home/.agents/skills"
+  printf 'skill\n' >"$home/.claude/skills/alpha/SKILL.md"
+  ln -s -- "../../.claude/skills/alpha" "$home/.agents/skills/alpha"
+  output="$(NEXUS_TEST_FAIL=canonical_promote,canonical_restore,canonical_cleanup run_nexus "$home" setup 2>&1)" && failed=1
+  original="$(printf '%s\n' "$output" | sed -n 's/.*canonical recovery retained: //p' | tail -n 1)"
+  retained_temp="$(printf '%s\n' "$output" | sed -n 's/.*canonical temp retained: //p' | tail -n 1)"
+  [[ -L "$original/original" && -d "$retained_temp" && "$output" == *"$original"* && "$output" == *"$retained_temp"* ]] || failed=1
 
   home="$(new_home setup_canonical_restore)"
   write_lock "$home/.agents/.skill-lock.json" alpha
