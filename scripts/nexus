@@ -206,25 +206,38 @@ discover_lock() {
     "$HOME/.skills/.skill-lock.json"
     "$HOME/.skills/skill-lock.json"
   )
-  local candidate first='' first_json='' candidate_json
-  local -a names=() found=() invalid=() valid=()
+  local candidate snapshot first='' first_snapshot='' first_json='' candidate_json
+  local -a names=() found=() invalid=() valid=() valid_snapshots=()
   DISCOVERED_LOCK=''
+  DISCOVERED_LOCK_SNAPSHOT=''
+  DISCOVERY_SNAPSHOT_DIR="$(mktemp -d -- "$NEXUS_HOME/.nexus-lock-candidates.XXXXXX")" || {
+    error "cannot reserve candidate lock snapshots"
+    return 1
+  }
   for candidate in "${candidates[@]}"; do
     [[ -e "$candidate" || -L "$candidate" ]] || continue
     found+=("$candidate")
-    if ! load_validated_lock_names "$candidate" names; then
+    snapshot="$DISCOVERY_SNAPSHOT_DIR/${#found[@]}.json"
+    if ! cp -- "$candidate" "$snapshot" || ! cmp -s -- "$candidate" "$snapshot"; then
+      error "cannot snapshot setup lock candidate: $candidate"
       invalid+=("$candidate")
       continue
     fi
-    candidate_json="$(lock_semantic_json "$candidate")" || {
+    if ! load_validated_lock_names "$snapshot" names; then
+      invalid+=("$candidate")
+      continue
+    fi
+    candidate_json="$(lock_semantic_json "$snapshot")" || {
       error "cannot canonicalize lock candidate: $candidate"
       return 1
     }
     if [[ -z "$first" ]]; then
       first="$candidate"
+      first_snapshot="$snapshot"
       first_json="$candidate_json"
     fi
     valid+=("$candidate")
+    valid_snapshots+=("$snapshot")
   done
   if (( ${#invalid[@]} != 0 )); then
     error "invalid setup lock candidates: ${invalid[*]}"
@@ -234,9 +247,9 @@ discover_lock() {
     error "no version-3 skill lock found (checked: ${candidates[*]})"
     return 1
   fi
-  for candidate in "${valid[@]}"; do
-    candidate_json="$(lock_semantic_json "$candidate")" || {
-      error "cannot canonicalize lock candidate: $candidate"
+  for snapshot in "${valid_snapshots[@]}"; do
+    candidate_json="$(lock_semantic_json "$snapshot")" || {
+      error "cannot canonicalize lock candidate snapshot: $snapshot"
       return 1
     }
     if [[ "$candidate_json" != "$first_json" ]]; then
@@ -245,7 +258,19 @@ discover_lock() {
     fi
   done
   DISCOVERED_LOCK="$first"
+  DISCOVERED_LOCK_SNAPSHOT="$first_snapshot"
   return 0
+}
+
+cleanup_discovered_lock_snapshots() {
+  [[ -n "${DISCOVERY_SNAPSHOT_DIR:-}" && -d "$DISCOVERY_SNAPSHOT_DIR" &&
+     "$(dirname -- "$DISCOVERY_SNAPSHOT_DIR")" == "$NEXUS_HOME" &&
+     "$(basename -- "$DISCOVERY_SNAPSHOT_DIR")" == .nexus-lock-candidates.* ]] || return 0
+  rm -rf -- "$DISCOVERY_SNAPSHOT_DIR" || {
+    error "candidate lock snapshots retained: $DISCOVERY_SNAPSHOT_DIR"
+    return 1
+  }
+  DISCOVERY_SNAPSHOT_DIR=''
 }
 
 build_desired_names() {
@@ -547,7 +572,7 @@ atomic_copy() {
     error "atomic copy staging verification failed: $destination"
     return 1
   fi
-  if ! mv -Tf -- "$temp" "$destination"; then
+  if ! mv -Tn -- "$temp" "$destination" || [[ -e "$temp" || -L "$temp" ]]; then
     cleanup_setup_file "$temp" "$parent" .nexus-setup-copy. || :
     error "cannot promote copied file: $destination"
     return 1
@@ -572,7 +597,8 @@ backup_move() {
     error "test seam: backup rollback failed"
     return 1
   fi
-  "$NEXUS_BACKUP_MV" -Tf -- "$source" "$destination"
+  "$NEXUS_BACKUP_MV" -Tn -- "$source" "$destination" || return 1
+  [[ ! -e "$source" && ! -L "$source" ]]
 }
 
 canonical_move() {
@@ -897,6 +923,30 @@ materialize_canonical_links() {
   return 0
 }
 
+setup_lock_acquire() {
+  SETUP_MUTEX="$NEXUS_HOME/.nexus-setup.lock"
+  if ! mkdir -- "$SETUP_MUTEX"; then
+    error "another setup is already running or recovery is required: $SETUP_MUTEX"
+    return 1
+  fi
+  [[ -d "$SETUP_MUTEX" && ! -L "$SETUP_MUTEX" && "$(dirname -- "$SETUP_MUTEX")" == "$NEXUS_HOME" ]] || {
+    error "invalid setup lock directory: $SETUP_MUTEX"
+    return 1
+  }
+  return 0
+}
+
+setup_lock_release() {
+  [[ -n "${SETUP_MUTEX:-}" && -d "$SETUP_MUTEX" && ! -L "$SETUP_MUTEX" &&
+     "$(dirname -- "$SETUP_MUTEX")" == "$NEXUS_HOME" ]] || return 0
+  rmdir -- "$SETUP_MUTEX" || {
+    error "setup lock retained for recovery: $SETUP_MUTEX"
+    return 1
+  }
+  SETUP_MUTEX=''
+  return 0
+}
+
 post_publication_failure() {
   local detail="$1"
   error "$detail"
@@ -904,7 +954,7 @@ post_publication_failure() {
   error "correct the reported issue, then run /nexus:link or \$nexus-link (CLI: $NEXUS_HOME/scripts/nexus link)"
 }
 
-setup() {
+setup_inner() {
   local selected third_party_count linked_entries
   ERRORS=0
   if [[ -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
@@ -915,17 +965,12 @@ setup() {
   discover_lock || return 1
   canonical_root_preflight || return 1
   selected="$DISCOVERED_LOCK"
-  snapshot_setup_lock "$selected" || return 1
-  if ! load_validated_lock_names "$SETUP_LOCK_SNAPSHOT" SETUP_LOCK_NAMES; then
-    cleanup_setup_file "$SETUP_LOCK_SNAPSHOT" "$NEXUS_HOME" .nexus-setup-source. || :
-    return 1
-  fi
+  SETUP_LOCK_SNAPSHOT="$DISCOVERED_LOCK_SNAPSHOT"
+  load_validated_lock_names "$SETUP_LOCK_SNAPSHOT" SETUP_LOCK_NAMES || return 1
   if ! backup_transaction; then
-    cleanup_setup_file "$SETUP_LOCK_SNAPSHOT" "$NEXUS_HOME" .nexus-setup-source. || :
     return 1
   fi
   if ! publish_setup_lock "$SETUP_LOCK_SNAPSHOT"; then
-    cleanup_setup_file "$SETUP_LOCK_SNAPSHOT" "$NEXUS_HOME" .nexus-setup-source. || :
     if [[ -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
       post_publication_failure "Nexus lock publication verification failed"
     else
@@ -933,10 +978,6 @@ setup() {
     fi
     return 1
   fi
-  cleanup_setup_file "$SETUP_LOCK_SNAPSHOT" "$NEXUS_HOME" .nexus-setup-source. || {
-    post_publication_failure "selected lock snapshot retained: $SETUP_LOCK_SNAPSHOT"
-    return 1
-  }
   if ! materialize_canonical_links || ! link_all true || ! materialize_canonical_links; then
     post_publication_failure "setup encountered a post-publication failure"
     return 1
@@ -945,6 +986,19 @@ setup() {
   linked_entries="$(( (third_party_count + ${#CONTROL_SKILLS[@]}) * 2 ))"
   info "setup complete: source lock: $selected; Claude backup: $SETUP_CLAUDE_BACKUP; Codex backup: $SETUP_CODEX_BACKUP; third-party skills: $third_party_count; linked agent skill entries: $linked_entries (two agents; includes ${#CONTROL_SKILLS[@]} controls)"
   return 0
+}
+
+setup() {
+  local status=0
+  if [[ -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
+    info "already initialized; run /nexus:link or \$nexus-link to reconcile skills"
+    return 0
+  fi
+  setup_lock_acquire || return 1
+  setup_inner || status=$?
+  cleanup_discovered_lock_snapshots || status=1
+  setup_lock_release || status=1
+  return "$status"
 }
 
 usage() {

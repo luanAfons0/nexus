@@ -63,8 +63,8 @@ assert_line() {
 
 new_home() {
   local name="$1" home="$TEST_ROOT/$1"
-  mkdir -p "$home/.nexus"
-  cp -R -- "$REPO_ROOT/skills" "$home/.nexus/"
+  mkdir -p "$home/.nexus" || return 1
+  cp -R -- "$REPO_ROOT/skills" "$home/.nexus/" || return 1
   printf '%s\n' "$home"
 }
 
@@ -129,7 +129,13 @@ write_lock() {
 snapshot_tree() {
   local root="$1"
   if [[ -d "$root" ]]; then
-    find "$root" -mindepth 1 -printf '%y|%P|%l\n' | LC_ALL=C sort
+    local listing
+    listing="$(mktemp)" || return 1
+    find "$root" -mindepth 1 -printf '%y|%P|%l\n' >"$listing" || { rm -f -- "$listing"; return 1; }
+    LC_ALL=C sort -- "$listing"
+    local status=$?
+    rm -f -- "$listing"
+    return "$status"
   fi
 }
 
@@ -546,6 +552,14 @@ test_setup_preflight_and_lock_discovery() {
   [[ "$output" == *"$home/.claude-backup"* && "$output" == *"$home/.codex-backup"* && "$before" == "$after" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
 
+  home="$(new_home setup_mutex)"
+  write_lock "$home/.agents/.skill-lock.json" alpha
+  mkdir -p "$home/.nexus/.nexus-setup.lock"
+  before="$(snapshot_tree "$home")"
+  output="$(run_nexus "$home" setup 2>&1)" && failed=1
+  after="$(snapshot_tree "$home")"
+  [[ "$output" == *'another setup is already running'* && "$before" == "$after" && ! -e "$home/.claude-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+
   home="$(new_home setup_candidates)"
   one="$home/.agents/.skill-lock.json"; two="$home/.skills/skill-lock.json"
   write_lock "$one" alpha; mkdir -p "$(dirname "$two")"; jq -S . "$one" >"$two"
@@ -710,6 +724,28 @@ test_setup_rejects_reserved_control_skill_names() {
   if (( failed == 0 )); then pass setup_rejects_reserved_control_skill_names; else fail setup_rejects_reserved_control_skill_names; fi
 }
 
+test_discover_lock_uses_immutable_snapshots() {
+  local failed=0 home source output snapshot published
+  home="$(new_home discover_snapshot)"
+  source="$home/.agents/.skill-lock.json"
+  write_lock "$source" alpha
+  output="$(HOME="$home" NEXUS_HOME="$home/.nexus" bash -c '
+    source "$1"
+    discover_lock || exit 1
+    snapshot="$DISCOVERED_LOCK_SNAPSHOT"
+    cp -- "$snapshot" "$HOME/expected"
+    printf "%s\n" "{\"version\":3,\"skills\":{\"beta\":{}}}" >"$DISCOVERED_LOCK"
+    atomic_copy "$snapshot" "$LOCK_FILE" false || exit 1
+    cmp -s "$HOME/expected" "$LOCK_FILE"
+    status=$?
+    cleanup_discovered_lock_snapshots
+    exit "$status"
+  ' bash "$REPO_ROOT/scripts/nexus" 2>&1)" || { printf '%s\n' "$output" >&2; failed=1; }
+  cmp -s "$home/expected" "$home/.nexus/skill-lock.json" || failed=1
+  [[ -z "$(find "$home/.nexus" -maxdepth 1 -name '.nexus-lock-candidates.*' -print -quit)" ]] || failed=1
+  if (( failed == 0 )); then pass discover_lock_uses_immutable_snapshots; else fail discover_lock_uses_immutable_snapshots; fi
+}
+
 test_setup_canonical_failures_retain_publication() {
   local failed=0 home output original retained_temp
   home="$(new_home setup_broken_canonical)"
@@ -830,5 +866,6 @@ test_setup_lock_publication_verification
 test_setup_rejects_reserved_control_skill_names
 test_setup_canonical_failures_retain_publication
 test_setup_canonical_safety_preflight
+test_discover_lock_uses_immutable_snapshots
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))
