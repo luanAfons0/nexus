@@ -25,6 +25,21 @@ cleanup_setup_file() {
   rm -f -- "$path"
 }
 
+cleanup_registered_setup_file() {
+  local path="$1" parent="$2" prefix="$3"
+  # A failed operation may already have consumed the path.  In that case it
+  # is safe to unregister it; otherwise retain registration for final cleanup
+  # and reporting.
+  if [[ ! -e "$path" && ! -L "$path" ]]; then
+    setup_unregister_path "$path"
+    return 0
+  fi
+  cleanup_setup_file "$path" "$parent" "$prefix" || return 1
+  [[ ! -e "$path" && ! -L "$path" ]] || return 1
+  setup_unregister_path "$path"
+  return 0
+}
+
 snapshot_setup_lock() {
   local source="$1" snapshot
   snapshot="$(mktemp -- "$NEXUS_HOME/.nexus-setup-source.XXXXXX")" || {
@@ -32,12 +47,12 @@ snapshot_setup_lock() {
     return 1
   }
   if ! cp -- "$source" "$snapshot"; then
-    cleanup_setup_file "$snapshot" "$NEXUS_HOME" .nexus-setup-source. || :
+    cleanup_registered_setup_file "$snapshot" "$NEXUS_HOME" .nexus-setup-source. || :
     error "cannot snapshot selected lock: $source"
     return 1
   fi
   if ! cmp -s -- "$source" "$snapshot"; then
-    cleanup_setup_file "$snapshot" "$NEXUS_HOME" .nexus-setup-source. || :
+    cleanup_registered_setup_file "$snapshot" "$NEXUS_HOME" .nexus-setup-source. || :
     error "selected lock snapshot differs from source: $source"
     return 1
   fi
@@ -59,17 +74,17 @@ atomic_copy() {
   }
   setup_register_temp "$temp"
   if ! cp -- "$source" "$temp"; then
-    cleanup_setup_file "$temp" "$parent" .nexus-setup-copy. || :
+    cleanup_registered_setup_file "$temp" "$parent" .nexus-setup-copy. || :
     error "cannot copy source: $source"
     return 1
   fi
   if ! cmp -s -- "$source" "$temp"; then
-    cleanup_setup_file "$temp" "$parent" .nexus-setup-copy. || :
+    cleanup_registered_setup_file "$temp" "$parent" .nexus-setup-copy. || :
     error "atomic copy staging verification failed: $destination"
     return 1
   fi
   if ! mv -Tn -- "$temp" "$destination" || [[ -e "$temp" || -L "$temp" ]]; then
-    cleanup_setup_file "$temp" "$parent" .nexus-setup-copy. || :
+    cleanup_registered_setup_file "$temp" "$parent" .nexus-setup-copy. || :
     error "cannot promote copied file: $destination"
     return 1
   fi
@@ -222,6 +237,8 @@ backup_transaction() {
   if ! backup_move "$codex_tmp" "$codex_backup"; then
     error "cannot promote Codex backup"
     if ! backup_move "$claude_backup" "$claude_tmp"; then
+      setup_unregister_path "$tx"
+      setup_register_recovery "$tx"
       error "backup recovery retained: $claude_backup; $tx (Codex backup: $codex_tmp)"
       return 1
     fi
@@ -374,6 +391,8 @@ materialize_canonical_link() {
       return 1
     fi
     if [[ -d "$temp" ]] && ! cleanup_canonical_temp "$temp"; then
+      setup_unregister_path "$temp"
+      setup_register_recovery "$temp"
       error "canonical temp retained: $temp"
     fi
     if ! canonical_move "$original" "$current"; then
@@ -575,16 +594,27 @@ setup_inner() {
 }
 
 setup() {
-  local status=0
+  local status=0 cleanup_status=0
   if [[ -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
     info "already initialized; run /nexus:link or \$nexus-link to reconcile skills"
     return 0
   fi
   setup_lock_acquire || return 1
   setup_inner || status=$?
+  # The EXIT handler must not race or repeat ordinary finalization.  Keep the
+  # saved traps intact and restore them only after every owned path is dealt
+  # with and the setup mutex has been released.
+  trap - EXIT INT TERM
   cleanup_discovered_lock_snapshots || status=1
+  setup_cleanup_owned_temps || cleanup_status=$?
+  if (( cleanup_status != 0 )); then
+    setup_report_retained_temps
+    status=1
+  fi
   setup_lock_release || status=1
   setup_restore_traps
   SETUP_PHASE='idle'
+  SETUP_OWNED_TEMPS=()
+  SETUP_OWNED_RECOVERY=()
   return "$status"
 }
