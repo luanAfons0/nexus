@@ -1095,8 +1095,32 @@ test_setup_traps_restore() {
   if (( failed == 0 )); then pass setup_traps_restore; else fail setup_traps_restore; fi
 }
 
+test_setup_finalization_signal_window() {
+  local failed=0 home output pid status
+  home="$(new_home finalization_signal_window)"
+  write_lock "$home/.agents/.skill-lock.json" alpha
+  start_nexus_overridden "$home" final_cleanup "$home/output" setup || failed=1
+  pid="$NEXUS_TEST_PID"
+  wait_handshake "$home/finalization-handshake" "$pid" || {
+    failed=1
+    cat "$home/output" >&2
+  }
+  kill -TERM "$pid" 2>/dev/null || failed=1
+  : >"$home/finalization-release"
+  wait "$pid" 2>/dev/null
+  status=$?
+  output="$(<"$home/output")"
+  [[ "$status" -eq 143 && -d "$home/.claude-backup" && -d "$home/.codex-backup" &&
+     -f "$home/.nexus/skill-lock.json" && ! -e "$home/.nexus/.nexus-setup.lock" &&
+     -z "$(find "$home/.nexus" -maxdepth 1 \( -name '.nexus-lock-candidates.*' -o -name '.nexus-setup-*' \) -print -quit)" &&
+     "$output" == *'setup interrupted'* && "$output" == *'/nexus:link'* &&
+     "$output" == *'$nexus-link'* ]] || failed=1
+  if (( failed == 0 )); then pass setup_finalization_signal_window; else fail setup_finalization_signal_window; fi
+}
+
 test_term_recovery
 test_setup_traps_restore
+test_setup_finalization_signal_window
 test_nested_source_symlink_safety
 
 if python3 "$REPO_ROOT/tests/backup_manifest_test.py" >/dev/null; then

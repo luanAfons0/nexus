@@ -499,8 +499,11 @@ setup_restore_traps() {
 setup_signal_handler() {
   local sig="$1" code
   case "$sig" in INT) code=130 ;; TERM) code=143 ;; *) code=1 ;; esac
+  # Disable all Nexus handlers before doing cleanup so a second signal cannot
+  # re-enter this handler while a cleanup operation is in progress.
   trap - EXIT INT TERM
   SETUP_INTERRUPTED=1
+  cleanup_discovered_lock_snapshots || :
   setup_cleanup_owned_temps || :
   setup_report_retained_temps
   if [[ -e "$HOME/.claude-backup" || -e "$HOME/.codex-backup" || -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
@@ -516,14 +519,23 @@ setup_signal_handler() {
 
 setup_exit_handler() {
   local status=$?
-  trap - EXIT INT TERM
+  # This is the EXIT fallback for callers that leave setup without reaching
+  # its explicit finalization.  Keep the recovery handlers active until every
+  # discovered snapshot, owned temp, and the setup mutex have been handled.
+  trap - EXIT
   if (( status != 0 )); then
+    cleanup_discovered_lock_snapshots || :
     setup_cleanup_owned_temps || :
     setup_report_retained_temps
     if [[ -e "$HOME/.claude-backup" || -e "$HOME/.codex-backup" || -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
       error "setup failed; retained final/recovery paths: $HOME/.claude-backup $HOME/.codex-backup $LOCK_FILE"
       ((${#SETUP_OWNED_RECOVERY[@]})) && error "retained setup recovery paths: ${SETUP_OWNED_RECOVERY[*]}"
     fi
+  fi
+  if (( status == 0 )); then
+    cleanup_discovered_lock_snapshots || :
+    setup_cleanup_owned_temps || :
+    setup_report_retained_temps
   fi
   setup_lock_release || :
   setup_restore_traps
@@ -601,10 +613,10 @@ setup() {
   fi
   setup_lock_acquire || return 1
   setup_inner || status=$?
-  # The EXIT handler must not race or repeat ordinary finalization.  Keep the
-  # saved traps intact and restore them only after every owned path is dealt
-  # with and the setup mutex has been released.
-  trap - EXIT INT TERM
+  # Keep Nexus recovery handlers active throughout finalization.  In
+  # particular, INT/TERM must still clean/report any path left by a cleanup
+  # failure before releasing the mutex and exiting.
+  SETUP_FINALIZING=1
   cleanup_discovered_lock_snapshots || status=1
   setup_cleanup_owned_temps || cleanup_status=$?
   if (( cleanup_status != 0 )); then
@@ -612,9 +624,12 @@ setup() {
     status=1
   fi
   setup_lock_release || status=1
-  setup_restore_traps
+  SETUP_FINALIZING=0
   SETUP_PHASE='idle'
   SETUP_OWNED_TEMPS=()
   SETUP_OWNED_RECOVERY=()
+  # Must remain the final finalization operation: this reinstalls the traps
+  # that were present before setup_lock_acquire.
+  setup_restore_traps
   return "$status"
 }

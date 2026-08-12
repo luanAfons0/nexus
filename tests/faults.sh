@@ -10,6 +10,7 @@ fault_setup() {
     lock_copy_corrupt|lock_post_publish_corrupt) fault_save atomic_copy ;;
     canonical_promote|canonical_restore|canonical_cleanup) fault_save canonical_move ;;
     canonical_cleanup) fault_save cleanup_canonical_temp ;;
+    final_cleanup) fault_save cleanup_discovered_lock_snapshots ;;
   esac
   case "${NEXUS_FAULT:-}" in
     stage|promote|restore) stage_move() { [[ "$NEXUS_FAULT" == stage || "$NEXUS_FAULT" == promote && "$1" == *'/.nexus-tmp.'* || "$NEXUS_FAULT" == restore && ( "$1" == *'/.nexus-tmp.'* || "$1" == */original ) ]] && { [[ "$NEXUS_FAULT" == stage ]] && error 'test seam: staged link creation failed' || error 'test seam: staged move failed'; return 1; }; __fault_orig_stage_move "$@"; } ;;
@@ -42,6 +43,15 @@ fault_setup() {
   if [[ "${NEXUS_FAULT:-}" == term_post || "${NEXUS_FAULT:-}" == term_post_cleanup_fail ]]; then
     fault_save register_validator_snapshot
     register_validator_snapshot() { __fault_orig_register_validator_snapshot "$@" || return; if [[ -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then : >"$HOME/post-handshake"; while [[ ! -e "$HOME/post-release" ]]; do sleep .02; done; fi; }
+  fi
+  if [[ "${NEXUS_FAULT:-}" == final_cleanup ]]; then
+    cleanup_discovered_lock_snapshots() {
+      if [[ ! -e "$HOME/finalization-handshake" ]]; then
+        : >"$HOME/finalization-handshake"
+        while [[ ! -e "$HOME/finalization-release" ]]; do sleep .02; done
+      fi
+      __fault_orig_cleanup_discovered_lock_snapshots "$@"
+    }
   fi
   if [[ "${NEXUS_FAULT:-}" == term_pre_cleanup_fail || "${NEXUS_FAULT:-}" == term_post_cleanup_fail ]]; then
     rm() {
