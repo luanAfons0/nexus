@@ -3,7 +3,7 @@ fault_save() { local n="$1"; eval "$(declare -f "$n" | sed "1s/^$n /__fault_orig
 fault_setup() {
   case "${NEXUS_FAULT:-}" in
     stage|promote|verify|restore) fault_save stage_move; fault_save links_exactly_to ;;
-    lock_extract|lock_replace) fault_save load_validated_lock_names ;;
+    lock_extract|lock_replace|install_snapshot_mutate) fault_save load_validated_lock_names ;;
     backup_copy_fail|backup_copy_false|backup_copy_corrupt|backup_root_corrupt|backup_child_corrupt|backup_symlink_corrupt|backup_retry_once|backup_retry_always) fault_save copy_agent_tree ;;
     backup_manifest_count) fault_save backup_manifest ;;
     backup_promote_second|backup_rollback|backup_final_corrupt|backup_promote_ambiguous) fault_save backup_move ;;
@@ -17,6 +17,7 @@ fault_setup() {
     verify) links_exactly_to() { return 1; } ;;
     lock_extract) load_validated_lock_names() { error 'test seam: lock key extraction failed'; return 1; } ;;
     lock_replace) load_validated_lock_names() { __fault_orig_load_validated_lock_names "$@" || return; printf '%s\n' '{"version":3,"skills":{"../escape":{}}}' >"$1"; } ;;
+    install_snapshot_mutate) load_validated_lock_names() { printf '%s\n' '{"version":3,"skills":{"beta":{}}}' >"$HOME/.agents/.skill-lock.json"; __fault_orig_load_validated_lock_names "$@"; } ;;
     backup_copy_fail) copy_agent_tree() { [[ "$1" == "$HOME/.claude" ]] && { error 'test seam: backup copy failed'; return 1; }; __fault_orig_copy_agent_tree "$@"; } ;;
     backup_copy_false) copy_agent_tree() { mkdir -p -- "$2"; return 0; } ;;
     backup_copy_corrupt) copy_agent_tree() { __fault_orig_copy_agent_tree "$@" || return; printf corrupt >"$2/corrupt"; } ;;
@@ -39,6 +40,15 @@ fault_setup() {
     canonical_find_fail) find() { if [[ "$1" == '-P' && "$3" == '-type' && "$4" == 'l' && "$2" == "$HOME/.agents/skills/alpha" ]]; then error 'test seam: canonical symlink scan failed'; return 1; fi; command find "$@"; } ;;
     canonical_scan_window) find() { if [[ "$1" == '-P' && "$3" == '-type' && "$4" == 'l' && "$2" == "$HOME/.agents/skills/alpha" ]]; then : >"$HOME/scan-handshake"; while [[ ! -e "$HOME/scan-release" ]]; do sleep .02; done; fi; command find "$@"; } ;;
   esac
+  if [[ "${NEXUS_FAULT:-}" == install_cleanup_fail ]]; then
+    rm() {
+      local arg
+      for arg in "$@"; do
+        [[ "$arg" == *'/.nexus-install-'* ]] && { error 'test seam: install scratch cleanup failed'; return 1; }
+      done
+      command rm "$@"
+    }
+  fi
   if [[ "${NEXUS_FAULT:-}" == term_pre || "${NEXUS_FAULT:-}" == term_pre_cleanup_fail ]]; then
     fault_save register_validator_snapshot
     register_validator_snapshot() { __fault_orig_register_validator_snapshot "$@" || return; : >"$HOME/pre-handshake"; while [[ ! -e "$HOME/pre-release" ]]; do sleep .02; done; }

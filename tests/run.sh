@@ -396,6 +396,25 @@ EOF
   output="$(PATH="$home/fakebin:$PATH" run_nexus "$home" install -bogus --skill alpha 2>&1)"; [[ "$?" -eq 2 ]] || failed=1
   [[ "$output" == *'unknown install flag: -bogus'* && ! -e "$home/npx-invoked" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
 
+  home="$(new_home install_snapshot)"
+  mkdir -p "$home/.agents/skills/alpha" "$home/.agents/skills/beta" "$home/fakebin"
+  printf alpha >"$home/.agents/skills/alpha/SKILL.md"
+  printf beta >"$home/.agents/skills/beta/SKILL.md"
+  printf '%s\n' '#!/usr/bin/env bash' 'mkdir -p "$HOME/.agents/skills/alpha"' 'printf '\''{"version":3,"skills":{"alpha":{}}}\n'\'' >"$HOME/.agents/.skill-lock.json"' >"$home/fakebin/npx"
+  chmod 755 "$home/fakebin/npx"
+  output="$(PATH="$home/fakebin:$PATH" run_nexus_overridden "$home" install_snapshot_mutate install source --skill alpha 2>&1)" || failed=1
+  cmp -s "$home/.nexus/skill-lock.json" <(printf '%s\n' '{"version":3,"skills":{"alpha":{}}}') || failed=1
+  [[ ! -e "$home/.agents/.skill-lock.json" || "$(cat "$home/.agents/.skill-lock.json")" == *'beta'* ]] || failed=1
+  [[ -z "$(find "$home/.nexus" -maxdepth 1 -name '.nexus-install-*' -print -quit)" ]] || failed=1
+
+  home="$(new_home install_cleanup)"
+  mkdir -p "$home/fakebin"
+  printf '%s\n' '#!/usr/bin/env bash' 'mkdir -p "$HOME/.agents"' 'printf '\''{bad\n'\'' >"$HOME/.agents/.skill-lock.json"' >"$home/fakebin/npx"
+  chmod 755 "$home/fakebin/npx"
+  output="$(PATH="$home/fakebin:$PATH" run_nexus_overridden "$home" install_cleanup_fail install source --skill alpha 2>&1)" || :
+  [[ "$output" == *'install scratch retained:'* ]] || failed=1
+  [[ -n "$(find "$home/.nexus" -maxdepth 1 -name '.nexus-install-*' -print -quit)" ]] || failed=1
+
   home="$(new_home install_nvm)"
   unset NVM_DIR
   mkdir -p "$home/.nvm" "$home/nvm-bin" "$home/onlybin"
