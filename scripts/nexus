@@ -8,6 +8,7 @@ CLAUDE_SKILLS="$HOME/.claude/skills"
 CODEX_SKILLS="$HOME/.codex/skills"
 CONTROL_SKILLS=(nexus-setup nexus-link nexus-install)
 ERRORS=0
+FAIL_STAGE="${NEXUS_TEST_FAIL_STAGE:-}"
 
 info() { printf 'nexus: %s\n' "$*"; }
 error() { printf 'nexus: error: %s\n' "$*" >&2; ERRORS=$((ERRORS + 1)); }
@@ -26,15 +27,36 @@ resolved_link_target() {
 
 is_managed_path() {
   local path="$1" canonical nexus
-  canonical="$(realpath -m -- "$CANONICAL_DIR")"
-  nexus="$(realpath -m -- "$NEXUS_HOME/skills")"
-  path="$(realpath -m -- "$path")"
+  canonical="$(realpath -m -s -- "$CANONICAL_DIR")"
+  nexus="$(realpath -m -s -- "$NEXUS_HOME/skills")"
+  path="$(realpath -m -s -- "$path")"
   [[ "$path" == "$canonical" || "$path" == "$canonical"/* ||
      "$path" == "$nexus" || "$path" == "$nexus"/* ]]
 }
 
+is_managed_link() {
+  local link="$1" raw parent lexical resolved
+  raw="$(readlink -- "$link")" || return 1
+  parent="$(dirname -- "$link")"
+  if [[ "$raw" == /* ]]; then
+    lexical="$(realpath -m -s -- "$raw")"
+  else
+    lexical="$(realpath -m -s -- "$parent/$raw")"
+  fi
+  resolved="$(resolved_link_target "$link")" || return 1
+  is_managed_path "$lexical" || is_managed_path "$resolved"
+}
+
+stage_move() {
+  if [[ "$FAIL_STAGE" == mv ]]; then
+    error "test seam: staged move failed"
+    return 1
+  fi
+  mv -Tf -- "$1" "$2"
+}
+
 put_link() {
-  local target="$1" link="$2" force="${3:-false}" parent relative tmp current
+  local target="$1" link="$2" force="${3:-false}" parent relative tmp current backup
   if [[ ! -e "$target" ]]; then
     error "missing link target: $target"
     return 1
@@ -47,15 +69,12 @@ put_link() {
     if [[ "$current" == "$(realpath -m -- "$target")" ]]; then
       return 0
     fi
-    if [[ "$force" != true ]] && ! is_managed_path "$current"; then
+    if [[ "$force" != true ]] && ! is_managed_link "$link"; then
       error "collision at $link (external symlink)"
       return 1
     fi
-    rm -- "$link" || { error "cannot replace $link"; return 1; }
   elif [[ -e "$link" ]]; then
-    if [[ "$force" == true ]]; then
-      rm -rf -- "$link" || { error "cannot replace $link"; return 1; }
-    else
+    if [[ "$force" != true ]]; then
       error "collision at $link"
       return 1
     fi
@@ -66,7 +85,35 @@ put_link() {
   }
   tmp="$parent/.nexus-tmp.$$.${RANDOM}"
   ln -s -- "$relative" "$tmp" || { error "cannot create temporary link for $link"; return 1; }
-  if ! mv -Tf -- "$tmp" "$link"; then
+  current="$(resolved_link_target "$tmp")" || current=''
+  if [[ "$current" != "$(realpath -m -- "$target")" ]]; then
+    [[ -L "$tmp" ]] && rm -- "$tmp"
+    error "staged link verification failed: $link"
+    return 1
+  fi
+
+  if [[ -e "$link" && ! -L "$link" ]]; then
+    backup="$parent/.nexus-backup.$$.${RANDOM}"
+    if ! stage_move "$link" "$backup"; then
+      [[ -L "$tmp" ]] && rm -- "$tmp"
+      error "cannot stage existing collision: $link"
+      return 1
+    fi
+    if ! stage_move "$tmp" "$link"; then
+      stage_move "$backup" "$link" || error "cannot restore collision: $link"
+      [[ -L "$tmp" ]] && rm -- "$tmp"
+      error "cannot install link: $link"
+      return 1
+    fi
+    if [[ "$backup" == "$parent/.nexus-backup.$$."* ]]; then
+      rm -rf -- "$backup" || error "cannot remove Nexus backup: $backup"
+    else
+      error "refusing to remove unvalidated backup: $backup"
+    fi
+    return 0
+  fi
+
+  if ! stage_move "$tmp" "$link"; then
     [[ -L "$tmp" ]] && rm -- "$tmp"
     error "cannot install link: $link"
     return 1

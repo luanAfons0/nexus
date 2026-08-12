@@ -131,6 +131,33 @@ test_bootstrap_collision() {
   if (( failed == 0 )); then pass bootstrap_collision; else fail bootstrap_collision; fi
 }
 
+test_bootstrap_staging_failure() {
+  local failed=0 home old output link
+  home="$(new_home staging_failure)"
+  run_nexus "$home" bootstrap >/dev/null 2>&1 || failed=1
+  link="$home/.claude/skills/nexus-setup"
+  ln -sfn -- "$home/.nexus/skills/nexus-link" "$link"
+  old="$(readlink -- "$link")"
+  output="$(NEXUS_TEST_FAIL_STAGE=mv HOME="$home" NEXUS_HOME="$home/.nexus" "$REPO_ROOT/scripts/nexus" bootstrap 2>&1)" && failed=1
+  [[ "$output" == *'staged move failed'* ]] || failed=1
+  [[ "$(readlink -- "$link")" == "$old" ]] || { printf '  staging failure changed existing link\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass bootstrap_staging_failure; else fail bootstrap_staging_failure; fi
+}
+
+test_bootstrap_lexical_managed_link() {
+  local failed=0 home bridge link
+  home="$(new_home lexical_managed)"
+  bridge="$home/.nexus/skills/alias"
+  ln -s /external/target "$bridge"
+  link="$home/.claude/skills/nexus-setup"
+  mkdir -p "$(dirname -- "$link")"
+  ln -s -- "../../.nexus/skills/alias/nexus-setup" "$link"
+  run_nexus "$home" bootstrap >/dev/null 2>&1 || failed=1
+  assert_link_to "$link" "$home/.nexus/skills/nexus-setup" || failed=1
+  [[ "$(readlink -- "$link")" != '../../.nexus/skills/alias/nexus-setup' ]] || failed=1
+  if (( failed == 0 )); then pass bootstrap_lexical_managed_link; else fail bootstrap_lexical_managed_link; fi
+}
+
 test_metadata() {
   local failed=0
   assert_contains .gitignore 'skill-lock.json' || failed=1
@@ -165,5 +192,7 @@ test_metadata() {
 test_metadata
 test_bootstrap
 test_bootstrap_collision
+test_bootstrap_staging_failure
+test_bootstrap_lexical_managed_link
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))
