@@ -326,8 +326,7 @@ canonical_root_preflight() {
 }
 
 validate_canonical_skill() {
-  local skill="$1" skill_real file link resolved
-  local links_file
+  local skill="$1" skill_real file link resolved links_file scan_parent
   [[ -d "$skill" && ! -L "$skill" && -f "$skill/SKILL.md" && ! -L "$skill/SKILL.md" ]] || {
     error "canonical skill must contain a physical SKILL.md: $skill"
     return 1
@@ -338,28 +337,30 @@ validate_canonical_skill() {
     error "canonical skill escapes its physical tree: $skill"
     return 1
   }
-  links_file="$(mktemp)" || {
+  scan_parent="${TMPDIR:-/tmp}"
+  links_file="$(mktemp -- "$scan_parent/.nexus-canonical-scan.XXXXXX")" || {
     error "cannot reserve canonical skill symlink scan"
     return 1
   }
+  setup_register_temp "$links_file"
   if ! find -P "$skill" -type l -print0 >"$links_file"; then
-    rm -f -- "$links_file"
+    cleanup_registered_setup_file "$links_file" "$scan_parent" .nexus-canonical-scan. || :
     error "cannot scan canonical skill symlinks: $skill"
     return 1
   fi
   while IFS= read -r -d '' link; do
     resolved="$(realpath -e -- "$link")" || {
-      rm -f -- "$links_file"
+      cleanup_registered_setup_file "$links_file" "$scan_parent" .nexus-canonical-scan. || :
       error "canonical skill has broken or cyclic symlink: $link"
       return 1
     }
     path_is_within "$resolved" "$skill_real" || {
-      rm -f -- "$links_file"
+      cleanup_registered_setup_file "$links_file" "$scan_parent" .nexus-canonical-scan. || :
       error "canonical skill symlink escapes skill tree: $link"
       return 1
     }
   done <"$links_file"
-  rm -f -- "$links_file"
+  cleanup_registered_setup_file "$links_file" "$scan_parent" .nexus-canonical-scan. || return 1
   return 0
 }
 
@@ -492,7 +493,7 @@ setup_cleanup_owned_temps() {
     [[ -n "$path" ]] || continue
     owned=0
     case "$path" in
-      "$HOME"/.nexus-setup-backup.*|"$CANONICAL_DIR"/.nexus-canonical-tmp.*|"$NEXUS_HOME"/.nexus-setup-source.*|"$NEXUS_HOME"/.nexus-setup-copy.*|"$NEXUS_HOME"/.nexus-lock.*|"$NEXUS_HOME"/.nexus-lock-candidates.*)
+      "$HOME"/.nexus-setup-backup.*|"$CANONICAL_DIR"/.nexus-canonical-tmp.*|"$NEXUS_HOME"/.nexus-setup-source.*|"$NEXUS_HOME"/.nexus-setup-copy.*|"$NEXUS_HOME"/.nexus-lock.*|"$NEXUS_HOME"/.nexus-lock-candidates.*|"${TMPDIR:-/tmp}"/.nexus-canonical-scan.*)
         owned=1
         if [[ -e "$path" || -L "$path" ]]; then
           if ! rm -rf -- "$path"; then

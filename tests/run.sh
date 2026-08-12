@@ -1152,9 +1152,30 @@ test_setup_finalization_signal_window() {
   if (( failed == 0 )); then pass setup_finalization_signal_window; else fail setup_finalization_signal_window; fi
 }
 
+test_setup_canonical_scan_signal_cleanup() {
+  local failed=0 home output pid status canonical
+  home="$(new_home canonical_scan_signal_cleanup)"
+  canonical="$home/.agents/skills"
+  mkdir -p "$home/tmp" "$canonical/alpha"
+  write_lock "$home/.agents/.skill-lock.json" alpha
+  printf 'skill\n' >"$canonical/alpha/SKILL.md"
+  output="$home/output"
+  TMPDIR="$home/tmp" HOME="$home" NEXUS_HOME="$home/.nexus" NEXUS_FAULT=canonical_scan_window \
+    bash -c 'export NEXUS_FAULT="$3"; source "$1"; nexus_init; source "$2"; fault_setup; main setup' \
+      bash "$REPO_ROOT/scripts/nexus" "$REPO_ROOT/tests/faults.sh" canonical_scan_window setup >"$output" 2>&1 &
+  pid=$!
+  wait_handshake "$home/scan-handshake" "$pid" || { failed=1; cat "$output" >&2; }
+  kill -TERM "$pid" 2>/dev/null || failed=1
+  : >"$home/scan-release"
+  wait "$pid" 2>/dev/null; status=$?
+  [[ "$status" -eq 143 && -z "$(find "$home/tmp" -name '.nexus-canonical-scan.*' -print -quit)" ]] || failed=1
+  if (( failed == 0 )); then pass setup_canonical_scan_signal_cleanup; else fail setup_canonical_scan_signal_cleanup; fi
+}
+
 test_term_recovery
 test_setup_traps_restore
 test_setup_finalization_signal_window
+test_setup_canonical_scan_signal_cleanup
 test_nested_source_symlink_safety
 
 if python3 "$REPO_ROOT/tests/backup_manifest_test.py" >/dev/null; then

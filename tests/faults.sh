@@ -37,6 +37,7 @@ fault_setup() {
     canonical_cleanup) cleanup_canonical_temp() { error 'test seam: canonical temp cleanup failed'; return 1; }; canonical_move() { [[ "$1" == *'/.nexus-canonical-tmp.'* ]] && { error 'test seam: canonical promotion failed'; return 1; }; [[ "$1" == */original ]] && { error 'test seam: canonical restore failed'; return 1; }; __fault_orig_canonical_move "$@"; } ;;
     canonical_late_collision) canonical_move() { if [[ "$1" == "$HOME/.agents/skills/alpha" && -z "${CANONICAL_COLLISION_INJECTED:-}" ]]; then CANONICAL_COLLISION_INJECTED=1; rm -- "$1"; printf 'late collision\n' >"$1"; fi; __fault_orig_canonical_move "$@"; } ;;
     canonical_find_fail) find() { if [[ "$1" == '-P' && "$3" == '-type' && "$4" == 'l' && "$2" == "$HOME/.agents/skills/alpha" ]]; then error 'test seam: canonical symlink scan failed'; return 1; fi; command find "$@"; } ;;
+    canonical_scan_window) find() { if [[ "$1" == '-P' && "$3" == '-type' && "$4" == 'l' && "$2" == "$HOME/.agents/skills/alpha" ]]; then : >"$HOME/scan-handshake"; while [[ ! -e "$HOME/scan-release" ]]; do sleep .02; done; fi; command find "$@"; } ;;
   esac
   if [[ "${NEXUS_FAULT:-}" == term_pre || "${NEXUS_FAULT:-}" == term_pre_cleanup_fail ]]; then
     fault_save register_validator_snapshot
