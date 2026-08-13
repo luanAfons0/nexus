@@ -179,7 +179,7 @@ class Store:
         connection = sqlite3.connect(self.db_path)
         try:
             current = connection.execute("PRAGMA user_version").fetchone()[0]
-            if current >= 1:
+            if current >= 2:
                 return
             statements = [
                 """
@@ -217,7 +217,9 @@ class Store:
                 CREATE TABLE external_references (
                     id INTEGER PRIMARY KEY, entry_id INTEGER NOT NULL REFERENCES work_entries(id),
                     kind TEXT NOT NULL, identifier TEXT NOT NULL, url TEXT, title TEXT,
-                    status TEXT, target_branch TEXT, UNIQUE(entry_id, kind, identifier)
+                    status TEXT, target_branch TEXT, repository TEXT, source_branch TEXT,
+                    commit_sha TEXT, metadata_json TEXT NOT NULL DEFAULT '{}',
+                    UNIQUE(entry_id, kind, identifier)
                 );
                 CREATE TABLE calendar_exceptions (
                     day TEXT PRIMARY KEY, non_working INTEGER NOT NULL DEFAULT 0,
@@ -247,9 +249,18 @@ class Store:
                 shutil.copy2(self.db_path, backup)
                 os.chmod(backup, 0o600)
             with connection:
-                connection.executescript(statements[0])
-                connection.execute("INSERT INTO migration_state VALUES (1, ?)", (iso(utc_now()),))
-                connection.execute("PRAGMA user_version = 1")
+                if current == 0:
+                    connection.executescript(statements[0])
+                elif current == 1:
+                    for column, definition in (
+                        ("repository", "TEXT"),
+                        ("source_branch", "TEXT"),
+                        ("commit_sha", "TEXT"),
+                        ("metadata_json", "TEXT NOT NULL DEFAULT '{}'"),
+                    ):
+                        connection.execute(f"ALTER TABLE external_references ADD COLUMN {column} {definition}")
+                connection.execute("INSERT OR IGNORE INTO migration_state VALUES (2, ?)", (iso(utc_now()),))
+                connection.execute("PRAGMA user_version = 2")
             os.chmod(self.db_path, 0o600)
         except Exception as exc:
             connection.rollback()
@@ -435,26 +446,82 @@ class Runtime:
         open_session = connection.execute("SELECT 1 FROM work_sessions WHERE period_id = ? AND kind = ? AND ended_at IS NULL", (period["id"], session[1])).fetchone()
         return period["id"] if open_session else None
 
+    def _github_parts(self, value: Any) -> tuple[str | None, str | None]:
+        """Return repository and PR number from an allowlisted GitHub value."""
+        text = str(value or "")
+        parsed = urlparse(text)
+        if parsed.hostname not in {"github.com", "www.github.com"}:
+            return None, None
+        parts = [item for item in parsed.path.split("/") if item]
+        if len(parts) >= 4 and parts[2] == "pull" and parts[0] and parts[1] and parts[3].isdigit():
+            return f"{parts[0]}/{parts[1]}", parts[3]
+        return None, None
+
+    def _pull_request_identifier(self, identifier: Any, repository: Any = None, url: Any = None) -> tuple[str, str | None, str | None]:
+        repo = sanitize(repository, 200).strip() or None
+        number = sanitize(identifier, 100).strip()
+        url_repo, url_number = self._github_parts(url)
+        if not url_repo and not url_number:
+            url_repo, url_number = self._github_parts(number)
+        if url_repo and url_number:
+            repo, number = url_repo, url_number
+        if "#" in number and not number.startswith("#"):
+            possible_repo, possible_number = number.rsplit("#", 1)
+            if possible_number.isdigit():
+                repo, number = possible_repo, possible_number
+        if number.startswith("#") and number[1:].isdigit():
+            number = number[1:]
+        canonical = f"{repo}#{number}" if repo and number.isdigit() else number
+        return canonical, repo, number if number else None
+
     def _references(self, values: Iterable[str], prs: Iterable[str]) -> list[dict[str, Any]]:
         references: list[dict[str, Any]] = []
         for identifier in values:
-            text = sanitize(identifier, 100)
+            if isinstance(identifier, dict):
+                text = sanitize(identifier.get("identifier"), 100)
+            else:
+                text = sanitize(identifier, 100)
             if text:
                 references.append({"kind": "linear", "identifier": text})
         for value in prs:
-            url = safe_link(value)
-            if url and "/pull/" in url:
-                references.append({"kind": "pull_request", "identifier": url.rsplit("/pull/", 1)[1].split("/", 1)[0], "url": url})
+            raw_url = value.get("url") if isinstance(value, dict) else value
+            url = safe_link(str(raw_url or ""))
+            repository = value.get("repository") if isinstance(value, dict) else None
+            identifier = value.get("identifier") if isinstance(value, dict) else None
+            if url:
+                repository, number = self._github_parts(url)
+                identifier = number
+            if identifier:
+                canonical, repository, _ = self._pull_request_identifier(identifier, repository, url)
+                references.append({
+                    "kind": "pull_request", "identifier": canonical, "url": url,
+                    "repository": repository,
+                    "source_branch": sanitize(value.get("source_branch") or value.get("head_branch"), 200) if isinstance(value, dict) else None,
+                    "commit_sha": sanitize(value.get("commit_sha") or value.get("head_sha"), 200) if isinstance(value, dict) else None,
+                })
         return references
 
     def _insert_references(self, connection: sqlite3.Connection, entry_id: int, references: list[dict[str, Any]]) -> None:
         for reference in references:
-            url = reference.get("url")
-            if reference["kind"] == "linear" and not url:
-                url = f"https://linear.app/issue/{urllib.parse.quote(reference['identifier'])}"
+            kind = reference.get("kind")
+            identifier = sanitize(reference.get("identifier"), 200).strip()
+            if kind not in {"linear", "pull_request"} or not identifier:
+                continue
+            url = safe_link(str(reference.get("url") or "")) if reference.get("url") else None
+            repository = None
+            if kind == "pull_request":
+                identifier, repository, _ = self._pull_request_identifier(identifier, reference.get("repository"), url)
+            elif not url:
+                url = f"https://linear.app/issue/{urllib.parse.quote(identifier)}"
+            metadata = reference.get("metadata") or {}
+            if not isinstance(metadata, dict):
+                metadata = {}
             connection.execute(
-                "INSERT OR IGNORE INTO external_references(entry_id, kind, identifier, url) VALUES (?, ?, ?, ?)",
-                (entry_id, reference["kind"], reference["identifier"], url),
+                "INSERT OR IGNORE INTO external_references(entry_id, kind, identifier, url, repository, source_branch, commit_sha, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (entry_id, kind, identifier, url, repository or sanitize(reference.get("repository"), 200) or None,
+                 sanitize(reference.get("source_branch"), 200) or None,
+                 sanitize(reference.get("commit_sha"), 200) or None,
+                 json.dumps(metadata, ensure_ascii=False)),
             )
 
     def note(self, text: str, state: str, at: str | None, linear: list[str], prs: list[str]) -> dict[str, Any]:
@@ -487,9 +554,12 @@ class Runtime:
             raise DailyError("work entry not found")
         result = dict(row)
         result["references"] = []
-        for item in connection.execute("SELECT kind, identifier, url, title, status, target_branch FROM external_references WHERE entry_id = ?", (entry_id,)):
+        for item in connection.execute("SELECT kind, identifier, url, title, status, target_branch, repository, source_branch, commit_sha, metadata_json FROM external_references WHERE entry_id = ? ORDER BY id", (entry_id,)):
             reference = dict(item)
             reference["url"] = safe_link(reference.get("url", "")) if reference.get("url") else None
+            metadata = json.loads(reference.pop("metadata_json") or "{}")
+            if isinstance(metadata, dict) and metadata.get("pull_requests"):
+                reference["linked_pull_requests"] = metadata["pull_requests"]
             result["references"].append(reference)
         result["curated_fields"] = json.loads(result.pop("curated_json") or "{}")
         if include_evidence:
@@ -731,35 +801,372 @@ class Runtime:
             connection.close()
 
     def enrich(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Apply read-only, contract-shaped integration metadata.
+        """Apply metadata returned by read-only GitHub/Linear adapters.
 
-        Production adapters can feed this boundary from ``gh`` or Linear.  No
-        network client or mutation API is called by the runtime itself.
+        The adapters deliberately stop at this contract: ``github`` contains
+        PR records returned by read-only ``gh`` queries and ``linear`` contains
+        issue records returned by a read-only GraphQL query.  The runtime only
+        writes its own SQLite cache and report references.  This keeps capture
+        and presentation independent from credentials, network availability,
+        and the implementation of either external client.
+
+        A GitHub record may be selected by an explicit PR identifier, or by a
+        repository plus branch/commit evidence.  Linear records can carry
+        related PR records; those are attached to the same Work Entry.
         """
+        if not isinstance(payload, dict):
+            raise DailyError("enrichment input must be a JSON object")
         references = payload.get("references", [])
         if not isinstance(references, list):
-            raise DailyError("enrichment payload references must be a list")
+            references = []
+        github = payload.get("github") or {}
+        linear = payload.get("linear") or {}
+        if isinstance(github, list):
+            github = {"status": "ok", "pull_requests": github}
+        if isinstance(linear, list):
+            linear = {"status": "ok", "issues": linear}
+        if not isinstance(github, dict):
+            github = {"status": "invalid"}
+        if not isinstance(linear, dict):
+            linear = {"status": "invalid"}
+        github_has_records = bool(github.get("pull_requests") or github.get("prs"))
+        if github.get("query") or (not github_has_records and any(github.get(key) for key in ("repository", "repo", "branch", "commit", "number", "pull_request"))):
+            try:
+                from .integrations import GitHubReadOnlyAdapter
+                github = {**github, "status": "ok", "pull_requests": GitHubReadOnlyAdapter().resolve(github.get("query") or github)}
+            except Exception as exc:
+                github = {**github, "status": "error", "message": sanitize(exc, 240)}
+        linear_has_records = bool(linear.get("issues") or linear.get("references"))
+        if linear.get("query") or (not linear_has_records and any(linear.get(key) for key in ("identifier", "key"))):
+            try:
+                from .integrations import LinearReadOnlyAdapter
+                linear = {**linear, "status": "ok", "issues": LinearReadOnlyAdapter().resolve(linear.get("query") or linear)}
+            except Exception as exc:
+                linear = {**linear, "status": "error", "message": sanitize(exc, 240)}
+
         connection = self.store.connect()
+        diagnostics: list[dict[str, str]] = []
+        cache_hits = 0
+        stale_cache = False
+        changed = 0
+        now = utc_now()
+        ttl = payload.get("cache_ttl_seconds", 86400)
         try:
-            changed = 0
-            for item in references:
-                if not isinstance(item, dict) or item.get("kind") not in {"linear", "pull_request"}:
-                    continue
-                identifier = sanitize(item.get("identifier"), 200)
-                if not identifier:
-                    continue
-                if payload.get("offline") and not item.get("title") and not item.get("status"):
-                    cached = connection.execute("SELECT payload FROM integration_cache WHERE kind = ? AND identifier = ?", (item["kind"], identifier)).fetchone()
-                    if cached:
-                        item = {**item, **json.loads(cached["payload"])}
-                for row in connection.execute("SELECT id FROM external_references WHERE kind = ? AND identifier = ?", (item["kind"], identifier)):
-                    connection.execute("UPDATE external_references SET title = COALESCE(?, title), status = COALESCE(?, status), target_branch = COALESCE(?, target_branch), url = COALESCE(?, url) WHERE id = ?", (sanitize(item.get("title"), 300) if item.get("title") else None, sanitize(item.get("status"), 100) if item.get("status") else None, sanitize(item.get("target_branch"), 100) if item.get("target_branch") else None, safe_link(item.get("url", "")) if item.get("url") else None, row["id"]))
+            def add_diagnostic(provider: str, code: str, message: Any) -> None:
+                diagnostic = {"provider": sanitize(provider, 30), "code": sanitize(code, 60), "message": sanitize(message, 240)}
+                if diagnostic not in diagnostics:
+                    diagnostics.append(diagnostic)
+
+            def status_for(provider: str, data: dict[str, Any]) -> str:
+                value = str(data.get("status", "ok")).strip().lower().replace("-", "_").replace(" ", "_")
+                aliases = {"success": "ok", "available": "ok", "authenticated": "ok", "unauthorized": "expired_auth", "auth_expired": "expired_auth", "offline_mode": "offline", "rate_limit": "rate_limited"}
+                value = aliases.get(value, value)
+                if value not in {"ok", "offline", "expired_auth", "rate_limited", "missing", "invalid", "error"}:
+                    value = "error"
+                if value != "ok":
+                    add_diagnostic(provider, value, data.get("message") or f"{provider} enrichment unavailable")
+                return value
+
+            github_status = status_for("github", github)
+            linear_status = status_for("linear", linear)
+            if payload.get("offline"):
+                if github_status == "ok":
+                    github_status = "offline"
+                    add_diagnostic("github", "offline", "GitHub access is offline")
+                if linear_status == "ok":
+                    linear_status = "offline"
+                    add_diagnostic("linear", "offline", "Linear access is offline")
+
+            def cache_keys(kind: str, identifier: str, item: dict[str, Any] | None = None) -> list[str]:
+                keys = [identifier]
+                if kind == "pull_request":
+                    canonical, _repo, number = self._pull_request_identifier(identifier, (item or {}).get("repository"), (item or {}).get("url"))
+                    keys = [canonical]
+                    if number:
+                        keys.append(number)
+                return list(dict.fromkeys(keys))
+
+            def cached(kind: str, identifier: str, item: dict[str, Any] | None = None) -> dict[str, Any] | None:
+                nonlocal cache_hits, stale_cache
+                for key in cache_keys(kind, identifier, item):
+                    row = connection.execute("SELECT payload, fetched_at FROM integration_cache WHERE kind = ? AND identifier = ?", (kind, key)).fetchone()
+                    if not row:
+                        continue
+                    try:
+                        value = json.loads(row["payload"])
+                    except json.JSONDecodeError:
+                        continue
+                    cache_hits += 1
+                    try:
+                        age = max(0.0, (now - parse_rfc3339(row["fetched_at"], required=True)).total_seconds())
+                        is_stale = float(ttl) >= 0 and age >= float(ttl)
+                    except (TypeError, ValueError, DailyError):
+                        is_stale = True
+                    if is_stale:
+                        stale_cache = True
+                    return value if isinstance(value, dict) else None
+                return None
+
+            def cache(kind: str, identifier: str, value: dict[str, Any]) -> None:
+                if not value:
+                    return
+                cache_key = identifier
+                if kind == "pull_request":
+                    cache_key, _repo, _number = self._pull_request_identifier(identifier, value.get("repository"), value.get("url"))
+                connection.execute(
+                    "INSERT INTO integration_cache(kind, identifier, payload, fetched_at) VALUES (?, ?, ?, ?) ON CONFLICT(kind, identifier) DO UPDATE SET payload=excluded.payload, fetched_at=excluded.fetched_at",
+                    (kind, cache_key, json.dumps(value, ensure_ascii=False), iso(now)),
+                )
+
+            def pr_record(raw: Any) -> dict[str, Any] | None:
+                if not isinstance(raw, dict):
+                    return None
+                url = safe_link(str(raw.get("url") or raw.get("html_url") or ""))
+                number = raw.get("number", raw.get("identifier", raw.get("id")))
+                repository = raw.get("repository") or raw.get("repo") or raw.get("full_name")
+                if isinstance(repository, dict):
+                    repository = repository.get("nameWithOwner") or repository.get("full_name")
+                if not repository:
+                    head_repository = raw.get("headRepository")
+                    if isinstance(head_repository, dict):
+                        repository = head_repository.get("nameWithOwner") or head_repository.get("full_name") or head_repository.get("name")
+                    repository = repository or raw.get("headRepositoryOwner")
+                canonical, repository, _number = self._pull_request_identifier(number, repository, url)
+                if not _number or not repository:
+                    return None
+                base_data = raw.get("base") if isinstance(raw.get("base"), dict) else {}
+                head_data = raw.get("head") if isinstance(raw.get("head"), dict) else {}
+                base = raw.get("base_branch") or raw.get("target_branch") or raw.get("baseRefName") or base_data.get("ref")
+                head = raw.get("head_branch") or raw.get("source_branch") or raw.get("headRefName") or head_data.get("ref")
+                sha = raw.get("head_sha") or raw.get("commit_sha") or raw.get("headRefOid") or head_data.get("sha")
+                state = raw.get("status") or raw.get("state")
+                return {
+                    "kind": "pull_request", "identifier": canonical, "repository": repository,
+                    "url": url, "title": sanitize(raw.get("title"), 300) or None,
+                    "status": sanitize(state, 100) or None, "target_branch": sanitize(base, 200) or None,
+                    "source_branch": sanitize(head, 200) or None, "commit_sha": sanitize(sha, 200) or None,
+                }
+
+            def requested_pr_matches(record: dict[str, Any], requested: dict[str, Any]) -> bool:
+                if requested.get("kind") != "pull_request":
+                    return False
+                wanted, wanted_repo, wanted_number = self._pull_request_identifier(requested.get("identifier"), requested.get("repository"), requested.get("url"))
+                if wanted and wanted == record["identifier"]:
+                    return True
+                if wanted_number and wanted_number == record["identifier"].rsplit("#", 1)[-1] and wanted_repo == record.get("repository"):
+                    return True
+                repo = sanitize(requested.get("repository"), 200) or wanted_repo
+                branch = sanitize(requested.get("branch") or requested.get("head_branch") or requested.get("source_branch"), 200)
+                commit = sanitize(requested.get("commit") or requested.get("commit_sha") or requested.get("head_sha"), 200)
+                return bool(repo and repo == record.get("repository") and ((branch and branch == record.get("source_branch")) or (commit and commit == record.get("commit_sha"))))
+
+            def reference_rows(kind: str, identifier: str, repository: str | None = None) -> list[sqlite3.Row]:
+                values = cache_keys(kind, identifier, {"repository": repository})
+                placeholders = ",".join("?" for _ in values)
+                query = f"SELECT * FROM external_references WHERE kind = ? AND identifier IN ({placeholders})"
+                return list(connection.execute(query, [kind, *values]))
+
+            def apply_reference(item: dict[str, Any], target_ids: list[int] | None = None, allow_new: bool = True) -> int:
+                nonlocal changed
+                kind = item.get("kind")
+                identifier = sanitize(item.get("identifier"), 200).strip()
+                if kind == "pull_request":
+                    identifier, repository, _ = self._pull_request_identifier(identifier, item.get("repository"), item.get("url"))
+                else:
+                    repository = None
+                if kind not in {"linear", "pull_request"} or not identifier:
+                    return 0
+                rows = reference_rows(kind, identifier, repository)
+                if not rows and target_ids:
+                    rows = []
+                ids = [row["id"] for row in rows]
+                for entry_id in target_ids or []:
+                    if not any(row["entry_id"] == entry_id for row in rows):
+                        if not allow_new:
+                            continue
+                        self._insert_references(connection, entry_id, [item])
+                        rows = reference_rows(kind, identifier, repository)
+                        changed += 1
+                title = sanitize(item.get("title"), 300) or None
+                status = sanitize(item.get("status"), 100) or None
+                url = safe_link(str(item.get("url") or "")) if item.get("url") else None
+                target = sanitize(item.get("target_branch"), 200) or None
+                source = sanitize(item.get("source_branch"), 200) or None
+                commit_sha = sanitize(item.get("commit_sha"), 200) or None
+                metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+                for row in rows:
+                    connection.execute(
+                        "UPDATE external_references SET title=COALESCE(?, title), status=COALESCE(?, status), target_branch=COALESCE(?, target_branch), url=COALESCE(?, url), repository=COALESCE(?, repository), source_branch=COALESCE(?, source_branch), commit_sha=COALESCE(?, commit_sha), metadata_json=CASE WHEN ? = '{}' THEN metadata_json ELSE ? END WHERE id = ?",
+                        (title, status, target, url, repository, source, commit_sha, json.dumps(metadata), json.dumps(metadata, ensure_ascii=False), row["id"]),
+                    )
                     changed += 1
-                if not payload.get("offline") and any(item.get(field) for field in ("title", "status", "target_branch", "url")):
-                    cache_payload = {field: item.get(field) for field in ("title", "status", "target_branch", "url") if item.get(field)}
-                    connection.execute("INSERT INTO integration_cache(kind, identifier, payload, fetched_at) VALUES (?, ?, ?, ?) ON CONFLICT(kind, identifier) DO UPDATE SET payload=excluded.payload, fetched_at=excluded.fetched_at", (item["kind"], identifier, json.dumps(cache_payload), iso(utc_now())))
+                return len(rows)
+
+            requested = [item for item in references if isinstance(item, dict)]
+            for item in requested:
+                if any(item.get(field) for field in ("title", "status", "target_branch", "url", "repository", "source_branch", "commit_sha")):
+                    apply_reference(item)
+                    if not payload.get("offline"):
+                        identifier = sanitize(item.get("identifier"), 200).strip()
+                        if item.get("kind") in {"linear", "pull_request"} and identifier:
+                            cache(item["kind"], identifier, {key: item.get(key) for key in ("kind", "identifier", "repository", "url", "title", "status", "target_branch", "source_branch", "commit_sha") if item.get(key)})
+            github_records = github.get("pull_requests") or github.get("prs") or []
+            github_evidence = {
+                "kind": "pull_request", "repository": github.get("repository") or github.get("repo"),
+                "branch": github.get("branch") or github.get("head_branch") or github.get("source_branch"),
+                "commit": github.get("commit") or github.get("commit_sha") or github.get("head_sha"),
+            }
+            matching_requests = requested + ([github_evidence] if any(github_evidence.values()) else [])
+            if github_status == "ok":
+                for raw in github_records if isinstance(github_records, list) else []:
+                    record = pr_record(raw)
+                    if not record:
+                        add_diagnostic("github", "missing_metadata", "GitHub returned a pull request without a repository or number")
+                        continue
+                    matches = [item for item in matching_requests if requested_pr_matches(record, item)]
+                    target_ids = [int(item["entry_id"]) for item in matches if item.get("entry_id")]
+                    for item in matches:
+                        wanted, wanted_repo, _wanted_number = self._pull_request_identifier(item.get("identifier"), item.get("repository"), item.get("url"))
+                        if wanted:
+                            for row in reference_rows("pull_request", wanted, wanted_repo):
+                                if row["entry_id"] not in target_ids:
+                                    target_ids.append(row["entry_id"])
+                        if item is github_evidence:
+                            for row in connection.execute("SELECT * FROM external_references WHERE kind='pull_request'"):
+                                same_repo = not item.get("repository") or row["repository"] == item.get("repository")
+                                same_branch = not item.get("branch") or item["branch"] == row["source_branch"]
+                                same_commit = not item.get("commit") or item["commit"] == row["commit_sha"]
+                                if same_repo and same_branch and same_commit and row["entry_id"] not in target_ids:
+                                    target_ids.append(row["entry_id"])
+                    for row in reference_rows("pull_request", record["identifier"], record.get("repository")):
+                        if row["entry_id"] not in target_ids:
+                            target_ids.append(row["entry_id"])
+                    cache("pull_request", record["identifier"], record)
+                    if not target_ids:
+                        continue
+                    apply_reference(record, target_ids)
+            elif github_status in {"offline", "expired_auth", "rate_limited", "error", "missing"}:
+                for item in requested:
+                    if item.get("kind") != "pull_request":
+                        continue
+                    identifier, _repo, _number = self._pull_request_identifier(item.get("identifier"), item.get("repository"), item.get("url"))
+                    value = cached("pull_request", identifier, item)
+                    if value:
+                        apply_reference(value)
+                for row in connection.execute("SELECT payload, fetched_at FROM integration_cache WHERE kind='pull_request'"):
+                    try:
+                        value = json.loads(row["payload"])
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(value, dict):
+                        continue
+                    record = pr_record(value)
+                    if not record or not any(requested_pr_matches(record, item) for item in matching_requests):
+                        continue
+                    cache_hits += 1
+                    try:
+                        stale_cache = stale_cache or max(0.0, (now - parse_rfc3339(row["fetched_at"], required=True)).total_seconds()) >= float(ttl)
+                    except (TypeError, ValueError, DailyError):
+                        stale_cache = True
+                    target_ids = [ref["entry_id"] for ref in reference_rows("pull_request", record["identifier"], record.get("repository"))]
+                    apply_reference(record, target_ids)
+
+            linear_records = linear.get("issues") or linear.get("references") or []
+            github_fixture_records = []
+            for raw_github in github_records if isinstance(github_records, list) else []:
+                normalized_github = pr_record(raw_github)
+                if normalized_github:
+                    github_fixture_records.append(normalized_github)
+            if linear_status == "ok":
+                if isinstance(linear_records, dict):
+                    linear_records = [linear_records]
+                for raw in linear_records if isinstance(linear_records, list) else []:
+                    if not isinstance(raw, dict):
+                        add_diagnostic("linear", "missing_metadata", "Linear returned an invalid issue record")
+                        continue
+                    identifier = sanitize(raw.get("identifier") or raw.get("key") or raw.get("id"), 200).strip()
+                    if not identifier:
+                        add_diagnostic("linear", "missing_metadata", "Linear issue metadata has no identifier")
+                        continue
+                    issue = {"kind": "linear", "identifier": identifier, "url": safe_link(str(raw.get("url") or raw.get("web_url") or "")) or None,
+                             "title": sanitize(raw.get("title") or raw.get("name"), 300) or None,
+                             "status": sanitize(raw.get("status") or (raw.get("state") or {}).get("name") if isinstance(raw.get("state"), dict) else raw.get("status"), 100) or None}
+                    explicit = [item for item in requested if item.get("kind") == "linear" and sanitize(item.get("identifier"), 200).strip() == identifier]
+                    target_ids = [int(item["entry_id"]) for item in explicit if item.get("entry_id")]
+                    for row in connection.execute("SELECT * FROM external_references WHERE kind='linear' AND identifier=?", (identifier,)):
+                        if row["entry_id"] not in target_ids:
+                            target_ids.append(row["entry_id"])
+                    apply_reference(issue, target_ids)
+                    linked = raw.get("pull_requests") or raw.get("related_pull_requests") or raw.get("links") or []
+                    if isinstance(linked, dict):
+                        linked = [linked]
+                    linked_summaries = []
+                    for linked_raw in linked if isinstance(linked, list) else []:
+                        record = pr_record(linked_raw)
+                        if not record:
+                            add_diagnostic("linear", "missing_metadata", "Linear linked pull request is missing a repository or number")
+                            continue
+                        if not record.get("status") or not record.get("target_branch"):
+                            for candidate in github_fixture_records:
+                                if candidate["identifier"] == record["identifier"]:
+                                    record = {**record, **{key: value for key, value in candidate.items() if value}}
+                                    break
+                        if not payload.get("offline") and (not record.get("status") or not record.get("target_branch")):
+                            try:
+                                from .integrations import GitHubReadOnlyAdapter
+                                number = record["identifier"].rsplit("#", 1)[-1]
+                                resolved = GitHubReadOnlyAdapter().resolve({"repository": record["repository"], "number": number})
+                                if resolved:
+                                    resolved_record = pr_record(resolved[0])
+                                    if resolved_record:
+                                        record = {**record, **{key: value for key, value in resolved_record.items() if value}}
+                            except Exception as exc:
+                                add_diagnostic("github", "linked_pull_request_unavailable", sanitize(exc, 240))
+                        linked_summaries.append({key: record[key] for key in ("identifier", "repository", "url", "title", "status", "target_branch", "source_branch", "commit_sha") if record.get(key)})
+                        if target_ids:
+                            apply_reference(record, target_ids)
+                        cache("pull_request", record["identifier"], record)
+                    if linked_summaries:
+                        issue["metadata"] = {"pull_requests": linked_summaries}
+                        for row in connection.execute("SELECT id FROM external_references WHERE kind='linear' AND identifier=?", (identifier,)):
+                            connection.execute("UPDATE external_references SET metadata_json=? WHERE id=?", (json.dumps({"pull_requests": linked_summaries}, ensure_ascii=False), row["id"]))
+                    cache("linear", identifier, issue)
+            elif linear_status in {"offline", "expired_auth", "rate_limited", "error", "missing"}:
+                for item in requested:
+                    if item.get("kind") != "linear":
+                        continue
+                    identifier = sanitize(item.get("identifier"), 200).strip()
+                    value = cached("linear", identifier, item)
+                    if value:
+                        apply_reference(value)
+                        linked = (value.get("metadata") or {}).get("pull_requests", []) if isinstance(value.get("metadata"), dict) else []
+                        target_ids = [row["entry_id"] for row in connection.execute("SELECT entry_id FROM external_references WHERE kind='linear' AND identifier=?", (identifier,))]
+                        for linked_item in linked if isinstance(linked, list) else []:
+                            if isinstance(linked_item, dict):
+                                apply_reference({"kind": "pull_request", **linked_item}, target_ids)
+
+            if stale_cache:
+                add_diagnostic("integrations", "stale_cache", "cached integration metadata is being used")
+            if diagnostics:
+                health = self.store.health()
+                existing = health.get("integration_diagnostics", [])
+                if not isinstance(existing, list):
+                    existing = []
+                health["integration_diagnostics"] = (diagnostics + [item for item in existing if item not in diagnostics])[:20]
+                self.store.save_health(health)
             connection.commit()
-            return {"status": "changed" if changed else "noop", "references_enriched": changed, "read_only": True}
+            return {"status": "changed" if changed else "noop", "references_enriched": changed,
+                    "cache_hits": cache_hits, "diagnostics": diagnostics, "read_only": True, "external_writes": 0}
+        except Exception as exc:
+            connection.rollback()
+            add_diagnostic("integrations", "adapter_failure", sanitize(exc, 240))
+            health = self.store.health()
+            existing = health.get("integration_diagnostics", [])
+            health["integration_diagnostics"] = ([diagnostics[-1]] if diagnostics else [{"provider": "integrations", "code": "adapter_failure", "message": sanitize(exc, 240)}]) + (existing if isinstance(existing, list) else [])
+            self.store.save_health(health)
+            return {"status": "noop", "references_enriched": 0, "cache_hits": cache_hits,
+                    "diagnostics": diagnostics or [{"provider": "integrations", "code": "adapter_failure", "message": sanitize(exc, 240)}],
+                    "read_only": True, "external_writes": 0}
         finally:
             connection.close()
 
@@ -863,7 +1270,7 @@ class Runtime:
     def export_state(self, output: str | None = None) -> dict[str, Any]:
         connection = self.store.connect()
         try:
-            payload = {"format": "daily-worklog-json", "version": 1, "config": self.store.config(), "reporting_periods": [dict(row) for row in connection.execute("SELECT * FROM reporting_periods")], "work_sessions": [dict(row) for row in connection.execute("SELECT * FROM work_sessions")], "candidates": [dict(row) for row in connection.execute("SELECT * FROM candidates")], "work_entries": [dict(row) for row in connection.execute("SELECT * FROM work_entries")], "external_references": [dict(row) for row in connection.execute("SELECT * FROM external_references")], "calendar_exceptions": [dict(row) for row in connection.execute("SELECT * FROM calendar_exceptions")], "source_evidence": [dict(row) for row in connection.execute("SELECT * FROM source_evidence")], "exported_at": iso(utc_now())}
+            payload = {"format": "daily-worklog-json", "version": 1, "config": self.store.config(), "reporting_periods": [dict(row) for row in connection.execute("SELECT * FROM reporting_periods")], "work_sessions": [dict(row) for row in connection.execute("SELECT * FROM work_sessions")], "candidates": [dict(row) for row in connection.execute("SELECT * FROM candidates")], "work_entries": [dict(row) for row in connection.execute("SELECT * FROM work_entries")], "external_references": [dict(row) for row in connection.execute("SELECT * FROM external_references")], "integration_cache": [dict(row) for row in connection.execute("SELECT * FROM integration_cache")], "calendar_exceptions": [dict(row) for row in connection.execute("SELECT * FROM calendar_exceptions")], "source_evidence": [dict(row) for row in connection.execute("SELECT * FROM source_evidence")], "exported_at": iso(utc_now())}
         finally:
             connection.close()
         if output:
@@ -887,7 +1294,7 @@ class Runtime:
         connection = self.store.connect()
         try:
             if replace:
-                for table in ("external_references", "source_evidence", "work_entries", "candidates", "work_sessions", "reporting_periods", "calendar_exceptions"):
+                for table in ("external_references", "integration_cache", "source_evidence", "work_entries", "candidates", "work_sessions", "reporting_periods", "calendar_exceptions"):
                     connection.execute(f"DELETE FROM {table}")
             # Validate all referenced IDs and values before transaction commit.
             for period in payload["reporting_periods"]:
@@ -901,7 +1308,10 @@ class Runtime:
             for entry in payload["work_entries"]:
                 connection.execute("INSERT OR REPLACE INTO work_entries(id, period_id, candidate_id, text, state, event_time_utc, created_at, updated_at, hidden, unreviewed, manual, curated_json, dismissed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", tuple(entry.get(key) for key in ("id", "period_id", "candidate_id", "text", "state", "event_time_utc", "created_at", "updated_at", "hidden", "unreviewed", "manual", "curated_json", "dismissed_at")))
             for reference in payload["external_references"]:
-                connection.execute("INSERT OR REPLACE INTO external_references(id, entry_id, kind, identifier, url, title, status, target_branch) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", tuple(reference.get(key) for key in ("id", "entry_id", "kind", "identifier", "url", "title", "status", "target_branch")))
+                reference_values = tuple(reference.get(key) for key in ("id", "entry_id", "kind", "identifier", "url", "title", "status", "target_branch", "repository", "source_branch", "commit_sha")) + (reference.get("metadata_json") or "{}",)
+                connection.execute("INSERT OR REPLACE INTO external_references(id, entry_id, kind, identifier, url, title, status, target_branch, repository, source_branch, commit_sha, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", reference_values)
+            for cache in payload.get("integration_cache", []):
+                connection.execute("INSERT OR REPLACE INTO integration_cache(kind, identifier, payload, fetched_at) VALUES (?, ?, ?, ?)", tuple(cache.get(key) for key in ("kind", "identifier", "payload", "fetched_at")))
             for exception in payload["calendar_exceptions"]:
                 connection.execute("INSERT OR REPLACE INTO calendar_exceptions(day, non_working, meeting_date) VALUES (?, ?, ?)", tuple(exception.get(key) for key in ("day", "non_working", "meeting_date")))
             for evidence in payload["source_evidence"]:
