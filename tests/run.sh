@@ -227,7 +227,7 @@ test_bootstrap() {
   home="$(new_home bootstrap)"
   output="$(run_nexus "$home" bootstrap 2>&1)" || { printf '%s\n' "$output" >&2; failed=1; }
 
-  for name in nexus-setup nexus-link nexus-install; do
+  for name in nexus-setup nexus-link nexus-install nexus-new; do
     link="$home/.claude/skills/$name"; target="$home/.nexus/skills/$name"
     assert_link_to "$link" "$target" || failed=1
     [[ "$(readlink -- "$link")" != /* ]] || { printf '  absolute Claude link: %s\n' "$link" >&2; failed=1; }
@@ -540,7 +540,7 @@ test_link_reconciliation() {
     printf '  missing skill was not reported after reconciliation\n%s\n' "$output" >&2; failed=1;
   }
   [[ "$output" != *prefix-lookalike* && "$output" != *external-link* && "$output" != *unrelated-file* && "$output" != *unrelated-dir* ]] || failed=1
-  for name in alpha beta nexus-setup nexus-link nexus-install; do
+  for name in alpha beta nexus-setup nexus-link nexus-install nexus-new; do
     if [[ "$name" == nexus-* ]]; then
       assert_link_to "$home/.claude/skills/$name" "$home/.nexus/skills/$name" || failed=1
       assert_link_to "$home/.codex/skills/$name" "$home/.nexus/skills/$name" || failed=1
@@ -642,6 +642,188 @@ test_link_snapshot_safety() {
   if (( failed == 0 )); then pass link_snapshot_safety; else fail link_snapshot_safety; fi
 }
 
+custom_home() {
+  local home
+  home="$(new_home "$1")"
+  mkdir -p "$home/.custom-skills" "$home/.claude/skills" "$home/.codex/skills" "$home/.agents/skills"
+  printf '%s\n' "$home"
+}
+
+assert_link_unchanged() {
+  local home="$1" before="$2" after
+  after="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")|$(snapshot_tree "$home/.agents")"
+  [[ "$before" == "$after" ]] && return 0
+  printf '  agent trees were mutated by a failed reconcile\n' >&2
+  return 1
+}
+
+test_custom_link_reconciliation() {
+  local failed=0 home custom canonical output status name
+  home="$(custom_home custom_link)"
+  custom="$home/.custom-skills"
+  canonical="$home/.agents/skills"
+  write_skill "$canonical" installed
+  write_skill "$custom" mine
+  write_skill "$custom" other
+  write_lock "$home/.nexus/skill-lock.json" installed
+
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '%s\n' "$output" >&2; failed=1; }
+  for name in mine other; do
+    assert_link_to "$home/.claude/skills/$name" "$custom/$name" || failed=1
+    assert_link_to "$home/.codex/skills/$name" "$custom/$name" || failed=1
+    [[ "$(readlink -- "$home/.claude/skills/$name")" != /* ]] || { printf '  absolute custom link: %s\n' "$name" >&2; failed=1; }
+  done
+  assert_link_to "$home/.claude/skills/installed" "$canonical/installed" || failed=1
+  assert_link_to "$home/.codex/skills/nexus-new" "$home/.nexus/skills/nexus-new" || failed=1
+
+  # A custom skill removed from the root loses its managed links.
+  rm -rf -- "$custom/other"
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '%s\n' "$output" >&2; failed=1; }
+  [[ ! -e "$home/.claude/skills/other" && ! -e "$home/.codex/skills/other" ]] || failed=1
+  assert_link_to "$home/.claude/skills/mine" "$custom/mine" || failed=1
+
+  # An absent custom root is not an error: it simply means no custom skills.
+  rm -rf -- "$custom"
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -eq 0 && "$output" != *error* ]] || { printf '%s\n' "$output" >&2; failed=1; }
+  [[ ! -e "$home/.claude/skills/mine" ]] || failed=1
+  if (( failed == 0 )); then pass custom_link_reconciliation; else fail custom_link_reconciliation; fi
+}
+
+test_custom_root_validation() {
+  local failed=0 home custom output status before
+  home="$(custom_home custom_validation)"
+  custom="$home/.custom-skills"
+  write_skill "$home/.agents/skills" installed
+  write_lock "$home/.nexus/skill-lock.json" installed
+  write_skill "$custom" mine
+
+  # Repository furniture is skipped, not linked and not reported.
+  mkdir -p "$custom/.git" "$custom/.workspaces/mine"
+  printf 'notes\n' >"$custom/README.md"
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '%s\n' "$output" >&2; failed=1; }
+  [[ ! -e "$home/.claude/skills/.git" && ! -e "$home/.claude/skills/.workspaces" && ! -e "$home/.claude/skills/README.md" ]] || failed=1
+
+  before="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")|$(snapshot_tree "$home/.agents")"
+
+  # A directory without SKILL.md is a hard error, and nothing is mutated.
+  mkdir -p "$custom/mine-workspace"
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -ne 0 && "$output" == *'missing SKILL.md'* && "$output" == *'no changes were made'* ]] || failed=1
+  assert_link_unchanged "$home" "$before" || failed=1
+  rmdir "$custom/mine-workspace"
+
+  # A symlinked entry is refused: the owner root holds physical content only.
+  ln -s -- "$home/.agents/skills/installed" "$custom/aliased"
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -ne 0 && "$output" == *'must not be a symlink'* ]] || failed=1
+  assert_link_unchanged "$home" "$before" || failed=1
+  rm -- "$custom/aliased"
+
+  # A symlinked custom root is refused.
+  mv -- "$custom" "$home/.custom-real"
+  ln -s -- "$home/.custom-real" "$custom"
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -ne 0 && "$output" == *'must be a physical directory'* ]] || failed=1
+  assert_link_unchanged "$home" "$before" || failed=1
+  rm -- "$custom"; mv -- "$home/.custom-real" "$custom"
+
+  # A reserved control name inside the custom root is refused.
+  write_skill "$custom" nexus-link
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -ne 0 && "$output" == *'reserved control skill name'* ]] || failed=1
+  assert_link_unchanged "$home" "$before" || failed=1
+  if (( failed == 0 )); then pass custom_root_validation; else fail custom_root_validation; fi
+}
+
+test_custom_collision_and_canonical_forbidden() {
+  local failed=0 home custom canonical output status before
+  home="$(custom_home custom_collision)"
+  custom="$home/.custom-skills"
+  canonical="$home/.agents/skills"
+  write_skill "$canonical" installed
+  write_lock "$home/.nexus/skill-lock.json" installed
+  write_skill "$custom" mine
+  run_nexus "$home" link >/dev/null 2>&1 || failed=1
+  before="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")|$(snapshot_tree "$home/.agents")"
+
+  # A custom skill may not shadow an installed one.
+  write_skill "$custom" installed
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -ne 0 && "$output" == *'collides with an installed skill: installed'* &&
+     "$output" == *'no changes were made'* ]] || failed=1
+  assert_link_unchanged "$home" "$before" || failed=1
+  rm -rf -- "$custom/installed"
+
+  # A custom skill may not be reachable through the canonical root.
+  ln -s -- "$custom/mine" "$canonical/mine"
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -ne 0 && "$output" == *'custom skill link in canonical root'* ]] || failed=1
+  rm -- "$canonical/mine"
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '%s\n' "$output" >&2; failed=1; }
+  if (( failed == 0 )); then pass custom_collision_and_canonical_forbidden; else fail custom_collision_and_canonical_forbidden; fi
+}
+
+test_new_cli() {
+  local failed=0 home custom output status
+  home="$(custom_home new_cli)"
+  custom="$home/.custom-skills"
+  write_skill "$home/.agents/skills" installed
+  write_lock "$home/.nexus/skill-lock.json" installed
+
+  output="$(run_nexus "$home" new 2>&1)"; status=$?
+  [[ "$status" -eq 2 && "$output" == *'exactly one skill name'* ]] || failed=1
+  output="$(run_nexus "$home" new a b 2>&1)"; status=$?
+  [[ "$status" -eq 2 && "$output" == *'exactly one skill name'* ]] || failed=1
+  output="$(run_nexus "$home" new '../escape' 2>&1)"; status=$?
+  [[ "$status" -eq 2 && "$output" == *'safe skill name'* ]] || failed=1
+  output="$(run_nexus "$home" new '--flag' 2>&1)"; status=$?
+  [[ "$status" -eq 2 && "$output" == *'safe skill name'* ]] || failed=1
+  output="$(run_nexus "$home" new nexus-link 2>&1)"; status=$?
+  [[ "$status" -eq 2 && "$output" == *'reserved control skill name'* ]] || failed=1
+  output="$(run_nexus "$home" new installed 2>&1)"; status=$?
+  [[ "$status" -eq 1 && "$output" == *'collides with an installed skill'* ]] || failed=1
+  [[ ! -e "$custom/installed" ]] || failed=1
+
+  output="$(run_nexus "$home" new mine 2>&1)"; status=$?
+  [[ "$status" -eq 0 && "$output" == *"created mine: $custom/mine"* &&
+     "$output" == *"workspace mine: $custom/.workspaces/mine"* ]] || { printf '%s\n' "$output" >&2; failed=1; }
+  [[ -d "$custom/mine" && ! -e "$custom/mine/SKILL.md" ]] || failed=1
+  [[ -z "$(find "$custom/mine" -mindepth 1 -print -quit)" ]] || failed=1
+
+  output="$(run_nexus "$home" new mine 2>&1)"; status=$?
+  [[ "$status" -eq 1 && "$output" == *'already exists'* ]] || failed=1
+
+  # Without a custom root the command refuses instead of creating one.
+  rm -rf -- "$custom/mine" "$custom"
+  output="$(run_nexus "$home" new mine 2>&1)"; status=$?
+  [[ "$status" -eq 1 && "$output" == *'does not exist'* && ! -e "$custom" ]] || failed=1
+  if (( failed == 0 )); then pass new_cli; else fail new_cli; fi
+}
+
+test_install_rejects_custom_collision() {
+  local failed=0 home output status lock_before lock_after
+  home="$(custom_home install_custom_collision)"
+  write_skill "$home/.custom-skills" mine
+  write_lock "$home/.nexus/skill-lock.json"
+  lock_before="$(sha256sum "$home/.nexus/skill-lock.json")"
+
+  # PATH without npx proves the refusal happens before the network call.
+  output="$(HOME="$home" NEXUS_HOME="$home/.nexus" PATH="/usr/bin:/bin" NVM_DIR="$home/.no-nvm" \
+    "$REPO_ROOT/scripts/nexus" install /some/source --skill mine 2>&1)"; status=$?
+  [[ "$status" -eq 1 && "$output" == *'collides with a custom skill: mine'* ]] || { printf '%s\n' "$output" >&2; failed=1; }
+  [[ "$output" != *npx* ]] || failed=1
+  output="$(run_nexus "$home" install /some/source --skill nexus-new 2>&1)"; status=$?
+  [[ "$status" -eq 2 && "$output" == *'non-control skill name'* ]] || failed=1
+  lock_after="$(sha256sum "$home/.nexus/skill-lock.json")"
+  [[ "$lock_before" == "$lock_after" ]] || failed=1
+  if (( failed == 0 )); then pass install_rejects_custom_collision; else fail install_rejects_custom_collision; fi
+}
+
 assert_no_setup_residue() {
   local home="$1"
   [[ -z "$(find "$home" -maxdepth 3 \( -name '.nexus-lock.*' -o -name '.nexus-setup-backup.*' -o -name '.nexus-setup-lock.*' -o -name '.nexus-setup-source.*' -o -name '.nexus-setup-copy.*' -o -name '.nexus-canonical-tmp.*' -o -name '.nexus-canonical-old.*' \) -print -quit)" ]]
@@ -685,7 +867,7 @@ test_setup_happy_and_idempotent() {
   [[ -f "$home/.codex/skills/.system/marker" ]] || failed=1
   cmp -s "$source" "$home/.nexus/skill-lock.json" || failed=1
   [[ "$output" == *"$source"* && "$output" == *"$home/.claude-backup"* && "$output" == *"$home/.codex-backup"* ]] || failed=1
-  [[ "$output" == *'third-party skills: 2'* && "$output" == *'linked agent skill entries: 10'* ]] || failed=1
+  [[ "$output" == *'third-party skills: 2'* && "$output" == *'linked agent skill entries: 12'* ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
   before="$(snapshot_tree "$home/.nexus")|$(snapshot_tree "$home/.agents")|$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")|$(snapshot_tree "$home/.claude-backup")|$(snapshot_tree "$home/.codex-backup")"
   output="$(run_nexus "$home" setup 2>&1)" || failed=1
@@ -1040,11 +1222,12 @@ test_metadata() {
   fi
 
   local name command
-  for name in nexus-setup nexus-link nexus-install; do
+  for name in nexus-setup nexus-link nexus-install nexus-new; do
     case "$name" in
       nexus-setup) command='/home/luanh/.nexus/scripts/nexus setup' ;;
       nexus-link) command='/home/luanh/.nexus/scripts/nexus link' ;;
       nexus-install) command='/home/luanh/.nexus/scripts/nexus install' ;;
+      nexus-new) command='/home/luanh/.nexus/scripts/nexus new' ;;
     esac
     assert_file "skills/$name/SKILL.md" || failed=1
     [[ ! -e "$REPO_ROOT/skills/$name/claude-command.md" ]] || { printf '  unexpected adapter file: %s\n' "$name" >&2; failed=1; }
@@ -1068,7 +1251,8 @@ test_metadata() {
 
 test_readme_documentation() {
   local failed=0 term
-  for term in '~/.agents/skills' 'skill-lock.json' '.claude-backup' '.codex-backup' '/nexus-setup' '$nexus-setup' 'npx skills' 'python3' 'recovery' 'another agent'; do
+  for term in '~/.agents/skills' 'skill-lock.json' '.claude-backup' '.codex-backup' '/nexus-setup' '$nexus-setup' 'npx skills' 'python3' 'recovery' 'another agent' \
+              '~/.custom-skills' '/nexus-new' '$nexus-new' '.workspaces'; do
     assert_contains README.md "$term" || failed=1
   done
   assert_contains README.md 'Setup preflight checks `jq`, `python3`, and the' || failed=1
@@ -1097,6 +1281,11 @@ test_link_reconciliation
 test_link_stale_ownership_and_empty_lock
 test_link_desired_collisions_are_preserved
 test_link_snapshot_safety
+test_custom_link_reconciliation
+test_custom_root_validation
+test_custom_collision_and_canonical_forbidden
+test_new_cli
+test_install_rejects_custom_collision
 test_setup_happy_and_idempotent
 test_setup_preflight_and_lock_discovery
 test_setup_backup_transaction_and_absent_roots

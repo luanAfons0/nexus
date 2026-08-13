@@ -2,9 +2,11 @@ nexus_init() {
   NEXUS_HOME="${NEXUS_HOME:-$HOME/.nexus}"
   LOCK_FILE="$NEXUS_HOME/skill-lock.json"
   CANONICAL_DIR="$HOME/.agents/skills"
+  CUSTOM_ROOT="$HOME/.custom-skills"
+  CUSTOM_WORKSPACES="$CUSTOM_ROOT/.workspaces"
   CLAUDE_SKILLS="$HOME/.claude/skills"
   CODEX_SKILLS="$HOME/.codex/skills"
-  declare -g -a CONTROL_SKILLS=(nexus-setup nexus-link nexus-install)
+  declare -g -a CONTROL_SKILLS=(nexus-setup nexus-link nexus-install nexus-new)
   ERRORS=0
   CANONICAL_CURRENT=''
   DISCOVERED_LOCK=''
@@ -18,6 +20,7 @@ nexus_init() {
   SETUP_MUTEX=''
   declare -g -A DESIRED_SET=()
   declare -g -a DESIRED_NAMES=()
+  declare -g -A CUSTOM_SET=()
 }
 
 info() { printf 'nexus: %s\n' "$*"; }
@@ -50,7 +53,7 @@ is_managed_path() {
   local path="$1" candidate_lexical candidate_resolved root root_lexical root_resolved
   candidate_lexical="$(realpath -m -s -- "$path")"
   candidate_resolved="$(realpath -m -- "$path")"
-  for root in "$CANONICAL_DIR" "$NEXUS_HOME/skills"; do
+  for root in "$CANONICAL_DIR" "$NEXUS_HOME/skills" "$CUSTOM_ROOT"; do
     root_lexical="$(realpath -m -s -- "$root")"
     root_resolved="$(realpath -m -- "$root")"
     path_is_within "$candidate_lexical" "$root_lexical" ||
@@ -78,9 +81,13 @@ is_managed_link() {
 skill_target() {
   local name="$1"
   case "$name" in
-    nexus-setup|nexus-link|nexus-install) printf '%s\n' "$NEXUS_HOME/skills/$name" ;;
-    *) printf '%s\n' "$CANONICAL_DIR/$name" ;;
+    nexus-setup|nexus-link|nexus-install|nexus-new) printf '%s\n' "$NEXUS_HOME/skills/$name" ; return 0 ;;
   esac
+  if [[ -n "${CUSTOM_SET[$name]+present}" ]]; then
+    printf '%s\n' "$CUSTOM_ROOT/$name"
+  else
+    printf '%s\n' "$CANONICAL_DIR/$name"
+  fi
 }
 
 command_requirements() {

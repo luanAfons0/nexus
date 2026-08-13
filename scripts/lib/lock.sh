@@ -60,7 +60,7 @@ load_validated_lock_names() {
       (.skills | type == "object") and
       all(.skills | keys[];
         test("^[A-Za-z0-9][A-Za-z0-9._-]*\\z") and . != "." and . != ".." and
-        . != "nexus-setup" and . != "nexus-link" and . != "nexus-install");
+        . != "nexus-setup" and . != "nexus-link" and . != "nexus-install" and . != "nexus-new");
     if length == 1 and (.[0] | valid_lock) then
       ((.[0].skills | keys[]), "__NEXUS_LOCK_END__")
     else

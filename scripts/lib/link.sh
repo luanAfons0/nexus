@@ -58,12 +58,29 @@ remove_missing_managed_link() {
 }
 
 link_all() {
-  local force="${1:-false}" name target
-  local -a lock_names=()
+  local force="${1:-false}" name target preflight_failed=0
+  local -a lock_names=() custom_names=()
   ERRORS=0
   load_validated_lock_names "$LOCK_FILE" lock_names || return 1
+
+  # Preflight. A malformed custom root or an ambiguous desired set is a
+  # configuration fault, not a per-link failure, so nothing is mutated until
+  # every check passes.
+  custom_root_preflight || preflight_failed=1
+  collect_custom_names custom_names || preflight_failed=1
+  custom_canonical_preflight || preflight_failed=1
+  custom_collision_preflight lock_names custom_names || preflight_failed=1
+  if (( preflight_failed != 0 || ERRORS != 0 )); then
+    printf 'nexus: error: link failed with %s error(s); no changes were made\n' "$ERRORS" >&2
+    return 1
+  fi
+
+  CUSTOM_SET=()
+  for name in "${custom_names[@]}"; do
+    CUSTOM_SET["$name"]=1
+  done
   DESIRED_SET=()
-  for name in "${lock_names[@]}" "${CONTROL_SKILLS[@]}"; do
+  for name in "${lock_names[@]}" "${custom_names[@]}" "${CONTROL_SKILLS[@]}"; do
     if ! safe_skill_name "$name"; then
       error "invalid version-3 lock: unsafe desired skill name"
       return 1

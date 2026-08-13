@@ -3,10 +3,11 @@
 Nexus gives Claude and Codex one explicit, recoverable owner for installed
 skills. `~/.nexus` owns the Nexus manager and its control skills. Third-party
 skill content is canonical under `~/.agents/skills`; the authoritative Nexus
-state is `~/.nexus/skill-lock.json` (gitignored). The native Claude and Codex
-skill folders contain reconciled relative links into those owners. Nexus does
-not take ownership of unrelated physical entries, external links, or Codex's
-`.system` directory.
+state is `~/.nexus/skill-lock.json` (gitignored). Hand-authored skills are
+canonical under `~/.custom-skills`. The native Claude and Codex skill folders
+contain reconciled relative links into those owners. Nexus does not take
+ownership of unrelated physical entries, external links, or Codex's `.system`
+directory.
 
 ## Requirements and first use
 
@@ -22,8 +23,8 @@ From a shell, initialize only Nexus's control links with:
 ~/.nexus/scripts/nexus bootstrap
 ```
 
-Bootstrap exposes only `nexus-setup`, `nexus-link`, and `nexus-install` in the
-native Claude/Codex skill roots. It does not run
+Bootstrap exposes only `nexus-setup`, `nexus-link`, `nexus-install`, and
+`nexus-new` in the native Claude/Codex skill roots. It does not run
 setup, copy agent data, discover a lock, or install anything. Setup is always
 an explicit operation.
 
@@ -34,8 +35,9 @@ Native invocation forms are:
 | Initialize | `/nexus-setup` | `$nexus-setup` |
 | Reconcile links | `/nexus-link` | `$nexus-link` |
 | Install selected skills | `/nexus-install` | `$nexus-install` |
+| Create a custom skill | `/nexus-new` | `$nexus-new` |
 
-The equivalent CLI is `~/.nexus/scripts/nexus {setup,link,install}`.
+The equivalent CLI is `~/.nexus/scripts/nexus {setup,link,install,new}`.
 
 ## Setup and recovery
 
@@ -69,12 +71,55 @@ replaces either backup.
 ## Link reconciliation
 
 `nexus link` treats the validated Nexus lock as authoritative. For each locked
-third-party skill and each control skill it creates or updates relative managed
-links in Claude and Codex. It explicitly removes stale or broken Nexus-managed
-links, and reports missing canonical skills. Physical entries, unrelated or
-external symlinks, collisions, and Codex `.system` are preserved rather than
-claimed or deleted. Correct a collision or missing canonical skill and rerun
-link.
+third-party skill, each custom skill, and each control skill it creates or
+updates relative managed links in Claude and Codex. It explicitly removes stale
+or broken Nexus-managed links, and reports missing canonical skills. Physical
+entries, unrelated or external symlinks, collisions, and Codex `.system` are
+preserved rather than claimed or deleted. Correct a collision or missing
+canonical skill and rerun link.
+
+Link runs its preflight checks before it changes anything. A malformed custom
+root, a name collision, or a custom skill reachable through the canonical root
+is a configuration fault, not a per-link failure, so link reports the fault and
+leaves both agent roots exactly as they were.
+
+## Custom skills
+
+Skills you write yourself are canonical under `~/.custom-skills`, a Git
+repository you control. Nexus does not use Git: it reads the directory only.
+After a `git pull`, run link to reconcile the updated files.
+
+There is no custom lock file. The directory listing is the manifest. Nexus
+reads every visible subdirectory of `~/.custom-skills`, and each one must have
+a safe skill name and a physical `SKILL.md`. Entries beginning with `.` and
+top-level regular files are repository furniture and are skipped, so `.git`,
+`.gitignore`, `.workspaces`, and `README.md` are ignored. Anything else is a
+hard error that names the entry; Nexus does not skip an unexplained directory
+silently.
+
+`skill-creator` writes its evaluation output to a `<skill-name>-workspace`
+directory beside the skill. In `~/.custom-skills` that directory has no
+`SKILL.md` and is therefore an error, so custom skill workspaces belong in
+`~/.custom-skills/.workspaces/<skill-name>` instead. Add `.workspaces/` to the
+repository's `.gitignore`.
+
+Create a custom skill with:
+
+```bash
+~/.nexus/scripts/nexus new skill-name
+```
+
+The command validates the name, refuses a name that collides with an installed
+or control skill, refuses to create the root itself, creates one empty
+directory, and prints the created path and the workspace path. It writes no
+`SKILL.md`; `/nexus-new` hands the printed path to `skill-creator`, which
+writes the contents, and then runs link.
+
+A custom skill and an installed skill may not share a name. Link detects the
+collision in preflight and changes nothing, and install refuses a colliding
+`--skill` name before it calls upstream `npx skills`. A symlink under
+`~/.agents/skills` that resolves into `~/.custom-skills` is also refused:
+custom skill content is never reachable through the canonical root.
 
 ## Installing skills
 

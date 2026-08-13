@@ -7,7 +7,7 @@ parse_install_args() {
       --skill)
         shift
         if (( $# == 0 )) || [[ "$1" == -* ]] || ! safe_skill_name "$1" ||
-           [[ "$1" == nexus-setup || "$1" == nexus-link || "$1" == nexus-install ]]; then
+           [[ "$1" == nexus-setup || "$1" == nexus-link || "$1" == nexus-install || "$1" == nexus-new ]]; then
           error "install requires --skill NAME with a safe, non-control skill name"
           return 2
         fi
@@ -116,7 +116,21 @@ install_report_untracked() {
 install() {
   local status=0 cleanup_status=0 name target install_snapshot=''
   local upstream_lock="$HOME/.agents/.skill-lock.json"
+  local -a custom_names=()
   parse_install_args "$@" || return $?
+  # Refuse a colliding name before the network call, so nothing is downloaded
+  # and no upstream lock is rewritten for an install that cannot be linked.
+  custom_root_preflight || return 1
+  collect_custom_names custom_names || return 1
+  local custom
+  for name in "${INSTALL_SKILLS[@]}"; do
+    for custom in "${custom_names[@]}"; do
+      if [[ "$name" == "$custom" ]]; then
+        error "install skill collides with a custom skill: $name ($CUSTOM_ROOT/$name)"
+        return 1
+      fi
+    done
+  done
   ensure_npx || return 1
   local -a lock_names=() command=(npx --yes skills add "$INSTALL_SOURCE" --global --agent universal)
   for name in "${INSTALL_SKILLS[@]}"; do

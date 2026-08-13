@@ -5,16 +5,18 @@ _nexus_source_libraries() {
   SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
   source "$SCRIPT_DIR/lib/common.sh"
   source "$SCRIPT_DIR/lib/lock.sh"
+  source "$SCRIPT_DIR/lib/custom.sh"
   source "$SCRIPT_DIR/lib/link.sh"
   source "$SCRIPT_DIR/lib/setup.sh"
   source "$SCRIPT_DIR/lib/install.sh"
+  source "$SCRIPT_DIR/lib/new.sh"
 }
 _nexus_source_libraries
 unset -f _nexus_source_libraries
 
 usage() {
   cat <<'EOF'
-Usage: nexus <bootstrap|setup|link|install|help>
+Usage: nexus <bootstrap|setup|link|install|new|help>
 EOF
 }
 
@@ -29,6 +31,8 @@ main() {
       setup ;;
     install)
       install "${@:2}" ;;
+    new)
+      new_skill "${@:2}" ;;
     link)
       [[ "$#" -eq 1 ]] || { usage >&2; return 2; }
       link_all false ;;
