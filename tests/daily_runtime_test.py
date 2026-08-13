@@ -1,14 +1,24 @@
 #!/usr/bin/env python3
+import contextlib
+import io
 import json
+import http.client
 import os
+import socket
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
+import warnings
+from unittest import mock
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "dailyctl"
+sys.path.insert(0, str(ROOT))
 
 
 class DailyRuntimeTests(unittest.TestCase):
@@ -41,6 +51,52 @@ class DailyRuntimeTests(unittest.TestCase):
     def json(self, *args, input=None):
         result = self.run_cli("--json", *args, input=input)
         return json.loads(result.stdout)
+
+    def free_port(self):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+
+    def http_request(self, port, method, path, *, headers=None, body=None):
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        try:
+            connection.request(method, path, body=body, headers=headers or {})
+            response = connection.getresponse()
+            return response.status, dict(response.getheaders()), response.read()
+        finally:
+            connection.close()
+
+    def bootstrap(self, port, url, *, accept=None):
+        token = parse_qs(urlparse(url).query)["token"][0]
+        headers = {"Accept": accept} if accept else None
+        return self.http_request(port, "GET", f"/bootstrap?token={token}", headers=headers)
+
+    def wait_for_exit(self, pid, timeout=2):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not self.process_alive(pid):
+                return True
+            time.sleep(0.02)
+        return False
+
+    @staticmethod
+    def process_alive(pid):
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+
+    def stop_server(self, info):
+        if not info:
+            return
+        pid = info.get("pid")
+        if pid and self.process_alive(pid):
+            try:
+                os.kill(pid, 15)
+            except ProcessLookupError:
+                pass
+            self.wait_for_exit(pid)
 
     def test_setup_and_manual_entry_persist_with_private_state(self):
         setup = self.json("setup", "--at", "2026-08-13T14:00:00-03:00", "--project", str(ROOT))
@@ -179,6 +235,127 @@ class DailyRuntimeTests(unittest.TestCase):
         self.assertEqual(result["diagnostics"][0]["code"], "missing_metadata")
         self.assertEqual(len(self.json("report")["entries"]), 1)
         self.assertNotIn("missing_metadata", json.dumps(self.json("present")))
+
+    def test_view_reuses_healthy_server_and_bootstrap_is_single_use(self):
+        port = self.free_port()
+        self.json("setup", "--at", "2026-08-13T14:00:00-03:00", "--project", str(ROOT), "--port", str(port))
+        self.env["DAILY_WORKLOG_NO_BROWSER"] = "1"
+        first = self.json("view")
+        info_path = Path(self.env["XDG_STATE_HOME"]) / "daily-worklog" / "server.json"
+        info = json.loads(info_path.read_text())
+        try:
+            second = self.json("view")
+            self.assertEqual(second["status"], "noop")
+            self.assertEqual(second["pid"], first["pid"])
+            self.assertEqual(info["pid"], first["pid"])
+
+            try:
+                local_addresses = {
+                    result[4][0]
+                    for result in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_STREAM)
+                    if not result[4][0].startswith("127.")
+                }
+            except OSError:
+                local_addresses = set()
+            for address in local_addresses:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client:
+                    client.settimeout(0.2)
+                    self.assertNotEqual(client.connect_ex((address, port)), 0, f"server exposed on {address}")
+
+            status, _, _ = self.http_request(port, "GET", "/")
+            self.assertEqual(status, 401)
+            status, headers, body = self.bootstrap(port, first["url"])
+            self.assertEqual(status, 200)
+            self.assertIn("HttpOnly", headers["Set-Cookie"])
+            self.assertIn("SameSite=Strict", headers["Set-Cookie"])
+            self.assertEqual(json.loads(body)["mode"], "prepare")
+            status, _, _ = self.http_request(port, "GET", "/", headers={"Cookie": headers["Set-Cookie"].split(";", 1)[0]})
+            self.assertEqual(status, 200)
+
+            fresh = self.json("view")
+            status, html_headers, _ = self.bootstrap(port, fresh["url"], accept="text/html")
+            self.assertEqual(status, 303)
+            self.assertEqual(html_headers["Location"], "/")
+
+            token = parse_qs(urlparse(first["url"]).query)["token"][0]
+            status, _, _ = self.http_request(port, "GET", f"/bootstrap?token={token}")
+            self.assertEqual(status, 403)
+        finally:
+            self.stop_server(info)
+
+    def test_view_reports_foreign_port_collision_without_disturbing_owner(self):
+        port = self.free_port()
+        self.json("setup", "--at", "2026-08-13T14:00:00-03:00", "--project", str(ROOT), "--port", str(port))
+        with socket.socket() as owner:
+            owner.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            owner.bind(("127.0.0.1", port))
+            owner.listen()
+            result = self.run_cli("--json", "view", check=False)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("already in use", json.loads(result.stdout)["error"])
+            self.assertEqual(owner.getsockname()[1], port)
+
+    def test_authenticated_shutdown_is_immediate_and_idle_server_expires(self):
+        port = self.free_port()
+        self.json("setup", "--at", "2026-08-13T14:00:00-03:00", "--project", str(ROOT), "--port", str(port))
+        self.env.update({"DAILY_WORKLOG_NO_BROWSER": "1", "DAILY_WORKLOG_IDLE_SECONDS": "0.15"})
+        result = self.json("view")
+        info_path = Path(self.env["XDG_STATE_HOME"]) / "daily-worklog" / "server.json"
+        info = json.loads(info_path.read_text())
+        try:
+            status, headers, body = self.bootstrap(port, result["url"])
+            self.assertEqual(status, 200)
+            cookie = headers["Set-Cookie"].split(";", 1)[0]
+            csrf = json.loads(body)["csrf"]
+            time.sleep(0.3)
+            self.assertTrue(self.wait_for_exit(info["pid"]), "idle server did not stop")
+
+            # The timeout test also proves that a process can be stopped; a
+            # fresh server exercises the authenticated immediate shutdown path.
+            self.env["DAILY_WORKLOG_IDLE_SECONDS"] = "7200"
+            result = self.json("view")
+            info = json.loads(info_path.read_text())
+            status, headers, body = self.bootstrap(port, result["url"])
+            self.assertEqual(status, 200)
+            cookie = headers["Set-Cookie"].split(";", 1)[0]
+            csrf = json.loads(body)["csrf"]
+            status, _, _ = self.http_request(
+                port,
+                "POST",
+                "/api/shutdown",
+                headers={
+                    "Content-Type": "application/json",
+                    "Cookie": cookie,
+                    "Origin": f"http://127.0.0.1:{port}",
+                },
+                body=json.dumps({"csrf": csrf}),
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(self.wait_for_exit(info["pid"]), "shutdown did not stop server")
+        finally:
+            self.stop_server(info)
+
+    def test_browser_failure_is_reported_without_stopping_server(self):
+        port = self.free_port()
+        self.json("setup", "--at", "2026-08-13T14:00:00-03:00", "--project", str(ROOT), "--port", str(port), "--browser", "configured-browser")
+        info_path = Path(self.env["XDG_STATE_HOME"]) / "daily-worklog" / "server.json"
+        output = io.StringIO()
+        browser = mock.Mock()
+        browser.open.return_value = False
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ResourceWarning)
+            with mock.patch.dict(os.environ, self.env, clear=False), mock.patch("daily.runtime.webbrowser.get", return_value=browser), mock.patch("daily.runtime.webbrowser.open", return_value=False), contextlib.redirect_stdout(output):
+                from daily import runtime
+                self.assertEqual(runtime.main(["--json", "view"]), 0)
+        result = json.loads(output.getvalue())
+        info = json.loads(info_path.read_text())
+        try:
+            self.assertFalse(result["browser"]["opened"])
+            self.assertIn("configured browser", result["browser"]["error"])
+            status, _, _ = self.http_request(port, "GET", "/health")
+            self.assertEqual(status, 200)
+        finally:
+            self.stop_server(info)
 
 
 if __name__ == "__main__":

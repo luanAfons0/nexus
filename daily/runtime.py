@@ -13,6 +13,7 @@ import base64
 import datetime as dt
 import hashlib
 import html
+import http.client
 import http.cookies
 import http.server
 import json
@@ -28,6 +29,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import webbrowser
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import urlparse
@@ -321,7 +323,7 @@ class Runtime:
             return None
         return dict(row)
 
-    def setup(self, at: str | None, project: str | None, port: int = 8765) -> dict[str, Any]:
+    def setup(self, at: str | None, project: str | None, port: int = 8765, browser: str | None = None) -> dict[str, Any]:
         if self.store.configured():
             return {"status": "noop", "message": "Daily Worklog is already set up"}
         moment = parse_rfc3339(at, required=bool(at))
@@ -355,7 +357,10 @@ class Runtime:
                     "INSERT OR IGNORE INTO work_sessions(period_id, session_date, kind, started_at) VALUES (?, ?, ?, ?)",
                     (period["id"], session_date, kind, iso(moment)),
                 )
-            self.store.save_config({"timezone": "America/Sao_Paulo", "port": port, "tracked_projects": [str(root)], "source_evidence_enabled": True, "setup_at": iso(moment)})
+            config = {"timezone": "America/Sao_Paulo", "port": port, "tracked_projects": [str(root)], "source_evidence_enabled": True, "setup_at": iso(moment)}
+            if browser:
+                config["browser"] = browser
+            self.store.save_config(config)
             self.store.save_health({"capture_enabled": True, "last_successful_capture": None, "warnings": []})
             connection.commit()
         finally:
@@ -1417,13 +1422,24 @@ class BoardHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
+    def _redirect(self, location: str, cookie: str) -> None:
+        self.send_response(303)
+        self._security()
+        self.send_header("Location", location)
+        self.send_header("Set-Cookie", cookie)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def _host_ok(self) -> bool:
         return self.headers.get("Host", "").split(":", 1)[0] in {"127.0.0.1", "localhost", "::1"}
 
     def _session(self) -> dict[str, str] | None:
         cookies = http.cookies.SimpleCookie(self.headers.get("Cookie", ""))
         value = cookies.get("daily_session")
-        return self.server.sessions.get(value.value) if value else None  # type: ignore[attr-defined]
+        if not value:
+            return None
+        with self.server.session_lock:  # type: ignore[attr-defined]
+            return self.server.sessions.get(value.value)  # type: ignore[attr-defined]
 
     def _mutation_allowed(self, body: dict[str, Any]) -> bool:
         if not self._host_ok() or self.client_address[0] not in {"127.0.0.1", "::1"}:
@@ -1461,26 +1477,51 @@ class BoardHandler(http.server.BaseHTTPRequestHandler):
         if parsed.path == "/bootstrap":
             query = urllib.parse.parse_qs(parsed.query)
             token = query.get("token", [""])[0]
-            if not secrets.compare_digest(token, self.server.bootstrap_token):  # type: ignore[attr-defined]
+            with self.server.bootstrap_lock:  # type: ignore[attr-defined]
+                valid = secrets.compare_digest(token, self.server.bootstrap_token)  # type: ignore[attr-defined]
+                if valid:
+                    self.server.bootstrap_token = secrets.token_urlsafe(32)  # type: ignore[attr-defined]
+                    next_token = self.server.bootstrap_token  # type: ignore[attr-defined]
+                else:
+                    next_token = None
+            if not valid:
                 self._json({"error": "invalid or already used bootstrap token"}, 403)
                 return
-            self.server.bootstrap_token = secrets.token_urlsafe(32)  # type: ignore[attr-defined]
             info_path = server_info_path(self.runtime.store)
             info = json_load(info_path, {})
             if isinstance(info, dict):
-                info["token"] = self.server.bootstrap_token  # type: ignore[attr-defined]
+                info["token"] = next_token
                 write_private(info_path, json.dumps(info) + "\n")
             session_id = secrets.token_urlsafe(32)
             csrf = secrets.token_urlsafe(24)
-            self.server.sessions[session_id] = {"csrf": csrf, "created": str(time.time())}  # type: ignore[attr-defined]
+            with self.server.session_lock:  # type: ignore[attr-defined]
+                self.server.sessions[session_id] = {"csrf": csrf, "created": str(time.time()), "last_page": "0"}  # type: ignore[attr-defined]
             cookie = f"daily_session={session_id}; HttpOnly; SameSite=Strict; Path=/"
+            if "text/html" in self.headers.get("Accept", ""):
+                self._redirect("/", cookie)
+                return
             self._json({"status": "changed", "csrf": csrf, "mode": "prepare"}, cookie=cookie)
             return
+        if parsed.path == "/health":
+            self._json({"service": APP, "status": "ok", "loopback": True, "pid": os.getpid()})
+            return
+        if parsed.path == "/app.js":
+            body = b"fetch('/api/heartbeat',{credentials:'same-origin'});setInterval(()=>fetch('/api/heartbeat',{credentials:'same-origin'}),30000);"
+            self.send_response(200)
+            self._security()
+            self.send_header("Content-Type", "application/javascript; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         session = self._session()
-        if parsed.path.startswith("/api/") and not session:
+        if (parsed.path.startswith("/api/") or parsed.path in {"/", "/present"}) and not session:
             self._json({"error": "authentication required"}, 401)
             return
-        if parsed.path == "/api/present":
+        if parsed.path == "/api/heartbeat":
+            self.server.mark_page(session)  # type: ignore[arg-type, attr-defined]
+            self._json({"status": "ok"})
+        elif parsed.path == "/api/present":
             self._json(self.runtime.report(urllib.parse.parse_qs(parsed.query).get("meeting_date", [None])[0], present=True))
         elif parsed.path == "/present":
             self._json(self.runtime.report(urllib.parse.parse_qs(parsed.query).get("meeting_date", [None])[0], present=True))
@@ -1500,6 +1541,7 @@ class BoardHandler(http.server.BaseHTTPRequestHandler):
         elif parsed.path == "/style.css":
             self._css()
         elif parsed.path == "/":
+            self.server.mark_page(session)  # type: ignore[arg-type, attr-defined]
             report = self.runtime.report(present=True)
             cards = ""
             for item in report.get("entries", []):
@@ -1507,7 +1549,7 @@ class BoardHandler(http.server.BaseHTTPRequestHandler):
                 cards += f"<article class='entry {html.escape(item['state'].lower().replace(' ', '-'))}'><span>{html.escape(item['state'])}</span><time>{html.escape(item.get('display_time', ''))}</time><p>{html.escape(item['text'])}</p><div class='refs'>{links}</div></article>"
             sessions = "".join(f"<span class='session'>{html.escape(item['session_date'])} · {html.escape(item['kind'])}</span>" for item in report.get("sessions", []))
             summary = report.get("summary", {})
-            self._html(f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'><link rel='stylesheet' href='/style.css'><title>Daily Worklog</title></head><body><main><header><p class='eyebrow'>DISPATCH BOARD · WORK TRAIL</p><h1>Daily Worklog</h1><p>Meeting date: {html.escape(str(report.get('reporting_period', {}).get('meeting_date', '')))}</p><div class='summary'><span>{summary.get('outcomes', 0)} outcomes</span><span>{summary.get('issues', 0)} issues</span><span>{summary.get('pull_requests', 0)} pull requests</span></div></header><section aria-label='Work sessions' class='rail'>{sessions}<span class='pause'>overnight pause</span></section><section aria-label='Outcomes' class='cards'>{cards}</section></main></body></html>")
+            self._html(f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'><link rel='stylesheet' href='/style.css'><script src='/app.js' defer></script><title>Daily Worklog</title></head><body><main><header><p class='eyebrow'>DISPATCH BOARD · WORK TRAIL</p><h1>Daily Worklog</h1><p>Meeting date: {html.escape(str(report.get('reporting_period', {}).get('meeting_date', '')))}</p><div class='summary'><span>{summary.get('outcomes', 0)} outcomes</span><span>{summary.get('issues', 0)} issues</span><span>{summary.get('pull_requests', 0)} pull requests</span></div></header><section aria-label='Work sessions' class='rail'>{sessions}<span class='pause'>overnight pause</span></section><section aria-label='Outcomes' class='cards'>{cards}</section></main></body></html>")
         else:
             self._json({"error": "not found"}, 404)
 
@@ -1546,12 +1588,65 @@ class BoardServer(http.server.ThreadingHTTPServer):
     # Reuse a recently closed Daily Worklog socket; an active foreign listener
     # is still rejected by bind and reported as a collision.
     allow_reuse_address = True
+    daemon_threads = True
 
     def __init__(self, runtime: Runtime, port: int, bootstrap_token: str | None = None) -> None:
         super().__init__(("127.0.0.1", port), BoardHandler)
         self.runtime = runtime
         self.bootstrap_token = bootstrap_token or secrets.token_urlsafe(32)
         self.sessions: dict[str, dict[str, str]] = {}
+        self.bootstrap_lock = threading.Lock()
+        self.session_lock = threading.Lock()
+        self.activity_lock = threading.Lock()
+        self.last_page_activity = time.monotonic()
+
+    def mark_page(self, session: dict[str, str]) -> None:
+        now = time.monotonic()
+        with self.session_lock:
+            session["last_page"] = str(now)
+        with self.activity_lock:
+            self.last_page_activity = now
+
+    def idle_for(self) -> float:
+        with self.activity_lock:
+            return time.monotonic() - self.last_page_activity
+
+    def page_is_open(self) -> bool:
+        now = time.monotonic()
+        with self.session_lock:
+            for session in self.sessions.values():
+                try:
+                    if now - float(session.get("last_page", "0")) < 90:
+                        return True
+                except ValueError:
+                    continue
+        return False
+
+
+def idle_timeout_seconds() -> float:
+    value = os.environ.get("DAILY_WORKLOG_IDLE_SECONDS", "7200")
+    try:
+        timeout = float(value)
+    except ValueError:
+        return 7200.0
+    return timeout if timeout > 0 else 7200.0
+
+
+def start_idle_watchdog(server: BoardServer) -> threading.Thread:
+    timeout = idle_timeout_seconds()
+
+    def watch() -> None:
+        while True:
+            if server._BaseServer__shutdown_request:  # type: ignore[attr-defined]
+                return
+            if not server.page_is_open() and server.idle_for() >= timeout:
+                server.shutdown()
+                return
+            time.sleep(min(1.0, max(0.02, timeout / 4)))
+
+    thread = threading.Thread(target=watch, name="daily-worklog-idle-watchdog", daemon=True)
+    thread.start()
+    return thread
 
 
 def serve(runtime: Runtime, port: int, token: str | None = None) -> None:
@@ -1560,10 +1655,15 @@ def serve(runtime: Runtime, port: int, token: str | None = None) -> None:
     except OSError as exc:
         raise DailyError(f"could not bind Daily Worklog to loopback port {port}: {exc}") from exc
     signal.signal(signal.SIGTERM, lambda *_args: threading.Thread(target=server.shutdown, daemon=True).start())
+    start_idle_watchdog(server)
     try:
         server.serve_forever()
     finally:
         server.server_close()
+        info_path = server_info_path(runtime.store)
+        info = json_load(info_path, {})
+        if isinstance(info, dict) and info.get("pid") == os.getpid():
+            info_path.unlink(missing_ok=True)
 
 
 def server_info_path(store: Store) -> Path:
@@ -1578,17 +1678,76 @@ def process_alive(pid: Any) -> bool:
         return False
 
 
+def is_daily_server_process(pid: int, port: int) -> bool:
+    if not process_alive(pid):
+        return False
+    command_path = Path(f"/proc/{pid}/cmdline")
+    try:
+        arguments = command_path.read_bytes().split(b"\0")
+        arguments = [item.decode(errors="replace") for item in arguments if item]
+    except OSError:
+        return True
+    return "serve" in arguments and str(port) in arguments and any(Path(item).name == "dailyctl" for item in arguments)
+
+
 def port_is_open(port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client:
-        client.settimeout(0.15)
-        return client.connect_ex(("127.0.0.1", port)) == 0
+    for family, address in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+        try:
+            with socket.socket(family, socket.SOCK_STREAM) as client:
+                client.settimeout(0.15)
+                if client.connect_ex((address, port)) == 0:
+                    return True
+        except OSError:
+            continue
+    return False
+
+
+def daily_server_health(port: int, expected_pid: int | None = None) -> bool:
+    try:
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=0.25)
+        try:
+            connection.request("GET", "/health", headers={"Host": f"127.0.0.1:{port}"})
+            response = connection.getresponse()
+            if response.status != 200:
+                return False
+            value = json.loads(response.read(4096).decode())
+        finally:
+            connection.close()
+    except (OSError, ValueError, UnicodeError, http.client.HTTPException, json.JSONDecodeError):
+        return False
+    return value.get("service") == APP and value.get("status") == "ok" and value.get("loopback") is True and (expected_pid is None or value.get("pid") == expected_pid)
+
+
+def open_browser(url: str, config: dict[str, Any]) -> dict[str, Any]:
+    if os.environ.get("DAILY_WORKLOG_NO_BROWSER"):
+        return {"attempted": False, "opened": False, "reason": "disabled"}
+    configured = os.environ.get("DAILY_WORKLOG_BROWSER") or config.get("browser")
+    errors: list[str] = []
+    if configured:
+        try:
+            browser = webbrowser.get(str(configured))
+            if browser.open(url):
+                return {"attempted": True, "opened": True, "mechanism": "configured"}
+            errors.append("configured browser did not accept the URL")
+        except (webbrowser.Error, OSError) as exc:
+            errors.append(sanitize(exc, 160))
+    try:
+        if webbrowser.open(url):
+            return {"attempted": True, "opened": True, "mechanism": "system"}
+        errors.append("system browser did not accept the URL")
+    except (webbrowser.Error, OSError) as exc:
+        errors.append(sanitize(exc, 160))
+    return {"attempted": True, "opened": False, "error": "; ".join(errors)}
 
 
 def emit(value: Any, machine: bool) -> None:
     if machine:
         print(json.dumps(value, ensure_ascii=False, sort_keys=True))
     elif isinstance(value, dict):
-        print(value.get("message") or value.get("status") or json.dumps(value, ensure_ascii=False, indent=2))
+        if value.get("url"):
+            print(f"{value.get('message') or value.get('status')}: {value['url']}")
+        else:
+            print(value.get("message") or value.get("status") or json.dumps(value, ensure_ascii=False, indent=2))
     else:
         print(value)
 
@@ -1597,7 +1756,7 @@ def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="dailyctl", description="Private Daily Worklog runtime")
     p.add_argument("--json", action="store_true", dest="machine")
     sub = p.add_subparsers(dest="command")
-    setup = sub.add_parser("setup"); setup.add_argument("--at"); setup.add_argument("--project"); setup.add_argument("--port", type=int, default=8765)
+    setup = sub.add_parser("setup"); setup.add_argument("--at"); setup.add_argument("--project"); setup.add_argument("--port", type=int, default=8765); setup.add_argument("--browser")
     for action in ("start", "stop", "continue"):
         command = sub.add_parser(action); command.add_argument("--at", required=True)
     note = sub.add_parser("note"); note.add_argument("text"); note.add_argument("--state", default="Done"); note.add_argument("--at"); note.add_argument("--linear", action="append", default=[]); note.add_argument("--pr", "--pull-request", dest="prs", action="append", default=[])
@@ -1631,7 +1790,7 @@ def main(argv: list[str] | None = None) -> int:
     runtime = Runtime()
     try:
         if command == "setup":
-            result = runtime.setup(args.at, args.project, args.port)
+            result = runtime.setup(args.at, args.project, args.port, args.browser)
         elif command in {"start", "stop", "continue"}:
             result = runtime.lifecycle(command, args.at)
         elif command == "note":
@@ -1700,32 +1859,45 @@ def main(argv: list[str] | None = None) -> int:
         elif command == "view":
             config = runtime.store.config()
             port = int(config.get("port", 8765))
+            if not 1024 <= port <= 65535:
+                raise DailyError("configured Daily Worklog port must be between 1024 and 65535")
             info_path = server_info_path(runtime.store)
             info = json_load(info_path, {})
-            if info.get("pid") and process_alive(info.get("pid")) and port_is_open(port):
+            expected_pid = info.get("pid")
+            try:
+                expected_pid = int(expected_pid) if expected_pid is not None else None
+            except (TypeError, ValueError):
+                expected_pid = None
+            healthy = bool(expected_pid and is_daily_server_process(expected_pid, port) and daily_server_health(port, expected_pid))
+            if healthy:
                 token = info.get("token")
                 if not token:
                     raise DailyError("existing Daily Worklog server has no bootstrap token")
-                result = {"status": "noop", "url": f"http://127.0.0.1:{port}/bootstrap?token={urllib.parse.quote(token)}", "mode": "prepare"}
+                result = {"status": "noop", "url": f"http://127.0.0.1:{port}/bootstrap?token={urllib.parse.quote(token)}", "mode": "prepare", "pid": info.get("pid")}
+                result["browser"] = open_browser(result["url"], config)
                 emit(result, args.machine)
                 return 0
             if port_is_open(port):
-                raise DailyError(f"Daily Worklog port {port} is already in use")
+                raise DailyError(f"Daily Worklog port {port} is already in use by another process")
             token = secrets.token_urlsafe(32)
             runtime.store.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
             command_path = Path(__file__).resolve().parents[1] / "scripts" / "dailyctl"
             process = subprocess.Popen([sys.executable, str(command_path), "serve", "--port", str(port), "--token", token], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
-            write_private(info_path, json.dumps({"pid": process.pid, "port": port, "token": token, "started_at": iso(utc_now())}) + "\n")
             for _ in range(50):
-                if port_is_open(port):
+                if daily_server_health(port, process.pid):
                     break
                 if process.poll() is not None:
+                    if port_is_open(port):
+                        raise DailyError(f"Daily Worklog port {port} is already in use by another process")
                     raise DailyError(f"Daily Worklog server exited while starting (code {process.returncode})")
                 time.sleep(0.02)
             else:
+                if port_is_open(port):
+                    raise DailyError(f"Daily Worklog port {port} is already in use by another process")
                 raise DailyError(f"Daily Worklog server did not open loopback port {port}")
+            write_private(info_path, json.dumps({"pid": process.pid, "port": port, "token": token, "started_at": iso(utc_now())}) + "\n")
             url = f"http://127.0.0.1:{port}/bootstrap?token={urllib.parse.quote(token)}"
-            result = {"status": "changed", "url": url, "mode": "prepare", "pid": process.pid}
+            result = {"status": "changed", "url": url, "mode": "prepare", "pid": process.pid, "browser": open_browser(url, config)}
         else:
             raise DailyError(f"unknown command: {command}")
         emit(result, args.machine)
