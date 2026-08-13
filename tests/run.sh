@@ -234,11 +234,8 @@ test_bootstrap() {
     link="$home/.codex/skills/$name"
     assert_link_to "$link" "$target" || failed=1
     [[ "$(readlink -- "$link")" != /* ]] || { printf '  absolute Codex link: %s\n' "$link" >&2; failed=1; }
-    command="${name#nexus-}.md"
-    link="$home/.claude/commands/nexus/$command"; target="$home/.nexus/skills/$name/claude-command.md"
-    assert_link_to "$link" "$target" || failed=1
-    [[ "$(readlink -- "$link")" != /* ]] || { printf '  absolute adapter link: %s\n' "$link" >&2; failed=1; }
   done
+  [[ ! -e "$home/.claude/commands/nexus" ]] || { printf '  unexpected command adapters\n' >&2; failed=1; }
   [[ ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
   [[ ! -e "$home/.claude-backup" ]] || failed=1
   [[ ! -e "$home/.codex-backup" ]] || failed=1
@@ -693,7 +690,7 @@ test_setup_happy_and_idempotent() {
   before="$(snapshot_tree "$home/.nexus")|$(snapshot_tree "$home/.agents")|$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")|$(snapshot_tree "$home/.claude-backup")|$(snapshot_tree "$home/.codex-backup")"
   output="$(run_nexus "$home" setup 2>&1)" || failed=1
   after="$(snapshot_tree "$home/.nexus")|$(snapshot_tree "$home/.agents")|$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")|$(snapshot_tree "$home/.claude-backup")|$(snapshot_tree "$home/.codex-backup")"
-  [[ "$output" == *'already initialized'* && "$output" == *'/nexus:link'* && "$output" == *'$nexus-link'* && "$before" == "$after" ]] || failed=1
+  [[ "$output" == *'already initialized'* && "$output" == *'/nexus-link'* && "$output" == *'$nexus-link'* && "$before" == "$after" ]] || failed=1
   if (( failed == 0 )); then pass setup_happy_and_idempotent; else fail setup_happy_and_idempotent; fi
 }
 
@@ -891,7 +888,7 @@ test_setup_lock_publication_verification() {
   write_lock "$home/.agents/.skill-lock.json"
   mkdir -p "$home/.claude" "$home/.codex"
   output="$(run_nexus_overridden "$home" lock_post_publish_corrupt setup 2>&1)" && failed=1
-  [[ -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" && "$output" == *'setup is now initialized/disabled'* && "$output" == *'/nexus:link'* && "$output" == *'$nexus-link'* ]] || failed=1
+  [[ -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" && "$output" == *'setup is now initialized/disabled'* && "$output" == *'/nexus-link'* && "$output" == *'$nexus-link'* ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
   if (( failed == 0 )); then pass setup_lock_publication_verification; else fail setup_lock_publication_verification; fi
 }
@@ -940,7 +937,7 @@ test_setup_canonical_failures_retain_publication() {
   mkdir -p "$home/.agents/skills" "$home/.claude/skills/alpha" "$home/.codex/skills/alpha"
   ln -s -- /missing/alpha "$home/.agents/skills/alpha"
   output="$(run_nexus "$home" setup 2>&1)" && failed=1
-  [[ "$output" == *'broken symlink'* && -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" && "$output" == *'setup is now initialized/disabled'* && "$output" == *'/nexus:link'* && "$output" == *'$nexus-link'* ]] || failed=1
+  [[ "$output" == *'broken symlink'* && -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" && "$output" == *'setup is now initialized/disabled'* && "$output" == *'/nexus-link'* && "$output" == *'$nexus-link'* ]] || failed=1
   [[ -d "$home/.claude/skills/alpha" && -d "$home/.codex/skills/alpha" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
 
@@ -1050,14 +1047,12 @@ test_metadata() {
       nexus-install) command='/home/luanh/.nexus/scripts/nexus install' ;;
     esac
     assert_file "skills/$name/SKILL.md" || failed=1
-    assert_file "skills/$name/claude-command.md" || failed=1
+    [[ ! -e "$REPO_ROOT/skills/$name/claude-command.md" ]] || { printf '  unexpected adapter file: %s\n' "$name" >&2; failed=1; }
     assert_line "skills/$name/SKILL.md" "name: $name" || failed=1
     assert_contains "skills/$name/SKILL.md" "$command" || failed=1
-    assert_contains "skills/$name/claude-command.md" "$command" || failed=1
     if [[ "$name" == nexus-install ]]; then
       assert_contains "skills/$name/SKILL.md" '--skill "skill-a" --skill "skill-b"' || failed=1
-      assert_contains "skills/$name/claude-command.md" '--skill "skill-a" --skill "skill-b"' || failed=1
-      if grep -Fq 'install "/path/to/source" "skill-a"' "$REPO_ROOT/skills/$name/SKILL.md" "$REPO_ROOT/skills/$name/claude-command.md"; then
+      if grep -Fq 'install "/path/to/source" "skill-a"' "$REPO_ROOT/skills/$name/SKILL.md"; then
         printf '  nexus-install advertises incompatible positional skills\n' >&2
         failed=1
       fi
@@ -1073,7 +1068,7 @@ test_metadata() {
 
 test_readme_documentation() {
   local failed=0 term
-  for term in '~/.agents/skills' 'skill-lock.json' '.claude-backup' '.codex-backup' '/nexus:setup' '$nexus-setup' 'npx skills' 'python3' 'recovery' 'another agent'; do
+  for term in '~/.agents/skills' 'skill-lock.json' '.claude-backup' '.codex-backup' '/nexus-setup' '$nexus-setup' 'npx skills' 'python3' 'recovery' 'another agent'; do
     assert_contains README.md "$term" || failed=1
   done
   assert_contains README.md 'Setup preflight checks `jq`, `python3`, and the' || failed=1
@@ -1137,7 +1132,7 @@ test_term_recovery() {
   stop_and_reap "$pid"; status="$NEXUS_WAIT_STATUS"
   (( status != 0 && status != 127 )) || { cat "$home/post-output" >&2; failed=1; }
   grep -Fq "$home/.nexus/skill-lock.json" "$home/post-output" || failed=1
-  grep -Fq '/nexus:link' "$home/post-output" || failed=1
+  grep -Fq '/nexus-link' "$home/post-output" || failed=1
   grep -Fq '$nexus-link' "$home/post-output" || failed=1
   [[ ! -e "$home/.nexus/.nexus-setup.lock" ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
@@ -1158,7 +1153,7 @@ test_term_recovery() {
   wait_handshake "$home/post-handshake" "$pid" || { failed=1; cat "$home/fail-post-output" >&2; }
   stop_and_reap "$pid"; status="$NEXUS_WAIT_STATUS"
   retained="$(sed -n 's/.*retained setup temp paths: //p' "$home/fail-post-output" | tail -n 1)"
-  [[ "$status" -eq 143 && -n "$retained" && -e "$retained" && "$(<"$home/fail-post-output")" == *"retained setup temp paths: $retained"* && "$(<"$home/fail-post-output")" == *"$home/.nexus/skill-lock.json"* && "$(<"$home/fail-post-output")" == *'/nexus:link'* && "$(<"$home/fail-post-output")" == *'retained final/recovery paths'* ]] || failed=1
+  [[ "$status" -eq 143 && -n "$retained" && -e "$retained" && "$(<"$home/fail-post-output")" == *"retained setup temp paths: $retained"* && "$(<"$home/fail-post-output")" == *"$home/.nexus/skill-lock.json"* && "$(<"$home/fail-post-output")" == *'/nexus-link'* && "$(<"$home/fail-post-output")" == *'retained final/recovery paths'* ]] || failed=1
   [[ "$retained" == "$home/.nexus/.nexus-lock."* && "$(find "$home/.nexus" -maxdepth 1 -name '.nexus-setup-*' -print -quit)" == '' ]] || failed=1
   if (( failed == 0 )); then pass term_recovery; else fail term_recovery; fi
 }
@@ -1177,7 +1172,7 @@ test_nested_source_symlink_safety() {
   [[ "$output" == *'nested source symlink'* && -f "$outside" && "$(readlink "$canonical")" == '../../.claude/skills/alpha' ]] || failed=1
   [[ -f "$home/.nexus/skill-lock.json" && -d "$home/.claude-backup" && -d "$home/.codex-backup" ]] || failed=1
   [[ "$(readlink "$home/.codex/skills/alpha")" == /external/agent-alpha ]] || failed=1
-  [[ "$output" == *'/nexus:link'* && "$output" == *'$nexus-link'* ]] || failed=1
+  [[ "$output" == *'/nexus-link'* && "$output" == *'$nexus-link'* ]] || failed=1
 
   home="$(new_home nested_broken)"; write_lock "$home/.agents/.skill-lock.json" alpha
   mkdir -p "$home/.claude/skills/alpha" "$home/.agents/skills"
@@ -1244,7 +1239,7 @@ test_setup_finalization_signal_window() {
   [[ "$status" -eq 143 && -d "$home/.claude-backup" && -d "$home/.codex-backup" &&
      -f "$home/.nexus/skill-lock.json" && ! -e "$home/.nexus/.nexus-setup.lock" &&
      -z "$(find "$home/.nexus" -maxdepth 1 \( -name '.nexus-lock-candidates.*' -o -name '.nexus-setup-*' \) -print -quit)" &&
-     "$output" == *'setup interrupted'* && "$output" == *'/nexus:link'* &&
+     "$output" == *'setup interrupted'* && "$output" == *'/nexus-link'* &&
      "$output" == *'$nexus-link'* ]] || failed=1
   if (( failed == 0 )); then pass setup_finalization_signal_window; else fail setup_finalization_signal_window; fi
 }

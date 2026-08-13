@@ -23,7 +23,7 @@ From a shell, initialize only Nexus's control links with:
 ```
 
 Bootstrap exposes only `nexus-setup`, `nexus-link`, and `nexus-install` in the
-native Claude/Codex skill roots, plus Claude command adapters. It does not run
+native Claude/Codex skill roots. It does not run
 setup, copy agent data, discover a lock, or install anything. Setup is always
 an explicit operation.
 
@@ -31,9 +31,9 @@ Native invocation forms are:
 
 | Operation | Claude | Codex |
 | --- | --- | --- |
-| Initialize | `/nexus:setup` | `$nexus-setup` |
-| Reconcile links | `/nexus:link` | `$nexus-link` |
-| Install selected skills | `/nexus:install` | `$nexus-install` |
+| Initialize | `/nexus-setup` | `$nexus-setup` |
+| Reconcile links | `/nexus-link` | `$nexus-link` |
+| Install selected skills | `/nexus-install` | `$nexus-install` |
 
 The equivalent CLI is `~/.nexus/scripts/nexus {setup,link,install}`.
 
@@ -55,7 +55,7 @@ backup, Nexus retries once and then removes the temporary transaction, leaves
 live and published paths untouched, and asks you to close Claude/Codex and
 retry. A setup failure after publication is deliberately
 recoverable: the lock and backups are retained, and output points to
-`/nexus:link` or `$nexus-link`. Review retained temporary or recovery paths
+`/nexus-link` or `$nexus-link`. Review retained temporary or recovery paths
 before retrying; do not delete them blindly.
 
 Once `~/.nexus/skill-lock.json` exists, setup is disabled and reports that it
@@ -105,7 +105,7 @@ gitignored and should not be committed.
 
 ## Troubleshooting
 
-- **Already initialized:** setup is intentionally disabled; use `/nexus:link`,
+- **Already initialized:** setup is intentionally disabled; use `/nexus-link`,
   `$nexus-link`, or the CLI link command.
 - **Missing, conflicting, or invalid lock:** provide one valid version-3 lock
   in the supported `~/.agents`/`~/.skills` locations, remove ambiguity, and

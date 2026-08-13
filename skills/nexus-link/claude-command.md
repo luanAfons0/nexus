@@ -1,1 +1,0 @@
-Only run this mutating command when the user asks you to reconcile or repair links. For informational or diagnostic questions, explain the operation without executing it. Run `/home/luanh/.nexus/scripts/nexus link` exactly once and report its output. Do not bypass safety failures, validation errors, or collision errors; report any failure and stop.

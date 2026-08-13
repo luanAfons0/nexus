@@ -94,19 +94,17 @@ link_all() {
 }
 
 bootstrap() {
-  local name adapter errors_before_summary
+  local name errors_before_summary
   ERRORS=0
   for name in "${CONTROL_SKILLS[@]}"; do
     put_link "$NEXUS_HOME/skills/$name" "$CLAUDE_SKILLS/$name" false || :
     put_link "$NEXUS_HOME/skills/$name" "$CODEX_SKILLS/$name" false || :
-    adapter="${name#nexus-}.md"
-    put_link "$NEXUS_HOME/skills/$name/claude-command.md" "$HOME/.claude/commands/nexus/$adapter" false || :
   done
   if (( ERRORS != 0 )); then
     errors_before_summary="$ERRORS"
     printf 'nexus: error: bootstrap failed with %s error(s)\n' "$errors_before_summary" >&2
     return 1
   fi
-  info "bootstrap complete: control skills and Claude command adapters linked"
+  info "bootstrap complete: control skills linked"
   return 0
 }

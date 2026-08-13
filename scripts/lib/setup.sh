@@ -547,7 +547,7 @@ setup_signal_handler() {
   if [[ -e "$HOME/.claude-backup" || -e "$HOME/.codex-backup" || -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
     error "setup interrupted; retained final/recovery paths: $HOME/.claude-backup $HOME/.codex-backup $LOCK_FILE"
     ((${#SETUP_OWNED_RECOVERY[@]})) && error "retained setup recovery paths: ${SETUP_OWNED_RECOVERY[*]}"
-    error "rerun setup only after reviewing retained paths; correct the issue, then run /nexus:link or \$nexus-link (CLI: $NEXUS_HOME/scripts/nexus link)"
+    error "rerun setup only after reviewing retained paths; correct the issue, then run /nexus-link or \$nexus-link (CLI: $NEXUS_HOME/scripts/nexus link)"
   else
     error "setup interrupted before publication; no final backups or Nexus lock were published; rerun setup"
   fi
@@ -605,14 +605,14 @@ post_publication_failure() {
   local detail="$1"
   error "$detail"
   error "setup is now initialized/disabled; retained Nexus lock: $LOCK_FILE; retained backups: $SETUP_CLAUDE_BACKUP and $SETUP_CODEX_BACKUP"
-  error "correct the reported issue, then run /nexus:link or \$nexus-link (CLI: $NEXUS_HOME/scripts/nexus link)"
+  error "correct the reported issue, then run /nexus-link or \$nexus-link (CLI: $NEXUS_HOME/scripts/nexus link)"
 }
 
 setup_inner() {
   local selected third_party_count linked_entries
   ERRORS=0
   if [[ -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
-    info "already initialized; run /nexus:link or \$nexus-link to reconcile skills"
+    info "already initialized; run /nexus-link or \$nexus-link to reconcile skills"
     return 0
   fi
   setup_backup_preflight || return 1
@@ -646,7 +646,7 @@ setup_inner() {
 setup() {
   local status=0 cleanup_status=0
   if [[ -e "$LOCK_FILE" || -L "$LOCK_FILE" ]]; then
-    info "already initialized; run /nexus:link or \$nexus-link to reconcile skills"
+    info "already initialized; run /nexus-link or \$nexus-link to reconcile skills"
     return 0
   fi
   setup_lock_acquire || return 1
