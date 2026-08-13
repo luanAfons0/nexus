@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+"""Stable command entry point for Daily Worklog."""
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from daily.runtime import main  # noqa: E402
+
+raise SystemExit(main())
