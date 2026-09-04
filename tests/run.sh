@@ -1264,7 +1264,8 @@ test_metadata() {
 test_readme_documentation() {
   local failed=0 term
   for term in '~/.agents/skills' 'skill-lock.json' '.claude-backup' '.codex-backup' '/nexus-setup' '$nexus-setup' 'npx skills' 'python3' 'recovery' 'another agent' \
-              '~/.custom-skills' '/nexus-new' '$nexus-new' '.workspaces'; do
+              '~/.custom-skills' '/nexus-new' '$nexus-new' '.workspaces' \
+              '/nexus-update' '$nexus-update' '/nexus-remove' '$nexus-remove' '/nexus-help' '$nexus-help' 'nexus list'; do
     assert_contains README.md "$term" || failed=1
   done
   assert_contains README.md 'Setup preflight checks `jq`, `python3`, and the' || failed=1

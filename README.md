@@ -38,6 +38,7 @@ Native invocation forms are:
 | Install selected skills | `/nexus-install` | `$nexus-install` |
 | Create a custom skill | `/nexus-new` | `$nexus-new` |
 | Update one skill | `/nexus-update` | `$nexus-update` |
+| Remove one skill | `/nexus-remove` | `$nexus-remove` |
 | Show skills or command help | `/nexus-help` | `$nexus-help` |
 
 The equivalent CLI is `~/.nexus/scripts/nexus {setup,link,install,update,remove,new,list,help}`.
@@ -173,6 +174,32 @@ publishes an exact validated lock snapshot, then links. The output reports the
 skill's folder hash before and after, so you can tell whether anything changed.
 A failed upstream command, an invalid upstream lock, a missing `SKILL.md`, or a
 lock that no longer contains the skill leaves the existing Nexus lock unchanged.
+
+## Removing a skill
+
+Removal takes exactly one skill name:
+
+```bash
+~/.nexus/scripts/nexus remove skill-name
+```
+
+Nexus refuses a missing name, more than one name, an option-like name such as
+`--all`, an unsafe name, a control skill name, a custom skill name, and a name
+that is not in the Nexus lock. Every refusal happens
+before `npx` is located and before upstream runs, so a refused removal changes
+nothing. A custom skill is removed by deleting its directory under
+`~/.custom-skills` and then running link; Nexus never deletes hand-authored
+content.
+
+After the refusals, Nexus runs upstream `npx skills remove` with the name,
+`--global`, and `--yes` as separate arguments, and never evaluates them as
+shell code. On success it snapshots and validates the produced lock, verifies
+the removed name is gone from it, publishes the exact validated snapshot, then
+links, so the managed Claude and Codex links for the name disappear. Physical
+entries, unrelated links, and other skills are left alone. A failed upstream
+command, or a lock that still contains the name, leaves the Nexus lock
+byte-identical. Upstream owns `~/.agents/skills`; a canonical directory that
+survives the removal is reported as untracked for your review.
 
 ## Listing skills and help
 

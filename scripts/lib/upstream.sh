@@ -3,7 +3,9 @@
 # publish the exact snapshot as the Nexus lock, then reconcile links.
 # The optional first argument names a function called with the validated
 # snapshot path and the lock names array name; a non-zero return refuses
-# publication and leaves the Nexus lock unchanged.
+# publication and leaves the Nexus lock unchanged. The optional second
+# argument, `true`, accepts a lock that selects no skills; install refuses
+# that, remove of the last skill needs it.
 
 upstream_lock_path() {
   printf '%s\n' "$HOME/.agents/.skill-lock.json"
@@ -50,7 +52,7 @@ cleanup_upstream_snapshot() {
 }
 
 publish_upstream_lock_and_link() {
-  local check="${1:-}" status=0 cleanup_status=0 name target snapshot=''
+  local check="${1:-}" allow_empty="${2:-false}" status=0 cleanup_status=0 name target snapshot=''
   local upstream_lock
   local -a lock_names=()
   upstream_lock="$(upstream_lock_path)"
@@ -68,7 +70,7 @@ publish_upstream_lock_and_link() {
   if ! load_validated_lock_names "$snapshot" lock_names; then
     error "upstream did not produce a valid version-3 skill lock"
     status=1
-  elif (( ${#lock_names[@]} == 0 )); then
+  elif (( ${#lock_names[@]} == 0 )) && [[ "$allow_empty" != true ]]; then
     error "upstream skill lock selected no skills"
     status=1
   fi
