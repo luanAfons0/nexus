@@ -37,6 +37,7 @@ Native invocation forms are:
 | Reconcile links | `/nexus-link` | `$nexus-link` |
 | Install selected skills | `/nexus-install` | `$nexus-install` |
 | Create a custom skill | `/nexus-new` | `$nexus-new` |
+| Update one skill | `/nexus-update` | `$nexus-update` |
 | Show skills or command help | `/nexus-help` | `$nexus-help` |
 
 The equivalent CLI is `~/.nexus/scripts/nexus {setup,link,install,update,remove,new,list,help}`.
@@ -149,6 +150,29 @@ underlying `npx skills` command to read them. Keep private credentials outside
 this repository. Development and test runs should use an isolated `HOME` and
 `NEXUS_HOME`; never use real agent roots for tests. `skill-lock.json` is
 gitignored and should not be committed.
+
+## Updating a skill
+
+Update refreshes exactly one installed skill:
+
+```bash
+~/.nexus/scripts/nexus update review
+```
+
+The name must be a safe, non-control name that the Nexus lock already contains.
+Update refuses a control skill name, a custom skill name, and a name that is
+not installed. Every refusal happens before Nexus calls upstream, so nothing is
+downloaded and no upstream lock is rewritten. Custom skills are not updated
+here: run `git pull` in `~/.custom-skills` and then run link.
+
+Nexus passes the name, `--global`, and `--yes` to upstream `npx skills update`
+as separate arguments and never evaluates them as shell code. After upstream
+succeeds, Nexus snapshots and validates the produced lock, verifies the
+canonical `SKILL.md` trees, checks that the lock still contains the skill,
+publishes an exact validated lock snapshot, then links. The output reports the
+skill's folder hash before and after, so you can tell whether anything changed.
+A failed upstream command, an invalid upstream lock, a missing `SKILL.md`, or a
+lock that no longer contains the skill leaves the existing Nexus lock unchanged.
 
 ## Listing skills and help
 
