@@ -64,46 +64,6 @@ ensure_npx() {
   return 0
 }
 
-install_atomic_lock_copy() {
-  local source="$1" destination="$2" parent temp
-  parent="$(dirname -- "$destination")"
-  mkdir -p -- "$parent" || { error "cannot create lock destination: $parent"; return 1; }
-  temp="$(mktemp -- "$parent/.nexus-install-copy.XXXXXX")" || {
-    error "cannot reserve atomic lock copy"; return 1;
-  }
-  if ! cp -- "$source" "$temp" || ! cmp -s -- "$source" "$temp"; then
-    if ! rm -f -- "$temp" || [[ -e "$temp" || -L "$temp" ]]; then
-      error "install scratch retained: $temp"
-      return 1
-    fi
-    error "atomic install lock copy verification failed: $destination"
-    return 1
-  fi
-  if ! mv -Tf -- "$temp" "$destination"; then
-    if ! rm -f -- "$temp" || [[ -e "$temp" || -L "$temp" ]]; then
-      error "install scratch retained: $temp"
-      return 1
-    fi
-    error "cannot publish install lock: $destination"
-    return 1
-  fi
-  if ! cmp -s -- "$source" "$destination"; then
-    error "install lock post-publication verification failed: $destination"
-    return 1
-  fi
-  return 0
-}
-
-cleanup_install_snapshot() {
-  local path="$1"
-  [[ -e "$path" || -L "$path" ]] || return 0
-  if ! rm -f -- "$path" || [[ -e "$path" || -L "$path" ]]; then
-    error "install scratch retained: $path"
-    return 1
-  fi
-  return 0
-}
-
 install_report_untracked() {
   local name target
   for name in "${INSTALL_SKILLS[@]}"; do
@@ -113,8 +73,7 @@ install_report_untracked() {
 }
 
 install() {
-  local status=0 cleanup_status=0 name target install_snapshot=''
-  local upstream_lock="$HOME/.agents/.skill-lock.json"
+  local status=0 name target
   local -a custom_names=()
   parse_install_args "$@" || return $?
   # Refuse a colliding name before the network call, so nothing is downloaded
@@ -145,47 +104,10 @@ install() {
     return "$status"
   fi
 
-  install_snapshot="$(mktemp -- "$NEXUS_HOME/.nexus-install-lock.XXXXXX")" || {
-    error "cannot reserve install lock snapshot"
-    return 1
-  }
-  if ! cp -- "$upstream_lock" "$install_snapshot" ||
-     ! cmp -s -- "$upstream_lock" "$install_snapshot"; then
-    cleanup_install_snapshot "$install_snapshot" || :
-    error "cannot snapshot upstream skill lock: $upstream_lock"
-    return 1
-  fi
-
-  if ! load_validated_lock_names "$install_snapshot" lock_names; then
-    error "upstream did not produce a valid version-3 skill lock"
-    status=1
-  elif (( ${#lock_names[@]} == 0 )); then
-    error "upstream skill lock selected no skills"
-    status=1
-  fi
-  if (( status == 0 )); then
-    for name in "${lock_names[@]}"; do
-      target="$CANONICAL_DIR/$name"
-      [[ -f "$target/SKILL.md" ]] || {
-        error "upstream lock skill is missing SKILL.md: $target/SKILL.md"
-        status=1
-        break
-      }
-    done
-  fi
-  if (( status == 0 )); then
-    install_atomic_lock_copy "$install_snapshot" "$LOCK_FILE" || status=1
-  fi
-  if (( status == 0 )); then
-    link_all false || status=1
-  fi
-  if (( status == 0 )); then
-    for name in "${INSTALL_SKILLS[@]}"; do
-      target="$CANONICAL_DIR/$name"
-      info "installed $name: canonical $target; Claude $CLAUDE_SKILLS/$name; Codex $CODEX_SKILLS/$name"
-    done
-  fi
-  cleanup_install_snapshot "$install_snapshot" || cleanup_status=$?
-  (( cleanup_status != 0 )) && status=1
-  return "$status"
+  publish_upstream_lock_and_link '' || return 1
+  for name in "${INSTALL_SKILLS[@]}"; do
+    target="$CANONICAL_DIR/$name"
+    info "installed $name: canonical $target; Claude $CLAUDE_SKILLS/$name; Codex $CODEX_SKILLS/$name"
+  done
+  return 0
 }

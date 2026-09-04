@@ -8,6 +8,7 @@ _nexus_source_libraries() {
   source "$SCRIPT_DIR/lib/custom.sh"
   source "$SCRIPT_DIR/lib/link.sh"
   source "$SCRIPT_DIR/lib/setup.sh"
+  source "$SCRIPT_DIR/lib/upstream.sh"
   source "$SCRIPT_DIR/lib/install.sh"
   source "$SCRIPT_DIR/lib/new.sh"
 }
