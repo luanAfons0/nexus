@@ -1310,6 +1310,16 @@ test_setup_canonical_late_collision_is_preserved
 test_setup_canonical_scan_failure_is_propagated
 test_discover_lock_uses_immutable_snapshots
 
+# Per-subcommand test cases live in tests/cases/<name>.sh. Each file defines
+# functions and appends their names to CASE_TESTS; they run here in file order.
+CASE_TESTS=()
+for case_file in "$REPO_ROOT"/tests/cases/*.sh; do
+  [[ -f "$case_file" ]] || continue
+  source "$case_file"
+done
+for case_test in "${CASE_TESTS[@]}"; do
+  "$case_test"
+done
 
 test_term_recovery() {
   local failed=0 home pid output status

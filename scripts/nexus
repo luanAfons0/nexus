@@ -11,14 +11,15 @@ _nexus_source_libraries() {
   source "$SCRIPT_DIR/lib/upstream.sh"
   source "$SCRIPT_DIR/lib/install.sh"
   source "$SCRIPT_DIR/lib/new.sh"
+  source "$SCRIPT_DIR/lib/update.sh"
+  source "$SCRIPT_DIR/lib/remove.sh"
+  source "$SCRIPT_DIR/lib/list.sh"
 }
 _nexus_source_libraries
 unset -f _nexus_source_libraries
 
 usage() {
-  cat <<'EOF'
-Usage: nexus <bootstrap|setup|link|install|new|help>
-EOF
+  help_text
 }
 
 main() {
@@ -34,12 +35,19 @@ main() {
       install "${@:2}" ;;
     new)
       new_skill "${@:2}" ;;
+    update)
+      update_skill "${@:2}" ;;
+    remove)
+      remove_skill "${@:2}" ;;
+    list)
+      [[ "$#" -eq 1 ]] || { usage >&2; return 2; }
+      list_skills ;;
     link)
       [[ "$#" -eq 1 ]] || { usage >&2; return 2; }
       link_all false ;;
     help|-h|--help)
       [[ "$#" -eq 1 ]] || { usage >&2; return 2; }
-      usage ;;
+      help_text ;;
     *)
       usage >&2
       return 2 ;;

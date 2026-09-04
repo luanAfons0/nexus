@@ -23,8 +23,9 @@ From a shell, initialize only Nexus's control links with:
 ~/.nexus/scripts/nexus bootstrap
 ```
 
-Bootstrap exposes only `nexus-setup`, `nexus-link`, `nexus-install`, and
-`nexus-new` in the native Claude/Codex skill roots. It does not run
+Bootstrap exposes only the control skills `nexus-setup`, `nexus-link`,
+`nexus-install`, `nexus-new`, `nexus-update`, `nexus-remove`, and `nexus-help`
+in the native Claude/Codex skill roots. It does not run
 setup, copy agent data, discover a lock, or install anything. Setup is always
 an explicit operation.
 
@@ -36,8 +37,9 @@ Native invocation forms are:
 | Reconcile links | `/nexus-link` | `$nexus-link` |
 | Install selected skills | `/nexus-install` | `$nexus-install` |
 | Create a custom skill | `/nexus-new` | `$nexus-new` |
+| Show skills or command help | `/nexus-help` | `$nexus-help` |
 
-The equivalent CLI is `~/.nexus/scripts/nexus {setup,link,install,new}`.
+The equivalent CLI is `~/.nexus/scripts/nexus {setup,link,install,update,remove,new,list,help}`.
 
 ## Setup and recovery
 
@@ -147,6 +149,24 @@ underlying `npx skills` command to read them. Keep private credentials outside
 this repository. Development and test runs should use an isolated `HOME` and
 `NEXUS_HOME`; never use real agent roots for tests. `skill-lock.json` is
 gitignored and should not be committed.
+
+## Listing skills and help
+
+`nexus list` is read-only. It prints one line per skill, sorted by name, with
+tab-separated columns: name, kind (`installed`, `custom`, `control`), source,
+an eight-character `skillFolderHash` prefix, and `updatedAt`. Installed rows
+come from the validated Nexus lock; custom and control rows show a dash for
+the last three columns because they carry no upstream version. When the lock
+is absent, `list` prints one info line saying so, then only the custom and
+control rows, and still exits 0. An invalid lock reports the validation error
+and exits 1.
+
+`nexus help` (also `-h` and `--help`) prints the usage line and one line per
+subcommand: `bootstrap`, `setup`, `link`, `install`, `update`, `remove`,
+`new`, `list`, and `help`.
+
+The `nexus-help` skill asks which of these two you want, runs the matching
+read-only command, and reports the result. It never runs a mutating command.
 
 ## Troubleshooting
 
