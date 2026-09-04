@@ -1504,13 +1504,5 @@ if python3 "$REPO_ROOT/tests/backup_manifest_test.py" >/dev/null; then
 else
   fail backup_manifest_fixtures
 fi
-DAILY_WORKLOG_ROOT="${DAILY_WORKLOG_ROOT:-$HOME/.custom-skills/daily}"
-for runtime_test in daily_runtime_test.py daily_smoke_test.py integrations_test.py; do
-  if [[ -f "$DAILY_WORKLOG_ROOT/tests/$runtime_test" ]] && PYTHONPATH="$DAILY_WORKLOG_ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 "$DAILY_WORKLOG_ROOT/tests/$runtime_test" >/dev/null; then
-    pass "${runtime_test%.py}_fixtures"
-  else
-    fail "${runtime_test%.py}_fixtures"
-  fi
-done
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))

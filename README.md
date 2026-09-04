@@ -256,25 +256,3 @@ Bootstrap only exposes Nexus control entries. Setup is explicit and is **not**
 run by bootstrap. Setup backs up before link changes, never silently
 overwrites backups, and reports recovery paths. Install requires explicit
 source and skill names and does not `eval` arguments.
-
-## Related: Daily Worklog
-
-Daily Worklog is not part of Nexus. It is a custom skill owned by the custom
-root, and this section only records how to start it.
-
-The private `daily` skill and its deterministic runtime live at
-`~/.custom-skills/daily`. Start the first setup with
-`~/.custom-skills/daily/scripts/dailyctl setup`; it installs the stable launcher
-under the user's XDG bin directory and carries its own runtime copy, so
-scheduled `dailyctl` commands do not depend on this checkout remaining at the
-same path. The runtime setup report shows whether Claude and Codex resolve the
-same canonical source and recommends a client restart only when discovery has
-not refreshed.
-
-Daily Worklog stores reports under the XDG data directory, configuration under
-XDG config, and diagnostics under XDG state. These directories and files are
-owner-only. The local server listens only on loopback and requires a one-time
-bootstrap URL plus a strict session cookie; it is not a LAN or multi-user
-service. Data is plaintext to any process or person that can read the user's
-OS account, which is the local threat-model boundary. Source Evidence is
-optional and expires after 30 days; dismissed Inbox items expire after 7 days.
