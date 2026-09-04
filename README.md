@@ -1,13 +1,15 @@
 # Nexus skill manager
 
-Nexus gives Claude and Codex one explicit, recoverable owner for installed
-skills. `~/.nexus` owns the Nexus manager and its control skills. Third-party
-skill content is canonical under `~/.agents/skills`; the authoritative Nexus
-state is `~/.nexus/skill-lock.json` (gitignored). Hand-authored skills are
-canonical under `~/.custom-skills`. The native Claude and Codex skill folders
-contain reconciled relative links into those owners. Nexus does not take
-ownership of unrelated physical entries, external links, or Codex's `.system`
-directory.
+Nexus gives Claude and Codex one explicit, recoverable owner for every skill.
+Each skill has one kind and one owner: installed skills are owned by the
+canonical root `~/.agents/skills`, custom skills by the custom root
+`~/.custom-skills`, and control skills by `~/.nexus`. The Nexus lock
+`~/.nexus/skill-lock.json` (gitignored) is authoritative for which installed
+skills exist. The native Claude and Codex skill roots contain managed links,
+relative symlinks into those owners. Anything else in a native skill root is a
+foreign entry: a physical directory, a symlink to an unrelated place, or
+Codex's `.system` directory. Nexus never claims or deletes a foreign entry.
+`CONTEXT.md` defines these terms.
 
 ## Requirements and first use
 
@@ -17,7 +19,7 @@ prerequisite for installation. Setup preflight checks `jq`, `python3`, and the
 required core utilities; it does not check Git, npm, npx, or NVM. Install first
 uses a directly available `npx`; if it is unavailable, NVM is the fallback.
 
-From a shell, initialize only Nexus's control links with:
+From a shell, bootstrap only the control skills with:
 
 ```bash
 ~/.nexus/scripts/nexus bootstrap
@@ -50,9 +52,9 @@ Setup first performs preflight checks, then discovers candidate locks in
 an immutable snapshot and validates the exact version-3 lock before changing
 anything. It creates complete, copy-based, no-clobber backups at
 `~/.claude-backup` and `~/.codex-backup`; existing backups are never silently
-overwritten. The live roots remain in place. After backup verification, Nexus
-publishes its lock, canonicalizes managed skill symlinks under
-`~/.agents/skills`, and reconciles native links.
+overwritten. The agent homes remain in place. After backup verification, Nexus
+publishes its lock, canonicalizes managed skill symlinks under the canonical
+root, and links.
 
 Backup verification covers mode, uid, gid, nanosecond mtime, content, hardlink
 topology, and literal symlink targets. It does not promise ACL, xattr, atime,
@@ -65,22 +67,21 @@ recoverable: the lock and backups are retained, and output points to
 before retrying; do not delete them blindly.
 
 Once `~/.nexus/skill-lock.json` exists, setup is disabled and reports that it
-is already initialized. Use link to reconcile afterward. If setup is
+is already initialized. Use link afterward. If setup is
 interrupted, reports an existing setup mutex, or reports retained residue,
 review the named paths, correct the cause, and then run link. Backups are
 manual recovery sources: copy only the needed files or directories from
 `~/.claude-backup` or `~/.codex-backup` after inspection. Nexus never silently
 replaces either backup.
 
-## Link reconciliation
+## Link
 
-`nexus link` treats the validated Nexus lock as authoritative. For each locked
-third-party skill, each custom skill, and each control skill it creates or
-updates relative managed links in Claude and Codex. It explicitly removes stale
-or broken Nexus-managed links, and reports missing canonical skills. Physical
-entries, unrelated or external symlinks, collisions, and Codex `.system` are
-preserved rather than claimed or deleted. Correct a collision or missing
-canonical skill and rerun link.
+`nexus link` treats the validated Nexus lock as authoritative. For each
+installed skill, each custom skill, and each control skill it creates or
+updates a managed link in each native skill root. It removes stale links and
+reports skills whose owner has no `SKILL.md`. Foreign entries and collisions
+are preserved rather than claimed or deleted. Correct a collision or a missing
+skill and rerun link.
 
 Link runs its preflight checks before it changes anything. A malformed custom
 root, a name collision, or a custom skill reachable through the canonical root
@@ -89,13 +90,13 @@ leaves both agent roots exactly as they were.
 
 ## Custom skills
 
-Skills you write yourself are canonical under `~/.custom-skills`, a Git
+Custom skills are owned by the custom root `~/.custom-skills`, a Git
 repository you control. Nexus does not use Git: it reads the directory only.
-After a `git pull`, run link to reconcile the updated files.
+After a `git pull`, run link.
 
 There is no custom lock file. The directory listing is the manifest. Nexus
 reads every visible subdirectory of `~/.custom-skills`, and each one must have
-a safe skill name and a physical `SKILL.md`. Entries beginning with `.` and
+a safe skill name and a real (not symlinked) `SKILL.md`. Entries beginning with `.` and
 top-level regular files are repository furniture and are skipped, so `.git`,
 `.gitignore`, `.workspaces`, and `README.md` are ignored. Anything else is a
 hard error that names the entry; Nexus does not skip an unexplained directory
@@ -139,12 +140,12 @@ argument. Examples:
 The source is passed as an argument to upstream `npx skills add`; Nexus never
 evaluates install arguments as shell code. Upstream `npx skills` maintains its
 own state (normally `~/.agents/.skill-lock.json`), but Nexus's
-`~/.nexus/skill-lock.json` remains authoritative for link reconciliation.
+`~/.nexus/skill-lock.json` remains authoritative for link.
 After upstream succeeds, Nexus snapshots and validates the produced lock and
 the selected canonical `SKILL.md` trees, publishes an exact validated lock
 snapshot, then links. A failed upstream command or validation leaves the
-existing Nexus lock unchanged and reports any untracked canonical skill
-directories for review.
+existing Nexus lock unchanged and reports any untracked directory under the
+canonical root for review.
 
 Private repositories work when the configured Git/npm credentials permit the
 underlying `npx skills` command to read them. Keep private credentials outside
@@ -188,17 +189,17 @@ Nexus refuses a missing name, more than one name, an option-like name such as
 that is not in the Nexus lock. Every refusal happens
 before `npx` is located and before upstream runs, so a refused removal changes
 nothing. A custom skill is removed by deleting its directory under
-`~/.custom-skills` and then running link; Nexus never deletes hand-authored
+`~/.custom-skills` and then running link; Nexus never deletes custom skill
 content.
 
 After the refusals, Nexus runs upstream `npx skills remove` with the name,
 `--global`, and `--yes` as separate arguments, and never evaluates them as
 shell code. On success it snapshots and validates the produced lock, verifies
 the removed name is gone from it, publishes the exact validated snapshot, then
-links, so the managed Claude and Codex links for the name disappear. Physical
-entries, unrelated links, and other skills are left alone. A failed upstream
+links, so the managed links for the name disappear. Foreign entries and other
+skills are left alone. A failed upstream
 command, or a lock that still contains the name, leaves the Nexus lock
-byte-identical. Upstream owns `~/.agents/skills`; a canonical directory that
+byte-identical. Upstream owns the canonical root; a directory there that
 survives the removal is reported as untracked for your review.
 
 ## Listing skills and help
@@ -226,9 +227,9 @@ read-only command, and reports the result. It never runs a mutating command.
 - **Missing, conflicting, or invalid lock:** provide one valid version-3 lock
   in the supported `~/.agents`/`~/.skills` locations, remove ambiguity, and
   retry. Nexus does not guess between conflicting candidates.
-- **Changed live roots or bounded backup retries:** close Claude and Codex,
+- **Changed agent homes or bounded backup retries:** close Claude and Codex,
   inspect the retained backup/recovery paths, then retry setup.
-- **Collision:** preserve the physical/unrelated entry, resolve it manually,
+- **Collision:** preserve the foreign entry, resolve it manually,
   and rerun link or bootstrap as appropriate.
 - **NVM/npx:** ensure direct `npx` works, or install/select a default NVM Node
   version. Nexus only loads NVM as the fallback when `npx` is unavailable.
@@ -242,11 +243,10 @@ read-only command, and reports the result. It never runs a mutating command.
 
 To add another agent, update the code mappings for its native skill root and
 link target, add bootstrap links and any invocation adapter, include it in
-managed ownership/link reconciliation, and decide how its backup and setup
-preflight should work. Add isolated tests for bootstrap, collisions, link
-reconciliation, setup backup/recovery, and install behavior; update this
+managed ownership and link, and decide how its backup and setup
+preflight should work. Add isolated tests for bootstrap, collisions, link, setup backup/recovery, and install behavior; update this
 README with its invocation forms and recovery semantics. Keep the Nexus lock
-authoritative and keep the agent's unrelated/system entries untouched. The
+authoritative and keep the agent's foreign entries untouched. The
 phrase “another agent” here is intentional: adding one is a coordinated
 ownership change, not merely another symlink.
 
@@ -257,7 +257,10 @@ run by bootstrap. Setup backs up before link changes, never silently
 overwrites backups, and reports recovery paths. Install requires explicit
 source and skill names and does not `eval` arguments.
 
-## Daily Worklog
+## Related: Daily Worklog
+
+Daily Worklog is not part of Nexus. It is a custom skill owned by the custom
+root, and this section only records how to start it.
 
 The private `daily` skill and its deterministic runtime live at
 `~/.custom-skills/daily`. Start the first setup with
