@@ -6,7 +6,7 @@ nexus_init() {
   CUSTOM_WORKSPACES="$CUSTOM_ROOT/.workspaces"
   CLAUDE_SKILLS="$HOME/.claude/skills"
   CODEX_SKILLS="$HOME/.codex/skills"
-  declare -g -a CONTROL_SKILLS=(nexus-setup nexus-link nexus-install nexus-new)
+  declare -g -a CONTROL_SKILLS=(nexus-setup nexus-link nexus-install nexus-new nexus-help nexus-update nexus-remove)
   ERRORS=0
   CANONICAL_CURRENT=''
   DISCOVERED_LOCK=''
@@ -24,6 +24,16 @@ nexus_init() {
 }
 
 info() { printf 'nexus: %s\n' "$*"; }
+is_control_skill() {
+  local name="$1" control
+  for control in "${CONTROL_SKILLS[@]}"; do
+    [[ "$name" == "$control" ]] && return 0
+  done
+  return 1
+}
+control_skills_json() {
+  printf '%s\n' "${CONTROL_SKILLS[@]}" | jq -R . | jq -c -s .
+}
 error() { printf 'nexus: error: %s\n' "$*" >&2; ERRORS=$((ERRORS + 1)); }
 resolved_link_target() {
   local link="$1" raw parent
@@ -80,9 +90,10 @@ is_managed_link() {
 
 skill_target() {
   local name="$1"
-  case "$name" in
-    nexus-setup|nexus-link|nexus-install|nexus-new) printf '%s\n' "$NEXUS_HOME/skills/$name" ; return 0 ;;
-  esac
+  if is_control_skill "$name"; then
+    printf '%s\n' "$NEXUS_HOME/skills/$name"
+    return 0
+  fi
   if [[ -n "${CUSTOM_SET[$name]+present}" ]]; then
     printf '%s\n' "$CUSTOM_ROOT/$name"
   else

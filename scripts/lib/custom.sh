@@ -35,12 +35,11 @@ collect_custom_names() {
       failed=1
       continue
     fi
-    case "$name" in
-      nexus-setup|nexus-link|nexus-install|nexus-new)
-        error "reserved control skill name in custom skill root: $child"
-        failed=1
-        continue ;;
-    esac
+    if is_control_skill "$name"; then
+      error "reserved control skill name in custom skill root: $child"
+      failed=1
+      continue
+    fi
     if [[ -L "$child/SKILL.md" || ! -f "$child/SKILL.md" ]]; then
       error "custom skill is missing SKILL.md: $child/SKILL.md"
       failed=1

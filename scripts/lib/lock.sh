@@ -53,14 +53,20 @@ load_validated_lock_names() {
     cleanup_lock_snapshot "$snapshot_dir" || :
     return 1
   fi
-  if ! jq -er -s '
+  local controls_json
+  controls_json="$(control_skills_json)" || {
+    error "cannot serialize control skill names"
+    cleanup_lock_snapshot "$snapshot_dir" || :
+    return 1
+  }
+  if ! jq -er -s --argjson controls "$controls_json" '
     def valid_lock:
       type == "object" and
       (.version == 3 and (.version | type) == "number") and
       (.skills | type == "object") and
       all(.skills | keys[];
         test("^[A-Za-z0-9][A-Za-z0-9._-]*\\z") and . != "." and . != ".." and
-        . != "nexus-setup" and . != "nexus-link" and . != "nexus-install" and . != "nexus-new");
+        (. as $name | $controls | index($name) | not));
     if length == 1 and (.[0] | valid_lock) then
       ((.[0].skills | keys[]), "__NEXUS_LOCK_END__")
     else

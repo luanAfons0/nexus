@@ -8,11 +8,10 @@ parse_new_args() {
     error "new requires a safe skill name"
     return 2
   fi
-  case "$1" in
-    nexus-setup|nexus-link|nexus-install|nexus-new)
-      error "reserved control skill name: $1"
-      return 2 ;;
-  esac
+  if is_control_skill "$1"; then
+    error "reserved control skill name: $1"
+    return 2
+  fi
   NEW_SKILL_NAME="$1"
   return 0
 }

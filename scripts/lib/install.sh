@@ -6,8 +6,7 @@ parse_install_args() {
     case "$1" in
       --skill)
         shift
-        if (( $# == 0 )) || [[ "$1" == -* ]] || ! safe_skill_name "$1" ||
-           [[ "$1" == nexus-setup || "$1" == nexus-link || "$1" == nexus-install || "$1" == nexus-new ]]; then
+        if (( $# == 0 )) || [[ "$1" == -* ]] || ! safe_skill_name "$1" || is_control_skill "$1"; then
           error "install requires --skill NAME with a safe, non-control skill name"
           return 2
         fi

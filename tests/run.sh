@@ -227,7 +227,7 @@ test_bootstrap() {
   home="$(new_home bootstrap)"
   output="$(run_nexus "$home" bootstrap 2>&1)" || { printf '%s\n' "$output" >&2; failed=1; }
 
-  for name in nexus-setup nexus-link nexus-install nexus-new; do
+  for name in nexus-setup nexus-link nexus-install nexus-new nexus-help nexus-update nexus-remove; do
     link="$home/.claude/skills/$name"; target="$home/.nexus/skills/$name"
     assert_link_to "$link" "$target" || failed=1
     [[ "$(readlink -- "$link")" != /* ]] || { printf '  absolute Claude link: %s\n' "$link" >&2; failed=1; }
@@ -540,7 +540,7 @@ test_link_reconciliation() {
     printf '  missing skill was not reported after reconciliation\n%s\n' "$output" >&2; failed=1;
   }
   [[ "$output" != *prefix-lookalike* && "$output" != *external-link* && "$output" != *unrelated-file* && "$output" != *unrelated-dir* ]] || failed=1
-  for name in alpha beta nexus-setup nexus-link nexus-install nexus-new; do
+  for name in alpha beta nexus-setup nexus-link nexus-install nexus-new nexus-help nexus-update nexus-remove; do
     if [[ "$name" == nexus-* ]]; then
       assert_link_to "$home/.claude/skills/$name" "$home/.nexus/skills/$name" || failed=1
       assert_link_to "$home/.codex/skills/$name" "$home/.nexus/skills/$name" || failed=1
@@ -769,7 +769,7 @@ test_custom_collision_and_canonical_forbidden() {
 }
 
 test_new_cli() {
-  local failed=0 home custom output status
+  local failed=0 home custom output status reserved
   home="$(custom_home new_cli)"
   custom="$home/.custom-skills"
   write_skill "$home/.agents/skills" installed
@@ -785,6 +785,10 @@ test_new_cli() {
   [[ "$status" -eq 2 && "$output" == *'safe skill name'* ]] || failed=1
   output="$(run_nexus "$home" new nexus-link 2>&1)"; status=$?
   [[ "$status" -eq 2 && "$output" == *'reserved control skill name'* ]] || failed=1
+  for reserved in nexus-help nexus-update nexus-remove; do
+    output="$(run_nexus "$home" new "$reserved" 2>&1)"; status=$?
+    [[ "$status" -eq 2 && "$output" == *'reserved control skill name'* ]] || failed=1
+  done
   output="$(run_nexus "$home" new installed 2>&1)"; status=$?
   [[ "$status" -eq 1 && "$output" == *'collides with an installed skill'* ]] || failed=1
   [[ ! -e "$custom/installed" ]] || failed=1
@@ -806,7 +810,7 @@ test_new_cli() {
 }
 
 test_install_rejects_custom_collision() {
-  local failed=0 home output status lock_before lock_after
+  local failed=0 home output status lock_before lock_after reserved
   home="$(custom_home install_custom_collision)"
   write_skill "$home/.custom-skills" mine
   write_lock "$home/.nexus/skill-lock.json"
@@ -817,8 +821,10 @@ test_install_rejects_custom_collision() {
     "$REPO_ROOT/scripts/nexus" install /some/source --skill mine 2>&1)"; status=$?
   [[ "$status" -eq 1 && "$output" == *'collides with a custom skill: mine'* ]] || { printf '%s\n' "$output" >&2; failed=1; }
   [[ "$output" != *npx* ]] || failed=1
-  output="$(run_nexus "$home" install /some/source --skill nexus-new 2>&1)"; status=$?
-  [[ "$status" -eq 2 && "$output" == *'non-control skill name'* ]] || failed=1
+  for reserved in nexus-new nexus-help nexus-update nexus-remove; do
+    output="$(run_nexus "$home" install /some/source --skill "$reserved" 2>&1)"; status=$?
+    [[ "$status" -eq 2 && "$output" == *'non-control skill name'* ]] || failed=1
+  done
   lock_after="$(sha256sum "$home/.nexus/skill-lock.json")"
   [[ "$lock_before" == "$lock_after" ]] || failed=1
   if (( failed == 0 )); then pass install_rejects_custom_collision; else fail install_rejects_custom_collision; fi
@@ -867,7 +873,7 @@ test_setup_happy_and_idempotent() {
   [[ -f "$home/.codex/skills/.system/marker" ]] || failed=1
   cmp -s "$source" "$home/.nexus/skill-lock.json" || failed=1
   [[ "$output" == *"$source"* && "$output" == *"$home/.claude-backup"* && "$output" == *"$home/.codex-backup"* ]] || failed=1
-  [[ "$output" == *'third-party skills: 2'* && "$output" == *'linked agent skill entries: 12'* ]] || failed=1
+  [[ "$output" == *'third-party skills: 2'* && "$output" == *'linked agent skill entries: 18'* ]] || failed=1
   assert_no_setup_residue "$home" || failed=1
   before="$(snapshot_tree "$home/.nexus")|$(snapshot_tree "$home/.agents")|$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")|$(snapshot_tree "$home/.claude-backup")|$(snapshot_tree "$home/.codex-backup")"
   output="$(run_nexus "$home" setup 2>&1)" || failed=1
@@ -1077,13 +1083,16 @@ test_setup_lock_publication_verification() {
 
 test_setup_rejects_reserved_control_skill_names() {
   local failed=0 home output before after
-  home="$(new_home setup_reserved_control)"
-  write_lock "$home/.agents/.skill-lock.json" nexus-setup
-  before="$(snapshot_tree "$home")"
-  output="$(run_nexus "$home" setup 2>&1)" && failed=1
-  after="$(snapshot_tree "$home")"
-  [[ "$output" == *'invalid setup lock candidates'* && "$before" == "$after" && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
-  assert_no_setup_residue "$home" || failed=1
+  local reserved
+  for reserved in nexus-setup nexus-help nexus-update nexus-remove; do
+    home="$(new_home "setup_reserved_control_$reserved")"
+    write_lock "$home/.agents/.skill-lock.json" "$reserved"
+    before="$(snapshot_tree "$home")"
+    output="$(run_nexus "$home" setup 2>&1)" && failed=1
+    after="$(snapshot_tree "$home")"
+    [[ "$output" == *'invalid setup lock candidates'* && "$before" == "$after" && ! -e "$home/.claude-backup" && ! -e "$home/.codex-backup" && ! -e "$home/.nexus/skill-lock.json" ]] || failed=1
+    assert_no_setup_residue "$home" || failed=1
+  done
   if (( failed == 0 )); then pass setup_rejects_reserved_control_skill_names; else fail setup_rejects_reserved_control_skill_names; fi
 }
 
@@ -1222,12 +1231,15 @@ test_metadata() {
   fi
 
   local name command
-  for name in nexus-setup nexus-link nexus-install nexus-new; do
+  for name in nexus-setup nexus-link nexus-install nexus-new nexus-help nexus-update nexus-remove; do
     case "$name" in
       nexus-setup) command='/home/luanh/.nexus/scripts/nexus setup' ;;
       nexus-link) command='/home/luanh/.nexus/scripts/nexus link' ;;
       nexus-install) command='/home/luanh/.nexus/scripts/nexus install' ;;
       nexus-new) command='/home/luanh/.nexus/scripts/nexus new' ;;
+      nexus-help) command='/home/luanh/.nexus/scripts/nexus' ;;
+      nexus-update) command='/home/luanh/.nexus/scripts/nexus update' ;;
+      nexus-remove) command='/home/luanh/.nexus/scripts/nexus remove' ;;
     esac
     assert_file "skills/$name/SKILL.md" || failed=1
     [[ ! -e "$REPO_ROOT/skills/$name/claude-command.md" ]] || { printf '  unexpected adapter file: %s\n' "$name" >&2; failed=1; }
@@ -1297,6 +1309,7 @@ test_setup_canonical_safety_preflight
 test_setup_canonical_late_collision_is_preserved
 test_setup_canonical_scan_failure_is_propagated
 test_discover_lock_uses_immutable_snapshots
+
 
 test_term_recovery() {
   local failed=0 home pid output status
