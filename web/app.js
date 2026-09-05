@@ -46,3 +46,90 @@ function initShell() {
 }
 
 initShell();
+
+// --- api client, banners, toasts, Last command panel ----------------------
+
+// Every call returns the envelope {command, exit, stdout, stderr, json?}
+// and shows it in the Last command panel. An HTTP error (403, 404, 409,
+// 415) throws an Error with .status and .text; a failed fetch shows the
+// connection-lost banner and rethrows.
+async function api(name, options) {
+  const { method = 'GET', body } = options || {};
+  const init = { method, headers: {}, cache: 'no-store' };
+  if (body !== undefined) {
+    init.headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(body);
+  }
+  let response;
+  try {
+    response = await fetch(API + name, init);
+  } catch (error) {
+    connectionLost();
+    throw error;
+  }
+  if (!response.ok) {
+    const error = new Error('HTTP ' + response.status);
+    error.status = response.status;
+    error.text = await response.text();
+    throw error;
+  }
+  const envelope = await response.json();
+  showLastCommand(envelope);
+  return envelope;
+}
+
+// One banner per id in the banners strip; a new banner with the same id
+// replaces the old one. kind: info, warn, err, ok.
+function banner(id, kind, children) {
+  const strip = document.getElementById('banners');
+  const node = el('div', { class: 'notice ' + kind, 'data-id': id }, [el('div', null, children)]);
+  const old = strip.querySelector('[data-id="' + id + '"]');
+  if (old) old.replaceWith(node); else strip.append(node);
+  return node;
+}
+
+function clearBanner(id) {
+  const old = document.querySelector('#banners [data-id="' + id + '"]');
+  if (old) old.remove();
+}
+
+function connectionLost() {
+  banner('connection', 'err', [
+    el('strong', { text: 'Connection lost.' }), ' Rerun ',
+    el('code', { text: 'nexus ui' }), ', then ', el('code', { text: 'nexus list' }), ' to check.',
+  ]);
+}
+
+function toast(children, milliseconds) {
+  const node = el('div', { class: 'toast' }, children);
+  document.getElementById('toasts').append(node);
+  setTimeout(() => node.remove(), milliseconds || 6000);
+  return node;
+}
+
+// "nexus update docx" from the argv the server ran; the CLI path is shown
+// by its base name, and an argument with white space is quoted.
+function commandLabel(argv) {
+  return argv.map((argument, index) => {
+    if (index === 0) return argument.split('/').pop();
+    return /\s/.test(argument) ? "'" + argument.replace(/'/g, "'\\''") + "'" : argument;
+  }).join(' ');
+}
+
+function showLastCommand(envelope) {
+  const body = document.getElementById('last-command-body');
+  body.classList.remove('empty');
+  const stamp = new Date();
+  const lines = [];
+  if (envelope.stdout) lines.push(document.createTextNode(envelope.stdout.replace(/\n$/, '') + '\n'));
+  if (envelope.stderr) lines.push(el('span', { class: 'err', text: envelope.stderr.replace(/\n$/, '') + '\n' }));
+  if (lines.length === 0) lines.push(el('span', { class: 'muted', text: '(no output)' }));
+  replaceChildren(body, [
+    el('div', { class: 'out-hd' }, [
+      el('span', { class: 'mono cmd', text: '$ ' + commandLabel(envelope.command) }),
+      el('span', { class: 'exit ' + (envelope.exit === 0 ? 'ok' : 'bad'), text: 'exit ' + envelope.exit }),
+      el('span', { text: stamp.toLocaleString() }),
+    ]),
+    el('pre', { class: 'log mono' }, lines),
+  ]);
+}
