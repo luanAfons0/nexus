@@ -364,3 +364,79 @@ CASE_TESTS+=(
   test_ui_child_timeout
   test_ui_stop_kills_running_child
 )
+
+# Ticket #30: GET api/global and the vendored renderer.
+
+test_ui_api_global_present() {
+  local failed=0 home response expected_sha
+  home="$(ui_home ui_global_present)" || { fail ui_api_global_present; return; }
+  printf 'rule one\n\nrule two' >"$home/.custom-skills/GLOBAL.md"
+  ln -s -- ../.custom-skills/GLOBAL.md "$home/.claude/CLAUDE.md"
+  printf 'hand written\n' >"$home/.codex/AGENTS.md"
+  expected_sha="$(sha256sum <"$home/.custom-skills/GLOBAL.md" | awk '{print $1}')"
+  ui_start "$home" || failed=1
+
+  response="$(ui_http GET "${UI_URL}api/global")"
+  [[ "$(ui_status "$response")" == 200 ]] || { printf '  status %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  [[ "$(ui_header "$response" content-type)" == 'application/json; charset=utf-8' ]] || failed=1
+  [[ "$(ui_header "$response" cache-control)" == 'no-store' ]] || failed=1
+  ui_body "$response" | jq -e --arg cli "$REPO_ROOT/scripts/nexus" --arg sha "$expected_sha" \
+    --arg owner "$home/.custom-skills/GLOBAL.md" '
+    .exit == 0 and .command == [$cli, "global", "show", "--json"] and .stderr == "" and
+    (.stdout | fromjson) == .json and
+    .json.owner == $owner and .json.present == true and .json.sha256 == $sha and
+    .json.content == "rule one\n\nrule two" and .json.claude == "linked" and .json.codex == "foreign"
+  ' >/dev/null || { printf '  unexpected envelope:\n%s\n' "$(ui_body "$response")" >&2; failed=1; }
+  [[ "$(cat "$home/.codex/AGENTS.md")" == 'hand written' ]] || failed=1
+  ui_stop
+  if (( failed == 0 )); then pass ui_api_global_present; else fail ui_api_global_present; fi
+}
+
+test_ui_api_global_absent_and_fault() {
+  local failed=0 home response
+  home="$(ui_home ui_global_absent)" || { fail ui_api_global_absent_and_fault; return; }
+  rm -rf -- "$home/.codex"
+  ui_start "$home" || failed=1
+
+  response="$(ui_http GET "${UI_URL}api/global")"
+  [[ "$(ui_status "$response")" == 200 ]] || failed=1
+  ui_body "$response" | jq -e --arg owner "$home/.custom-skills/GLOBAL.md" '
+    .exit == 0 and .json.present == false and .json.sha256 == null and .json.content == null and
+    .json.owner == $owner and .json.claude == "absent" and .json.codex == "no home"
+  ' >/dev/null || { printf '  unexpected absent envelope:\n%s\n' "$(ui_body "$response")" >&2; failed=1; }
+  [[ ! -e "$home/.custom-skills/GLOBAL.md" && ! -e "$home/.codex" ]] || { printf '  show created a path\n' >&2; failed=1; }
+
+  # A CLI refusal is exit 1 in the envelope, not an HTTP error, and no json key.
+  rm -rf -- "$home/.custom-skills"
+  response="$(ui_http GET "${UI_URL}api/global")"
+  [[ "$(ui_status "$response")" == 200 ]] || { printf '  fault status %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  ui_body "$response" | jq -e --arg root "$home/.custom-skills" '
+    .exit == 1 and (has("json") | not) and .stdout == "" and
+    (.stderr | contains("error: custom skill root is absent: " + $root))
+  ' >/dev/null || { printf '  unexpected fault envelope:\n%s\n' "$(ui_body "$response")" >&2; failed=1; }
+  [[ ! -e "$home/.custom-skills" ]] || failed=1
+  ui_stop
+  if (( failed == 0 )); then pass ui_api_global_absent_and_fault; else fail ui_api_global_absent_and_fault; fi
+}
+
+test_ui_vendored_renderer_served() {
+  local failed=0 home response
+  home="$(ui_home ui_renderer)" || { fail ui_vendored_renderer_served; return; }
+  ui_start "$home" || failed=1
+  response="$(ui_http GET "${UI_URL}vendor/marked.min.js")"
+  [[ "$(ui_status "$response")" == 200 ]] || { printf '  status %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  [[ "$(ui_header "$response" content-type)" == 'text/javascript; charset=utf-8' ]] || failed=1
+  [[ "$(ui_header "$response" content-security-policy)" == "default-src 'self'" ]] || failed=1
+  [[ "$(ui_body "$response")" == *'marked v15.0.12'* ]] || { printf '  renderer body lacks the version header\n' >&2; failed=1; }
+  { [[ -f "$REPO_ROOT/web/vendor/LICENSE" ]] && grep -q 'MIT' "$REPO_ROOT/web/vendor/LICENSE"; } || { printf '  vendor LICENSE missing\n' >&2; failed=1; }
+  response="$(ui_http GET "${UI_URL}vendor/LICENSE")"
+  [[ "$(ui_status "$response")" == 404 ]] || failed=1
+  ui_stop
+  if (( failed == 0 )); then pass ui_vendored_renderer_served; else fail ui_vendored_renderer_served; fi
+}
+
+CASE_TESTS+=(
+  test_ui_api_global_present
+  test_ui_api_global_absent_and_fault
+  test_ui_vendored_renderer_served
+)

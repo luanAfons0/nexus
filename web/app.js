@@ -233,3 +233,230 @@ async function loadSkills() {
 
 document.getElementById('skills-filter').addEventListener('input', applySkillsFilter);
 loadSkills();
+
+// --- global instructions editor -------------------------------------------
+
+const EMPTY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+const SOFT_WRAP_KEY = 'nexus.softWrap';
+
+// What the page read at open. The save ticket sends content with sha256 and
+// compares the textarea against loaded for the dirty state.
+const editorState = { owner: null, present: false, sha256: EMPTY_SHA256, loaded: '', tab: 'edit' };
+
+const editor = {};
+
+function readSoftWrap() {
+  try {
+    return localStorage.getItem(SOFT_WRAP_KEY) !== 'off';
+  } catch (error) {
+    return true;
+  }
+}
+
+function writeSoftWrap(on) {
+  try {
+    localStorage.setItem(SOFT_WRAP_KEY, on ? 'on' : 'off');
+  } catch (error) {
+    // Storage may be blocked; the toggle still applies for this page.
+  }
+}
+
+// Home directory derived from the Owner path, and "~/..." for display.
+function homeFromOwner(owner) {
+  const suffix = '/.custom-skills/GLOBAL.md';
+  return owner.endsWith(suffix) ? owner.slice(0, -suffix.length) : null;
+}
+
+function shortPath(path, home) {
+  return home && path.startsWith(home + '/') ? '~' + path.slice(home.length) : path;
+}
+
+function instructionPaths(home) {
+  return [
+    { agent: 'claude', path: home + '/.claude/CLAUDE.md' },
+    { agent: 'codex', path: home + '/.codex/AGENTS.md' },
+  ];
+}
+
+function stateBadge(agent, state) {
+  return el('span', { class: 'badge ' + (state === 'no home' ? 'nohome' : state), title: agent + ' Instruction Path' }, [
+    el('i'), agent + ': ' + state,
+  ]);
+}
+
+function foreignHint(agent, path, home, owner) {
+  return el('div', { class: 'hint' }, [
+    agent + ' Instruction Path ', el('code', { text: shortPath(path, home) }),
+    ' is a Foreign Entry. Run ',
+    el('code', { text: 'mv ' + shortPath(path, home) + ' ' + shortPath(owner, home) }),
+    ', then link. The entry is preserved until you move it.',
+  ]);
+}
+
+function buildEditor() {
+  const body = document.getElementById('global-body');
+  body.classList.remove('empty');
+  body.classList.remove('card');
+
+  editor.tabEdit = el('button', { class: 'tab on', type: 'button', text: 'Edit', onclick: () => showTab('edit') });
+  editor.tabPreview = el('button', { class: 'tab', type: 'button', text: 'Preview', onclick: () => showTab('preview') });
+  editor.wrapToggle = el('span', { class: 'toggle', role: 'switch', tabindex: '0', onclick: toggleSoftWrap,
+    onkeydown: (event) => { if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); toggleSoftWrap(); } } },
+    ['Soft wrap', el('b', null, [el('span')])]);
+  editor.lineCount = el('span', { class: 'hint' });
+  editor.previewNote = el('span', { class: 'hint', text: 'Rendered offline with the vendored Markdown renderer', hidden: '' });
+  editor.tools = el('div', { class: 'ed-tools' }, [editor.wrapToggle, editor.lineCount, editor.previewNote]);
+
+  editor.gutter = el('div', { class: 'gutter' });
+  editor.textarea = el('textarea', {
+    class: 'text', spellcheck: 'false', autocomplete: 'off', wrap: 'soft',
+    placeholder: 'Write the rules every agent loads at the start of every session.',
+    oninput: syncGutter, onkeydown: editorKeydown,
+  });
+  editor.editBody = el('div', { class: 'ed-body' }, [editor.gutter, editor.textarea]);
+  editor.prose = el('div', { class: 'prose', hidden: '' });
+
+  editor.cancel = el('button', { class: 'btn', type: 'button', id: 'cancel-button', text: 'Cancel' });
+  editor.save = el('button', { class: 'btn pri', type: 'button', id: 'save-button', text: 'Save changes', disabled: '' });
+
+  const box = el('div', { class: 'editor' }, [
+    el('div', { class: 'ed-top' }, [el('div', { class: 'tabs' }, [editor.tabEdit, editor.tabPreview]), editor.tools]),
+    editor.editBody,
+    editor.prose,
+    el('div', { class: 'ed-foot' }, [
+      el('span', { class: 'hint' }, [
+        'Save replaces the whole file. Nexus never runs Git; commit in ',
+        el('code', { text: '~/.custom-skills' }), ' yourself. ',
+        el('span', { class: 'kbd', text: 'Ctrl' }), ' ', el('span', { class: 'kbd', text: 'S' }),
+      ]),
+      el('div', { class: 'r' }, [editor.cancel, editor.save]),
+    ]),
+  ]);
+  editor.hints = el('div', { class: 'ed-hints' });
+  replaceChildren(body, [editor.hints, box]);
+  applySoftWrap(readSoftWrap());
+  syncGutter();
+}
+
+function applySoftWrap(on) {
+  editor.wrapToggle.classList.toggle('on', on);
+  editor.wrapToggle.setAttribute('aria-checked', on ? 'true' : 'false');
+  editor.textarea.classList.toggle('nowrap', !on);
+  editor.textarea.setAttribute('wrap', on ? 'soft' : 'off');
+}
+
+function toggleSoftWrap() {
+  const on = !editor.wrapToggle.classList.contains('on');
+  applySoftWrap(on);
+  writeSoftWrap(on);
+}
+
+function syncGutter() {
+  const count = editor.textarea.value.split('\n').length;
+  const numbers = [];
+  for (let line = 1; line <= count; line += 1) numbers.push(el('div', { text: String(line) }));
+  replaceChildren(editor.gutter, numbers);
+  const lines = editor.textarea.value === '' ? 0 : count;
+  editor.lineCount.textContent = lines + (lines === 1 ? ' line' : ' lines');
+  // Grow the textarea to its content so the editor body scrolls both
+  // columns together.
+  editor.textarea.style.height = 'auto';
+  editor.textarea.style.height = editor.textarea.scrollHeight + 'px';
+}
+
+// Tab inserts two spaces at the caret so focus never leaves the editor.
+function editorKeydown(event) {
+  if (event.key !== 'Tab' || event.ctrlKey || event.metaKey || event.altKey) return;
+  event.preventDefault();
+  const area = editor.textarea;
+  const start = area.selectionStart;
+  const end = area.selectionEnd;
+  area.setRangeText('  ', start, end, 'end');
+  area.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function showTab(name) {
+  editorState.tab = name;
+  const preview = name === 'preview';
+  editor.tabEdit.classList.toggle('on', !preview);
+  editor.tabPreview.classList.toggle('on', preview);
+  editor.editBody.hidden = preview;
+  editor.prose.hidden = !preview;
+  editor.wrapToggle.hidden = preview;
+  editor.lineCount.hidden = preview;
+  editor.previewNote.hidden = !preview;
+  if (preview) renderPreview();
+  else editor.textarea.focus();
+}
+
+function renderPreview() {
+  const source = editor.textarea.value;
+  if (source.trim() === '') {
+    replaceChildren(editor.prose, [el('p', { class: 'muted', text: 'Nothing to preview.' })]);
+    return;
+  }
+  if (typeof marked === 'undefined' || typeof marked.parse !== 'function') {
+    replaceChildren(editor.prose, [el('p', { class: 'muted', text: 'The vendored Markdown renderer did not load.' })]);
+    return;
+  }
+  editor.prose.innerHTML = marked.parse(source);
+}
+
+function renderGlobalHeader(info) {
+  const home = homeFromOwner(info.owner);
+  const tools = document.getElementById('global-tools');
+  const badges = [el('span', { class: 'hint mono', title: info.owner, text: shortPath(info.owner, home) })];
+  const hints = [];
+  if (home) {
+    for (const entry of instructionPaths(home)) {
+      const state = info[entry.agent];
+      badges.push(stateBadge(entry.agent, state));
+      if (state === 'foreign') hints.push(foreignHint(entry.agent, entry.path, home, info.owner));
+    }
+  }
+  replaceChildren(tools, badges);
+  replaceChildren(editor.hints, hints);
+}
+
+function renderGlobal(info) {
+  editorState.owner = info.owner;
+  editorState.present = info.present === true;
+  editorState.sha256 = editorState.present ? info.sha256 : EMPTY_SHA256;
+  editorState.loaded = editorState.present ? info.content : '';
+  renderGlobalHeader(info);
+  editor.textarea.value = editorState.loaded;
+  syncGutter();
+  if (editorState.tab === 'preview') renderPreview();
+  if (editorState.present) {
+    clearBanner('global-absent');
+  } else {
+    banner('global-absent', 'warn', [
+      el('strong', { text: 'Global Instructions absent.' }), ' Owner ',
+      el('code', { text: shortPath(info.owner, homeFromOwner(info.owner)) }),
+      ' does not exist. The first save creates the file and runs link, so both Instruction Paths become Managed Links. Link notices show in Last command.',
+    ]);
+  }
+}
+
+async function loadGlobal() {
+  if (!editor.textarea) buildEditor();
+  let envelope;
+  try {
+    envelope = await api('global');
+  } catch (error) {
+    return null;
+  }
+  if (envelope.exit !== 0 || !envelope.json) {
+    banner('global-error', 'err', [
+      el('strong', { text: 'Global Instructions could not be read.' }), ' ',
+      el('code', { text: commandLabel(envelope.command) }), ' exited ' + envelope.exit + '.',
+      el('pre', { class: 'log mono', text: (envelope.stderr || envelope.stdout || '').trim() }),
+    ]);
+    return envelope;
+  }
+  clearBanner('global-error');
+  renderGlobal(envelope.json);
+  return envelope;
+}
+
+loadGlobal();

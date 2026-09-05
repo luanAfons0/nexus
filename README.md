@@ -514,6 +514,45 @@ the next command. When a call cannot reach the server at all, a red banner
 says `Connection lost. Rerun nexus ui, then nexus list to check.` and the
 page does not retry on its own.
 
+### Editor
+
+The Global Instructions section reads `nexus global show --json` through
+`GET api/global`. The header shows the owner path and one badge per
+instruction path with its state word: `linked` (green), `foreign` (amber),
+`absent` and `no home` (grey). A `foreign` badge adds one line under the
+header with the exact fix, `mv <path> ~/.custom-skills/GLOBAL.md`, then
+link; the entry is preserved until you move it.
+
+The editor is modeled on the GitHub file editor. It is a `textarea` with a
+line-number gutter that scrolls with the text, a line count, and Edit and
+Preview tabs. Tab inserts two spaces at the caret, so focus stays in the
+editor. The soft wrap toggle is remembered in the browser (`localStorage`)
+and is on by default. The footer says that Save replaces the whole file and
+that Nexus never runs Git, and has Cancel and "Save changes" buttons. The
+word is Save; the page never says Commit or Publish.
+
+When `GLOBAL.md` is absent the editor opens empty, a warning notice says
+that the first save creates the file and runs link, and the badges show the
+real states of both instruction paths. The page keeps the `sha256` it read
+at open (the sha256 of the empty string when the file is absent), so a
+later save can pass it as `--if-match`.
+
+The Preview tab renders the text as Markdown with `marked`, vendored as one
+minified file at `web/vendor/marked.min.js` with its license at
+`web/vendor/LICENSE` (MIT). The pinned version is `marked` 15.0.12, named
+in the header comment of the file; it is the last release that ships an
+official minified single file. The page makes no network fetch, and the
+content security policy blocks one. To update the renderer by hand:
+
+1. Download the release file from the `marked` package (for a release
+   after 15.0.12 that is `lib/marked.umd.js`) and its `LICENSE`.
+2. Replace `web/vendor/marked.min.js` and `web/vendor/LICENSE`, keeping
+   the file name, so the static allowlist and the page stay unchanged.
+3. Update the version in this section and check the header comment of the
+   new file names the same version.
+4. Run `bash tests/run.sh`; the renderer test reads the version from the
+   served file.
+
 ## Troubleshooting
 
 - **Already initialized:** setup is intentionally disabled; use `/nexus-link`,
