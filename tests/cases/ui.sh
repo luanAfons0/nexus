@@ -171,3 +171,60 @@ CASE_TESTS+=(
   test_ui_loopback_guard
   test_ui_cli_usage_and_port
 )
+
+# Ticket #29: GET api/list runs `nexus list --json` and answers the envelope.
+
+test_ui_list_present() {
+  local failed=0 home response body expected cli
+  home="$(ui_home ui_list_present)" || { fail ui_list_present; return; }
+  write_skill "$home/.agents/skills" alpha
+  write_skill "$home/.custom-skills" mine
+  write_lock "$home/.nexus/skill-lock.json" alpha
+  printf 'rule one\n' >"$home/.custom-skills/GLOBAL.md"
+  expected="$(run_nexus "$home" list --json)" || failed=1
+  ui_start "$home" || failed=1
+
+  response="$(ui_http GET "${UI_URL}api/list")"
+  [[ "$(ui_status "$response")" == 200 ]] || { printf '  list status: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  [[ "$(ui_header "$response" content-type)" == 'application/json; charset=utf-8' ]] || failed=1
+  [[ "$(ui_header "$response" cache-control)" == 'no-store' ]] || failed=1
+  body="$(ui_body "$response")"
+  jq -e '.exit == 0 and .stderr == "" and (.json | type) == "object"' <<<"$body" >/dev/null || { printf '  envelope:\n%s\n' "$body" >&2; failed=1; }
+  cli="$REPO_ROOT/scripts/nexus"
+  [[ "$(jq -c .command <<<"$body")" == "$(jq -c -n --arg cli "$cli" '[$cli, "list", "--json"]')" ]] || { printf '  command: %s\n' "$(jq -c .command <<<"$body")" >&2; failed=1; }
+  [[ "$(jq -c .json.skills <<<"$body")" == "$(jq -c .skills <<<"$expected")" ]] || { printf '  json.skills differs from the CLI\n' >&2; failed=1; }
+  [[ "$(jq -c .json.globalInstructions <<<"$body")" == "$(jq -c .globalInstructions <<<"$expected")" ]] || failed=1
+  [[ "$(jq -c .stdout <<<"$body")" == "$(jq -c -n --arg s "$expected"$'\n' '$s')" ]] || { printf '  stdout is not the CLI bytes\n' >&2; failed=1; }
+  [[ "$(jq -r '.json.skills[] | select(.name == "alpha") | .kind' <<<"$body")" == installed ]] || failed=1
+  [[ "$(jq -r '.json.skills[] | select(.name == "mine") | .kind' <<<"$body")" == custom ]] || failed=1
+  [[ "$(jq -r '.json.skills[] | select(.name == "nexus") | .kind' <<<"$body")" == control ]] || failed=1
+
+  # Only GET is an API method for list.
+  response="$(ui_http POST "${UI_URL}api/list" -H 'Content-Type: application/json' -d '{}')"
+  [[ "$(ui_status "$response")" == 404 ]] || { printf '  POST list: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  ui_stop
+  if (( failed == 0 )); then pass ui_list_present; else fail ui_list_present; fi
+}
+
+test_ui_list_lock_absent() {
+  local failed=0 home response body
+  home="$(ui_home ui_list_absent)" || { fail ui_list_lock_absent; return; }
+  write_skill "$home/.custom-skills" only-custom
+  ui_start "$home" || failed=1
+
+  response="$(ui_http GET "${UI_URL}api/list")"
+  [[ "$(ui_status "$response")" == 200 ]] || failed=1
+  body="$(ui_body "$response")"
+  jq -e '.exit == 0' <<<"$body" >/dev/null || { printf '  envelope:\n%s\n' "$body" >&2; failed=1; }
+  [[ "$(jq -r .stderr <<<"$body")" == "nexus: lock is absent: $home/.nexus/skill-lock.json" ]] || { printf '  stderr: %s\n' "$(jq -r .stderr <<<"$body")" >&2; failed=1; }
+  [[ "$(jq -r '[.json.skills[].kind] | unique | join(",")' <<<"$body")" == 'control,custom' ]] || { printf '  kinds: %s\n' "$(jq -c '[.json.skills[].kind]' <<<"$body")" >&2; failed=1; }
+  [[ "$(jq -r '.json.skills | length' <<<"$body")" -eq 9 ]] || failed=1
+  [[ ! -e "$home/.nexus/skill-lock.json" ]] || { printf '  list created a lock\n' >&2; failed=1; }
+  ui_stop
+  if (( failed == 0 )); then pass ui_list_lock_absent; else fail ui_list_lock_absent; fi
+}
+
+CASE_TESTS+=(
+  test_ui_list_present
+  test_ui_list_lock_absent
+)

@@ -473,6 +473,47 @@ Every response carries `Cache-Control: no-store`; static files also carry
 fetch leaves the page origin. The page is one HTML file, one CSS file, and
 one JavaScript file with no build step and no framework.
 
+### Endpoints and envelope
+
+Every endpoint lives under `/t/TOKEN/api/` and is one CLI command:
+
+| Endpoint | Command |
+| --- | --- |
+| `GET api/list` | `nexus list --json` |
+| `GET api/global` | `nexus global show --json` |
+| `PUT api/global` with `{content, ifMatch}` | `nexus global edit --if-match <ifMatch>`, `content` on standard input |
+| `POST api/update` with `{name}` | `nexus update <name>` |
+| `POST api/remove` with `{name}` | `nexus remove <name>` |
+
+Every answer is HTTP 200 with one JSON object: `command` (the argv the
+server ran), `exit`, `stdout`, and `stderr`, plus `json` with the parsed
+standard output when `exit` is 0 and the output parses. A CLI refusal is
+`exit` 1 in the body with the CLI's own message, not an HTTP error, so the
+page shows exactly what the command line shows. HTTP errors exist only for
+the loopback guard (403), an unknown path or method (404), a mutating
+request without `Content-Type: application/json` (415), a body that is not
+a JSON object (400), and a second mutating request while one runs (409).
+
+### Skills table and Last command
+
+The Skills table is `nexus list --json` as rows, in CLI order: name, kind
+as a pill, source, the eight-character hash prefix with the full hash on
+hover, the update date as a local date with the ISO timestamp on hover,
+and actions. The filter box narrows by name only. An installed skill row
+has Update and Remove buttons. A custom skill row says `Custom Skill: git
+pull in ~/.custom-skills, then link`, and a control skill row says
+`Control Skill: never updated or removed`; neither has a button. When the
+lock is absent, an info banner above the table shows the CLI's own line
+and points at `/nexus-setup`, and only custom and control skills are
+listed.
+
+The Last command panel at the bottom of the page shows the exact command
+of the last call, an exit pill, a local timestamp, and standard output
+followed by standard error in red, as preformatted text. It persists until
+the next command. When a call cannot reach the server at all, a red banner
+says `Connection lost. Rerun nexus ui, then nexus list to check.` and the
+page does not retry on its own.
+
 ## Troubleshooting
 
 - **Already initialized:** setup is intentionally disabled; use `/nexus-link`,
