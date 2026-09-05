@@ -1,6 +1,6 @@
 help_text() {
   cat <<'EOF'
-Usage: nexus <bootstrap|setup|link|install|update|remove|new|list|global|help>
+Usage: nexus <bootstrap|setup|link|install|update|remove|new|list|global|ui|help>
 
 bootstrap    Link only the Nexus control skills.
 setup        Run one-time initialization with backups.
@@ -11,6 +11,7 @@ remove       Uninstall one installed skill and relink.
 new          Reserve a custom skill directory.
 list         Show installed, custom, and control skills: list [--json].
 global       Show or replace the Global Instructions: global show [--json], global edit [--if-match <sha256>].
+ui           Serve the local web page: ui [--port N] [--no-open].
 help         Show this text.
 EOF
 }

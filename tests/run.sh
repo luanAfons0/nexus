@@ -159,7 +159,10 @@ test_shell_syntax() {
   local failed=0 file
   while IFS= read -r file; do
     bash -n -- "$file" || failed=1
-  done < <(printf '%s\n' "$REPO_ROOT/scripts/nexus" "$REPO_ROOT"/scripts/lib/*.sh)
+  done < <(printf '%s\n' "$REPO_ROOT/scripts/nexus" "$REPO_ROOT"/scripts/lib/*.sh "$REPO_ROOT"/tests/*.sh "$REPO_ROOT"/tests/cases/*.sh)
+  while IFS= read -r file; do
+    python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$file" || failed=1
+  done < <(printf '%s\n' "$REPO_ROOT"/scripts/lib/*.py "$REPO_ROOT"/tests/*.py)
   if (( failed == 0 )); then pass shell_syntax; else fail shell_syntax; fi
 }
 

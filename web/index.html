@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nexus</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="hdr">
+  <div class="brand"><span class="mark"><span></span></span><span>Nexus</span></div>
+  <code class="url" id="base-url"></code>
+</header>
+<nav class="subnav" id="subnav">
+  <a href="#skills" class="on">Skills</a>
+  <a href="#global">Global Instructions</a>
+</nav>
+<main class="page">
+  <div id="banners" class="banners"></div>
+
+  <section class="sec" id="skills">
+    <div class="sec-hd">
+      <h2>Skills</h2>
+      <div class="sec-tools" id="skills-tools"></div>
+    </div>
+    <div id="skills-body" class="card empty">No skills loaded yet.</div>
+  </section>
+
+  <section class="sec" id="global">
+    <div class="sec-hd">
+      <h2>Global Instructions</h2>
+      <div class="sec-tools" id="global-tools"></div>
+    </div>
+    <div id="global-body" class="card empty">No global instructions loaded yet.</div>
+  </section>
+
+  <section class="sec" id="last-command">
+    <div class="sec-hd"><h2>Last command</h2></div>
+    <div id="last-command-body" class="card empty">No command has run yet.</div>
+  </section>
+</main>
+<div id="toasts" class="toasts"></div>
+<script src="vendor/marked.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
