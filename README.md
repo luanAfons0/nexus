@@ -28,8 +28,8 @@ From a shell, bootstrap only the control skills with:
 ```
 
 Bootstrap exposes only the control skills `nexus-setup`, `nexus-link`,
-`nexus-install`, `nexus-new`, `nexus-update`, `nexus-remove`, and `nexus-help`
-in the native Claude/Codex skill roots. It does not run
+`nexus-install`, `nexus-new`, `nexus-update`, `nexus-remove`, `nexus-help`,
+and `nexus` in the native Claude/Codex skill roots. It does not run
 setup, copy agent data, discover a lock, or install anything. Setup is always
 an explicit operation.
 
@@ -44,6 +44,7 @@ Native invocation forms are:
 | Update one skill | `/nexus-update` | `$nexus-update` |
 | Remove one skill | `/nexus-remove` | `$nexus-remove` |
 | Show skills or command help | `/nexus-help` | `$nexus-help` |
+| Menu: list, update, remove, edit global instructions | `/nexus` | `$nexus` |
 
 The equivalent CLI is `~/.nexus/scripts/nexus {setup,link,install,update,remove,new,list,global,help}`.
 
@@ -356,6 +357,24 @@ exits 2.
 
 The `nexus-help` skill asks which of these two you want, runs the matching
 read-only command, and reports the result. It never runs a mutating command.
+
+## The nexus menu skill
+
+`/nexus` in Claude and `$nexus` in Codex open one menu: list skills, update
+one installed skill, remove one installed skill, edit the global
+instructions, quit. The menu returns after each action, and it ends on quit
+or on any command that exits non-zero, showing the exact command output so
+you never continue on a broken state.
+
+List runs `nexus list` and reports the table plus the global instructions
+line with the same explanations `nexus-help` gives. Update and remove run
+`nexus list --json` and offer only the installed rows, then run `nexus
+update <name>` or `nexus remove <name>` once, the same commands
+`/nexus-update` and `/nexus-remove` run. A custom or control name is never
+offered; if you type one, the skill explains the right path (`git pull` then
+link for a custom skill, never for a control skill) and runs nothing. Remove
+also asks you to type the name back and runs only when it matches exactly.
+The skill never runs install, setup, or new.
 
 ## Troubleshooting
 

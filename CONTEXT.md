@@ -23,9 +23,10 @@ its presence in the Custom Root is its only manifest.
 _Avoid_: hand-authored skill, local skill, private skill
 
 **Control Skill**:
-One of the seven skills Nexus ships to operate itself (`nexus-setup`,
+One of the eight skills Nexus ships to operate itself (`nexus-setup`,
 `nexus-link`, `nexus-install`, `nexus-new`, `nexus-update`, `nexus-remove`,
-`nexus-help`).
+`nexus-help`, `nexus`). `nexus` is the menu over list, update, remove, and
+the Global Instructions.
 _Avoid_: Nexus skill, manager skill, built-in skill
 
 **Skill Name**:
