@@ -97,6 +97,7 @@ test_help_content() {
     [[ "$output" == *'Usage: nexus <bootstrap|setup|link|install|update|remove|new|list|global|help>'* ]] || {
       printf '  %s: missing usage line\n' "$alias" >&2; failed=1;
     }
+    [[ "$output" == *'list [--json]'* ]] || { printf '  %s: help lacks list --json\n' "$alias" >&2; failed=1; }
     local sub
     for sub in bootstrap setup link install update remove new list global help; do
       [[ "$output" == *"$sub"* ]] || { printf '  %s: missing subcommand %s\n' "$alias" "$sub" >&2; failed=1; }
@@ -167,7 +168,89 @@ test_list_global_instructions_states() {
   if (( failed == 0 )); then pass list_global_instructions_states; else fail list_global_instructions_states; fi
 }
 
+# Ticket #17: list --json emits one object a script can read; the table is
+# byte-identical to before.
+test_list_json_with_lock_custom_and_control() {
+  local failed=0 home custom output status table
+  local src1="owner/repo-a" hash1="0123456789abcdef0123456789abcdef01234567" updated1="2026-01-01T00:00:00Z"
+  local src2="owner/repo-z" hash2="fedcba9876543210fedcba9876543210fedcba98" updated2="2026-02-02T00:00:00Z"
+  home="$(custom_home list_json)"
+  custom="$home/.custom-skills"
+  write_skill "$custom" middle-skill
+  list_write_lock "$home/.nexus/skill-lock.json" "$src1" "$hash1" "$updated1" "$src2" "$hash2" "$updated2"
+  printf 'rule one\n' >"$custom/GLOBAL.md"
+  ln -s -- ../.custom-skills/GLOBAL.md "$home/.claude/CLAUDE.md"
+
+  output="$(run_nexus "$home" list --json 2>/dev/null)"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '  unexpected status: %s\n' "$status" >&2; failed=1; }
+  jq -e . <<<"$output" >/dev/null || { printf '  invalid JSON:\n%s\n' "$output" >&2; failed=1; }
+  [[ "$(jq -r 'keys | join(",")' <<<"$output")" == 'globalInstructions,skills' ]] || { printf '  unexpected top-level keys\n' >&2; failed=1; }
+  [[ "$(jq -r '.skills | map(.name) | join(",")' <<<"$output")" == \
+     'alpha-skill,middle-skill,nexus-help,nexus-install,nexus-link,nexus-new,nexus-remove,nexus-setup,nexus-update,zeta-skill' ]] || {
+    printf '  unexpected row order or set:\n%s\n' "$output" >&2; failed=1;
+  }
+  jq -e --arg src "$src1" --arg hash "$hash1" --arg updated "$updated1" '
+    .skills[0] == { name: "alpha-skill", kind: "installed", source: $src, hash: $hash, updatedAt: $updated }
+  ' <<<"$output" >/dev/null || { printf '  unexpected installed row\n' >&2; failed=1; }
+  jq -e '.skills[1] == { name: "middle-skill", kind: "custom", source: null, hash: null, updatedAt: null }' <<<"$output" >/dev/null || {
+    printf '  unexpected custom row\n' >&2; failed=1;
+  }
+  jq -e '.skills[2] == { name: "nexus-help", kind: "control", source: null, hash: null, updatedAt: null }' <<<"$output" >/dev/null || {
+    printf '  unexpected control row\n' >&2; failed=1;
+  }
+  jq -e --arg owner "$custom/GLOBAL.md" '
+    .globalInstructions.owner == $owner and .globalInstructions.present == true and
+    (.globalInstructions.sha256 | length) == 64 and .globalInstructions.claude == "linked" and
+    .globalInstructions.codex == "absent" and (.globalInstructions | has("content") | not)
+  ' <<<"$output" >/dev/null || { printf '  unexpected globalInstructions:\n%s\n' "$output" >&2; failed=1; }
+
+  # The table is unchanged by the flag's existence.
+  table="$(run_nexus "$home" list)" || failed=1
+  [[ "$table" == *$'alpha-skill\tinstalled\t'"$src1"$'\t'"${hash1:0:8}"$'\t'"$updated1"* ]] || { printf '  table row changed\n' >&2; failed=1; }
+  [[ "$table" != *'{'* ]] || { printf '  table contains JSON\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass list_json_with_lock_custom_and_control; else fail list_json_with_lock_custom_and_control; fi
+}
+
+test_list_json_without_lock() {
+  local failed=0 home custom stdout stderr status
+  home="$(custom_home list_json_no_lock)"
+  custom="$home/.custom-skills"
+  write_skill "$custom" only-custom
+  stderr="$(mktemp)"
+  stdout="$(run_nexus "$home" list --json 2>"$stderr")"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '  unexpected status: %s\n' "$status" >&2; failed=1; }
+  jq -e . <<<"$stdout" >/dev/null || { printf '  stdout is not valid JSON:\n%s\n' "$stdout" >&2; failed=1; }
+  [[ "$(cat "$stderr")" == *"lock is absent: $home/.nexus/skill-lock.json"* ]] || { printf '  info line not on stderr\n' >&2; failed=1; }
+  [[ "$(jq -r '.skills | map(.kind) | unique | join(",")' <<<"$stdout")" == 'control,custom' ]] || { printf '  unexpected kinds\n' >&2; failed=1; }
+  jq -e '.skills[] | select(.name == "only-custom") | .kind == "custom"' <<<"$stdout" >/dev/null || { printf '  missing custom row\n' >&2; failed=1; }
+  jq -e '.globalInstructions.present == false and .globalInstructions.sha256 == null' <<<"$stdout" >/dev/null || { printf '  unexpected globalInstructions\n' >&2; failed=1; }
+  rm -f -- "$stderr"
+  if (( failed == 0 )); then pass list_json_without_lock; else fail list_json_without_lock; fi
+}
+
+test_list_json_faults_and_usage() {
+  local failed=0 home output status
+  home="$(custom_home list_json_faults)"
+  mkdir -p -- "$home/.nexus"
+  printf '{"version": 2, "skills": {}}\n' >"$home/.nexus/skill-lock.json"
+  output="$(run_nexus "$home" list --json 2>&1)"; status=$?
+  [[ "$status" -eq 1 && "$output" == *'invalid version-3 lock'* ]] || { printf '  invalid lock: status %s\n' "$status" >&2; failed=1; }
+  rm -- "$home/.nexus/skill-lock.json"
+  mkdir -- "$home/.custom-skills/GLOBAL.md"
+  output="$(run_nexus "$home" list --json 2>&1)"; status=$?
+  [[ "$status" -eq 1 && "$output" == *'global instructions must be a regular file'* ]] || { printf '  owner fault: status %s\n' "$status" >&2; failed=1; }
+  rmdir -- "$home/.custom-skills/GLOBAL.md"
+  output="$(run_nexus "$home" list --nope 2>&1)"; status=$?
+  [[ "$status" -eq 2 && "$output" == *'Usage:'* ]] || { printf '  unknown flag: status %s\n' "$status" >&2; failed=1; }
+  output="$(run_nexus "$home" list --json extra 2>&1)"; status=$?
+  [[ "$status" -eq 2 && "$output" == *'Usage:'* ]] || { printf '  extra positional: status %s\n' "$status" >&2; failed=1; }
+  if (( failed == 0 )); then pass list_json_faults_and_usage; else fail list_json_faults_and_usage; fi
+}
+
 CASE_TESTS+=(
+  test_list_json_with_lock_custom_and_control
+  test_list_json_without_lock
+  test_list_json_faults_and_usage
   test_list_global_instructions_states
   test_list_with_lock_custom_and_control
   test_list_without_lock

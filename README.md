@@ -332,6 +332,15 @@ When the lock is absent, `list` prints one info line saying so, then only the
 custom and control rows, and still exits 0. An invalid lock reports the
 validation error and exits 1.
 
+`nexus list --json` prints the same state as one JSON object for scripts and
+the planned web page. `skills` is an array sorted by name; each row has
+`name`, `kind`, `source`, `hash` (the full `skillFolderHash`, not the
+eight-character prefix), and `updatedAt`, with null for the last three on
+custom and control rows. `globalInstructions` has the same shape as `global
+show --json` without `content`. When the lock is absent the info line goes
+to standard error, so standard output stays valid JSON. The table output
+without the flag is unchanged.
+
 `nexus help` (also `-h` and `--help`) prints the usage line and one line per
 subcommand: `bootstrap`, `setup`, `link`, `install`, `update`, `remove`,
 `new`, `list`, `global`, and `help`.

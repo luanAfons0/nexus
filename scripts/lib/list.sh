@@ -9,7 +9,7 @@ install      Install selected skills from one source via upstream npx skills.
 update       Update one installed skill and relink.
 remove       Uninstall one installed skill and relink.
 new          Reserve a custom skill directory.
-list         Show installed, custom, and control skills.
+list         Show installed, custom, and control skills: list [--json].
 global       Show or replace the Global Instructions: global show [--json], global edit [--if-match <sha256>].
 help         Show this text.
 EOF
@@ -50,13 +50,48 @@ global_instructions_line() {
   printf 'global instructions: %s (claude: %s, codex: %s)\n' "$owner" "$claude" "$codex"
 }
 
+# One JSON object per skill row: name, kind, source, full skillFolderHash,
+# and updatedAt. Custom and Control Skills carry no upstream version, so
+# their last three fields are null.
+list_skills_json() {
+  local lock_names_array="$1" custom_names_array="$2"
+  local -n json_lock_names="$lock_names_array"
+  local -n json_custom_names="$custom_names_array"
+  local name
+  {
+    for name in "${json_lock_names[@]}"; do
+      jq -c --arg n "$name" '.skills[$n] | { name: $n, kind: "installed",
+        source: (.source // null), hash: (.skillFolderHash // null),
+        updatedAt: (.updatedAt // null) }' "$LOCK_FILE"
+    done
+    for name in "${json_custom_names[@]}"; do
+      jq -c -n --arg n "$name" '{ name: $n, kind: "custom", source: null, hash: null, updatedAt: null }'
+    done
+    for name in "${CONTROL_SKILLS[@]}"; do
+      jq -c -n --arg n "$name" '{ name: $n, kind: "control", source: null, hash: null, updatedAt: null }'
+    done
+  } | jq -c -s 'sort_by(.name)'
+}
+
 list_skills() {
+  local json=false arg
   local -a lock_names=() custom_names=()
   local name source hash updated
   local -a rows=()
+  for arg in "$@"; do
+    case "$arg" in
+      --json) json=true ;;
+      *)
+        usage >&2
+        return 2 ;;
+    esac
+  done
 
   if [[ -f "$LOCK_FILE" ]]; then
     load_validated_lock_names "$LOCK_FILE" lock_names || return 1
+  elif [[ "$json" == true ]]; then
+    # stdout must stay valid JSON, so the notice goes to stderr.
+    info "lock is absent: $LOCK_FILE" >&2
   else
     info "lock is absent: $LOCK_FILE"
   fi
@@ -64,6 +99,13 @@ list_skills() {
   custom_root_preflight || return 1
   global_instructions_preflight || return 1
   collect_custom_names custom_names || return 1
+
+  if [[ "$json" == true ]]; then
+    jq -c -n --argjson skills "$(list_skills_json lock_names custom_names)" \
+      --argjson global "$(global_instructions_json false)" \
+      '{ skills: $skills, globalInstructions: $global }'
+    return 0
+  fi
 
   for name in "${lock_names[@]}"; do
     source="$(list_lock_field "$name" source)"
