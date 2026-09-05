@@ -34,6 +34,7 @@ test_list_with_lock_custom_and_control() {
   expected="$header
 $(printf 'alpha-skill\tinstalled\t%s\t%s\t%s' "$src1" "${hash1:0:8}" "$updated1")
 $(printf 'middle-skill\tcustom\t-\t-\t-')
+$(printf 'nexus\tcontrol\t-\t-\t-')
 $(printf 'nexus-help\tcontrol\t-\t-\t-')
 $(printf 'nexus-install\tcontrol\t-\t-\t-')
 $(printf 'nexus-link\tcontrol\t-\t-\t-')
@@ -186,7 +187,7 @@ test_list_json_with_lock_custom_and_control() {
   jq -e . <<<"$output" >/dev/null || { printf '  invalid JSON:\n%s\n' "$output" >&2; failed=1; }
   [[ "$(jq -r 'keys | join(",")' <<<"$output")" == 'globalInstructions,skills' ]] || { printf '  unexpected top-level keys\n' >&2; failed=1; }
   [[ "$(jq -r '.skills | map(.name) | join(",")' <<<"$output")" == \
-     'alpha-skill,middle-skill,nexus-help,nexus-install,nexus-link,nexus-new,nexus-remove,nexus-setup,nexus-update,zeta-skill' ]] || {
+     'alpha-skill,middle-skill,nexus,nexus-help,nexus-install,nexus-link,nexus-new,nexus-remove,nexus-setup,nexus-update,zeta-skill' ]] || {
     printf '  unexpected row order or set:\n%s\n' "$output" >&2; failed=1;
   }
   jq -e --arg src "$src1" --arg hash "$hash1" --arg updated "$updated1" '
@@ -195,7 +196,7 @@ test_list_json_with_lock_custom_and_control() {
   jq -e '.skills[1] == { name: "middle-skill", kind: "custom", source: null, hash: null, updatedAt: null }' <<<"$output" >/dev/null || {
     printf '  unexpected custom row\n' >&2; failed=1;
   }
-  jq -e '.skills[2] == { name: "nexus-help", kind: "control", source: null, hash: null, updatedAt: null }' <<<"$output" >/dev/null || {
+  jq -e '.skills[2] == { name: "nexus", kind: "control", source: null, hash: null, updatedAt: null }' <<<"$output" >/dev/null || {
     printf '  unexpected control row\n' >&2; failed=1;
   }
   jq -e --arg owner "$custom/GLOBAL.md" '

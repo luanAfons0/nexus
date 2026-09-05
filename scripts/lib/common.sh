@@ -9,7 +9,7 @@ nexus_init() {
   CLAUDE_INSTRUCTIONS="$HOME/.claude/CLAUDE.md"
   CODEX_INSTRUCTIONS="$HOME/.codex/AGENTS.md"
   GLOBAL_INSTRUCTIONS="$CUSTOM_ROOT/GLOBAL.md"
-  declare -g -a CONTROL_SKILLS=(nexus-setup nexus-link nexus-install nexus-new nexus-help nexus-update nexus-remove)
+  declare -g -a CONTROL_SKILLS=(nexus-setup nexus-link nexus-install nexus-new nexus-help nexus-update nexus-remove nexus)
   ERRORS=0
   CANONICAL_CURRENT=''
   DISCOVERED_LOCK=''
