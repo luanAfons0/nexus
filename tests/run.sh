@@ -1267,7 +1267,7 @@ test_readme_documentation() {
   for term in '~/.agents/skills' 'skill-lock.json' '.claude-backup' '.codex-backup' '/nexus-setup' '$nexus-setup' 'npx skills' 'python3' 'recovery' 'another agent' \
               '~/.custom-skills' '/nexus-new' '$nexus-new' '.workspaces' \
               '/nexus-update' '$nexus-update' '/nexus-remove' '$nexus-remove' '/nexus-help' '$nexus-help' 'nexus list' \
-              '`/nexus`' '`$nexus`' \
+              '`/nexus`' '`$nexus`' 'nexus ui' 'http.server' 'Save changes' \
               '## Global instructions' '~/.custom-skills/GLOBAL.md' '0003-global-instructions-are-a-managed-link-into-the-custom-root.md' \
               '0004-nexus-writes-only-global-md-in-the-custom-root.md'; do
     assert_contains README.md "$term" || failed=1
