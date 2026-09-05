@@ -376,6 +376,30 @@ link for a custom skill, never for a control skill) and runs nothing. Remove
 also asks you to type the name back and runs only when it matches exactly.
 The skill never runs install, setup, or new.
 
+Edit global instructions runs `nexus global show --json`. When the file is
+absent the skill says so and asks for the first content; when it is present
+the skill shows the content and asks what to change. The agent then produces
+the full new content, shows a unified diff, and asks for approval. Nothing
+is written before you approve. On approval the full content is piped to
+`nexus global edit --if-match <sha256 from show>` (the sha256 of the empty
+string when the file was absent); the agent never writes `GLOBAL.md` with
+its own file tools, so the same preflight rules apply in chat as on the
+command line. The result is reported, link notices from a first creation
+are shown, and on success the skill reminds you to commit in
+`~/.custom-skills`. A sha256 mismatch means the file changed since it was
+read: the skill runs show again and starts the edit over. The menu returns
+after the edit.
+
+The chat menu is the first front for this editor. A later change replaces
+it with `nexus ui`, a local page served by Python's `http.server` that calls
+`list --json`, `global show --json`, `global edit --if-match`, `update`, and
+`remove`. Its editor is GitHub-style, with Edit and Preview tabs, line
+numbers, soft wrap, and Cancel and "Save changes" buttons ("Save", not
+"Commit", so the word is not confused with publish or Git). The preview
+renderer is vendored in `~/.nexus`; the page makes no network fetch. When
+`nexus ui` ships, `/nexus` becomes a launcher that starts the server and
+prints the URL.
+
 ## Troubleshooting
 
 - **Already initialized:** setup is intentionally disabled; use `/nexus-link`,
