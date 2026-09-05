@@ -20,6 +20,35 @@ list_lock_field() {
   [[ -n "$value" ]] && printf '%s\n' "$value" || printf '%s\n' '-'
 }
 
+# State of one Instruction Path, read-only: linked (a Managed Link resolving
+# to the Owner file), foreign (anything else present), absent (nothing at the
+# path, Agent Home present), or "no home" (Agent Home directory absent).
+instruction_path_state() {
+  local path="$1" home
+  home="$(dirname -- "$path")"
+  if [[ ! -d "$home" ]]; then
+    printf 'no home\n'
+  elif [[ ! -e "$path" && ! -L "$path" ]]; then
+    printf 'absent\n'
+  elif links_exactly_to "$path" "$GLOBAL_INSTRUCTIONS"; then
+    printf 'linked\n'
+  else
+    printf 'foreign\n'
+  fi
+}
+
+global_instructions_line() {
+  local owner claude codex
+  if global_instructions_present; then
+    owner="$GLOBAL_INSTRUCTIONS"
+  else
+    owner="absent ($GLOBAL_INSTRUCTIONS)"
+  fi
+  claude="$(instruction_path_state "$CLAUDE_INSTRUCTIONS")"
+  codex="$(instruction_path_state "$CODEX_INSTRUCTIONS")"
+  printf 'global instructions: %s (claude: %s, codex: %s)\n' "$owner" "$claude" "$codex"
+}
+
 list_skills() {
   local -a lock_names=() custom_names=()
   local name source hash updated
@@ -55,5 +84,6 @@ list_skills() {
   if (( ${#rows[@]} != 0 )); then
     printf '%s\n' "${rows[@]}" | LC_ALL=C sort -t "$(printf '\t')" -k1,1
   fi
+  global_instructions_line
   return 0
 }

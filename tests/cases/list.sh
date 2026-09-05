@@ -41,7 +41,8 @@ $(printf 'nexus-new\tcontrol\t-\t-\t-')
 $(printf 'nexus-remove\tcontrol\t-\t-\t-')
 $(printf 'nexus-setup\tcontrol\t-\t-\t-')
 $(printf 'nexus-update\tcontrol\t-\t-\t-')
-$(printf 'zeta-skill\tinstalled\t%s\t%s\t%s' "$src2" "${hash2:0:8}" "$updated2")"
+$(printf 'zeta-skill\tinstalled\t%s\t%s\t%s' "$src2" "${hash2:0:8}" "$updated2")
+global instructions: absent ($custom/GLOBAL.md) (claude: absent, codex: absent)"
 
   [[ "$status" -eq 0 ]] || { printf '  unexpected status: %s\n' "$status" >&2; failed=1; }
   [[ "$output" == "$expected" ]] || {
@@ -112,7 +113,62 @@ test_help_rejects_extra_args() {
   if (( failed == 0 )); then pass help_rejects_extra_args; else fail help_rejects_extra_args; fi
 }
 
+# The Global Instructions line reports each Instruction Path state without
+# changing anything. One fake home per state.
+list_global_line() {
+  local home="$1" output
+  output="$(run_nexus "$home" list 2>&1)" || { printf '%s\n' "$output" >&2; return 1; }
+  printf '%s\n' "$output" | tail -n 1
+}
+
+test_list_global_instructions_states() {
+  local failed=0 home custom line before after
+  home="$(custom_home list_global)"
+  custom="$home/.custom-skills"
+  printf 'rule one\n' >"$custom/GLOBAL.md"
+
+  # Both absent: Agent Homes present, nothing at either Instruction Path.
+  line="$(list_global_line "$home")" || failed=1
+  [[ "$line" == "global instructions: $custom/GLOBAL.md (claude: absent, codex: absent)" ]] || {
+    printf '  unexpected absent line: %s\n' "$line" >&2; failed=1;
+  }
+
+  # linked and foreign.
+  ln -s -- ../.custom-skills/GLOBAL.md "$home/.claude/CLAUDE.md"
+  printf 'hand written\n' >"$home/.codex/AGENTS.md"
+  before="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")|$(snapshot_tree "$custom")"
+  line="$(list_global_line "$home")" || failed=1
+  after="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")|$(snapshot_tree "$custom")"
+  [[ "$line" == "global instructions: $custom/GLOBAL.md (claude: linked, codex: foreign)" ]] || {
+    printf '  unexpected linked/foreign line: %s\n' "$line" >&2; failed=1;
+  }
+  [[ "$before" == "$after" ]] || { printf '  list changed the filesystem\n' >&2; failed=1; }
+
+  # An unrelated symlink is foreign too.
+  rm -- "$home/.codex/AGENTS.md"
+  ln -s -- /unrelated/AGENTS.md "$home/.codex/AGENTS.md"
+  line="$(list_global_line "$home")" || failed=1
+  [[ "$line" == *'codex: foreign)' ]] || { printf '  unrelated symlink not foreign: %s\n' "$line" >&2; failed=1; }
+
+  # no home.
+  rm -rf -- "$home/.codex"
+  line="$(list_global_line "$home")" || failed=1
+  [[ "$line" == "global instructions: $custom/GLOBAL.md (claude: linked, codex: no home)" ]] || {
+    printf '  unexpected no-home line: %s\n' "$line" >&2; failed=1;
+  }
+  [[ ! -e "$home/.codex" ]] || { printf '  list created the Codex Agent Home\n' >&2; failed=1; }
+
+  # Absent Owner form, with per-agent states still reported.
+  rm -- "$custom/GLOBAL.md"
+  line="$(list_global_line "$home")" || failed=1
+  [[ "$line" == "global instructions: absent ($custom/GLOBAL.md) (claude: foreign, codex: no home)" ]] || {
+    printf '  unexpected absent-owner line: %s\n' "$line" >&2; failed=1;
+  }
+  if (( failed == 0 )); then pass list_global_instructions_states; else fail list_global_instructions_states; fi
+}
+
 CASE_TESTS+=(
+  test_list_global_instructions_states
   test_list_with_lock_custom_and_control
   test_list_without_lock
   test_list_invalid_lock
