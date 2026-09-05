@@ -172,3 +172,212 @@ CASE_TESTS+=(
   test_global_show_usage_errors
   test_global_help_lists_global
 )
+
+# Ticket #16: global edit replaces GLOBAL.md from stdin, refuses before any
+# change, and links the Instruction Paths only on first creation.
+
+EMPTY_SHA256='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+
+global_edit_no_link_output() {
+  local output="$1"
+  [[ "$output" != *'link complete'* && "$output" != *CLAUDE.md* && "$output" != *AGENTS.md* ]] || {
+    printf '  unexpected link output:\n%s\n' "$output" >&2; return 1;
+  }
+}
+
+test_global_edit_creates_and_links() {
+  local failed=0 home output status
+  home="$(global_cli_home global_edit_create)"
+  printf 'hand written\n' >"$home/.codex/AGENTS.md"
+
+  output="$(printf 'first rule\n' | run_nexus "$home" global edit 2>&1)"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '  status %s:\n%s\n' "$status" "$output" >&2; failed=1; }
+  [[ -f "$home/.custom-skills/GLOBAL.md" && ! -L "$home/.custom-skills/GLOBAL.md" ]] || { printf '  Owner not created as a regular file\n' >&2; failed=1; }
+  [[ "$(cat "$home/.custom-skills/GLOBAL.md")" == 'first rule' ]] || { printf '  Owner content differs\n' >&2; failed=1; }
+  assert_instruction_link "$home" "$home/.claude/CLAUDE.md" || failed=1
+  [[ "$output" == *'link complete'* ]] || { printf '  link output not forwarded:\n%s\n' "$output" >&2; failed=1; }
+  [[ "$output" == *"foreign entry at $home/.codex/AGENTS.md"* ]] || { printf '  Foreign Entry notice not forwarded:\n%s\n' "$output" >&2; failed=1; }
+  [[ "$(cat "$home/.codex/AGENTS.md")" == 'hand written' ]] || { printf '  Foreign Entry changed\n' >&2; failed=1; }
+  assert_link_to "$home/.claude/skills/mine" "$home/.custom-skills/mine" || failed=1
+  [[ -z "$(find "$home/.custom-skills" -maxdepth 1 -name '.nexus-*' -print -quit)" ]] || { printf '  temp file left in the Custom Root\n' >&2; failed=1; }
+  assert_custom_skill_intact "$home" || failed=1
+  if (( failed == 0 )); then pass global_edit_creates_and_links; else fail global_edit_creates_and_links; fi
+}
+
+test_global_edit_clean_creation_links_both_paths() {
+  local failed=0 home output status
+  home="$(global_cli_home global_edit_create_clean)"
+  output="$(printf 'first rule\n' | run_nexus "$home" global edit 2>&1)"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '  status %s:\n%s\n' "$status" "$output" >&2; failed=1; }
+  assert_instruction_link "$home" "$home/.claude/CLAUDE.md" || failed=1
+  assert_instruction_link "$home" "$home/.codex/AGENTS.md" || failed=1
+  [[ "$output" != *error* ]] || { printf '  unexpected error output:\n%s\n' "$output" >&2; failed=1; }
+  if (( failed == 0 )); then pass global_edit_clean_creation_links_both_paths; else fail global_edit_clean_creation_links_both_paths; fi
+}
+
+test_global_edit_overwrites_without_link() {
+  local failed=0 home output status before after
+  home="$(global_cli_home global_edit_overwrite)"
+  printf 'old rule\n' >"$home/.custom-skills/GLOBAL.md"
+  before="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
+
+  output="$(printf 'new rule\nline two\n' | run_nexus "$home" global edit 2>&1)"; status=$?
+  after="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")"
+  [[ "$status" -eq 0 ]] || { printf '  status %s:\n%s\n' "$status" "$output" >&2; failed=1; }
+  [[ "$(cat "$home/.custom-skills/GLOBAL.md")" == $'new rule\nline two' ]] || { printf '  Owner content differs\n' >&2; failed=1; }
+  [[ "$before" == "$after" ]] || { printf '  Instruction Path state changed\n' >&2; failed=1; }
+  [[ -z "$output" ]] || { printf '  unexpected output:\n%s\n' "$output" >&2; failed=1; }
+  [[ ! -e "$home/.claude/CLAUDE.md" && ! -e "$home/.codex/AGENTS.md" ]] || { printf '  link ran\n' >&2; failed=1; }
+  assert_custom_skill_intact "$home" || failed=1
+  if (( failed == 0 )); then pass global_edit_overwrites_without_link; else fail global_edit_overwrites_without_link; fi
+}
+
+test_global_edit_if_match_success() {
+  local failed=0 home output status sha
+  home="$(global_cli_home global_edit_if_match_ok)"
+  printf 'old rule\n' >"$home/.custom-skills/GLOBAL.md"
+  sha="$(run_nexus "$home" global show --json | jq -r .sha256)"
+
+  output="$(printf 'new rule\n' | run_nexus "$home" global edit --if-match "$sha" 2>&1)"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '  status %s:\n%s\n' "$status" "$output" >&2; failed=1; }
+  [[ "$(cat "$home/.custom-skills/GLOBAL.md")" == 'new rule' ]] || { printf '  Owner content differs\n' >&2; failed=1; }
+  global_edit_no_link_output "$output" || failed=1
+  assert_custom_skill_intact "$home" || failed=1
+  if (( failed == 0 )); then pass global_edit_if_match_success; else fail global_edit_if_match_success; fi
+}
+
+test_global_edit_if_match_mismatch_refuses() {
+  local failed=0 home output status before after actual
+  home="$(global_cli_home global_edit_if_match_bad)"
+  printf 'old rule\n' >"$home/.custom-skills/GLOBAL.md"
+  actual="$(sha256sum <"$home/.custom-skills/GLOBAL.md" | awk '{print $1}')"
+  before="$(global_cli_snapshot "$home")"
+
+  output="$(printf 'new rule\n' | run_nexus "$home" global edit --if-match "$EMPTY_SHA256" 2>&1)"; status=$?
+  after="$(global_cli_snapshot "$home")"
+  [[ "$status" -eq 1 ]] || { printf '  status %s:\n%s\n' "$status" "$output" >&2; failed=1; }
+  [[ "$output" == *"$EMPTY_SHA256"* && "$output" == *"$actual"* ]] || { printf '  mismatch message lacks a hash:\n%s\n' "$output" >&2; failed=1; }
+  [[ "$(cat "$home/.custom-skills/GLOBAL.md")" == 'old rule' ]] || { printf '  Owner was written\n' >&2; failed=1; }
+  [[ "$before" == "$after" ]] || { printf '  refused edit changed a tree\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass global_edit_if_match_mismatch_refuses; else fail global_edit_if_match_mismatch_refuses; fi
+}
+
+test_global_edit_empty_sha_matches_absent_and_empty() {
+  local failed=0 home output status
+  home="$(global_cli_home global_edit_empty_sha)"
+
+  output="$(printf 'first rule\n' | run_nexus "$home" global edit --if-match "$EMPTY_SHA256" 2>&1)"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '  absent: status %s:\n%s\n' "$status" "$output" >&2; failed=1; }
+  [[ "$(cat "$home/.custom-skills/GLOBAL.md")" == 'first rule' ]] || { printf '  absent: Owner content differs\n' >&2; failed=1; }
+  assert_instruction_link "$home" "$home/.claude/CLAUDE.md" || failed=1
+
+  : >"$home/.custom-skills/GLOBAL.md"
+  output="$(printf 'second rule\n' | run_nexus "$home" global edit --if-match "$EMPTY_SHA256" 2>&1)"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '  empty: status %s:\n%s\n' "$status" "$output" >&2; failed=1; }
+  [[ "$(cat "$home/.custom-skills/GLOBAL.md")" == 'second rule' ]] || { printf '  empty: Owner content differs\n' >&2; failed=1; }
+  global_edit_no_link_output "$output" || failed=1
+  if (( failed == 0 )); then pass global_edit_empty_sha_matches_absent_and_empty; else fail global_edit_empty_sha_matches_absent_and_empty; fi
+}
+
+test_global_edit_empty_stdin_writes_empty_file() {
+  local failed=0 home output status
+  home="$(global_cli_home global_edit_empty_stdin)"
+  printf 'old rule\n' >"$home/.custom-skills/GLOBAL.md"
+
+  output="$(run_nexus "$home" global edit </dev/null 2>&1)"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '  status %s:\n%s\n' "$status" "$output" >&2; failed=1; }
+  [[ -f "$home/.custom-skills/GLOBAL.md" && ! -s "$home/.custom-skills/GLOBAL.md" ]] || { printf '  Owner is not an empty regular file\n' >&2; failed=1; }
+  assert_custom_skill_intact "$home" || failed=1
+  if (( failed == 0 )); then pass global_edit_empty_stdin_writes_empty_file; else fail global_edit_empty_stdin_writes_empty_file; fi
+}
+
+# $1 label, $2 command that builds the faulty tree, $3 expected error fragment.
+global_edit_fault_case() {
+  local kind="$1" make="$2" fragment="$3" failed=0 home output status before after
+  home="$(global_cli_home "global_edit_fault_$kind")"
+  eval "$make"
+  before="$(global_cli_snapshot "$home")"
+  output="$(printf 'new rule\n' | run_nexus "$home" global edit 2>&1)"; status=$?
+  after="$(global_cli_snapshot "$home")"
+  [[ "$status" -eq 1 ]] || { printf '  %s: status %s\n' "$kind" "$status" >&2; failed=1; }
+  [[ "$output" == *"$fragment"* ]] || { printf '  %s: missing fault:\n%s\n' "$kind" "$output" >&2; failed=1; }
+  [[ "$before" == "$after" ]] || { printf '  %s: refused edit mutated a tree\n' "$kind" >&2; failed=1; }
+  assert_custom_skill_intact "$home" || failed=1
+  return "$failed"
+}
+
+test_global_edit_symlink_owner_is_refused() {
+  if global_edit_fault_case symlink 'ln -s -- mine/SKILL.md "$home/.custom-skills/GLOBAL.md"' \
+      'error: global instructions must be a regular file, not a symlink:'; then
+    pass global_edit_symlink_owner_is_refused
+  else
+    fail global_edit_symlink_owner_is_refused
+  fi
+}
+
+test_global_edit_directory_owner_is_refused() {
+  if global_edit_fault_case directory 'mkdir -- "$home/.custom-skills/GLOBAL.md"' \
+      'error: global instructions must be a regular file, not a directory:'; then
+    pass global_edit_directory_owner_is_refused
+  else
+    fail global_edit_directory_owner_is_refused
+  fi
+}
+
+test_global_edit_missing_custom_root_is_refused() {
+  local failed=0 home output status
+  home="$(new_home global_edit_no_root)"
+  mkdir -p "$home/.claude" "$home/.codex"
+  output="$(printf 'new rule\n' | run_nexus "$home" global edit 2>&1)"; status=$?
+  [[ "$status" -eq 1 ]] || { printf '  status %s\n' "$status" >&2; failed=1; }
+  [[ "$output" == *"error: custom skill root is absent: $home/.custom-skills"* ]] || { printf '  missing fault:\n%s\n' "$output" >&2; failed=1; }
+  [[ ! -e "$home/.custom-skills" ]] || { printf '  edit created the Custom Root\n' >&2; failed=1; }
+  [[ ! -e "$home/.claude/CLAUDE.md" ]] || { printf '  edit linked an Instruction Path\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass global_edit_missing_custom_root_is_refused; else fail global_edit_missing_custom_root_is_refused; fi
+}
+
+# First creation before setup: the write lands, then link fails on the
+# absent Nexus Lock exactly as `nexus link` would, and the exit is 1.
+test_global_edit_creation_without_lock_keeps_file() {
+  local failed=0 home output status
+  home="$(custom_home global_edit_no_lock)"
+  output="$(printf 'first rule\n' | run_nexus "$home" global edit 2>&1)"; status=$?
+  [[ "$status" -eq 1 ]] || { printf '  status %s:\n%s\n' "$status" "$output" >&2; failed=1; }
+  [[ "$output" == *'invalid version-3 lock'* ]] || { printf '  missing link lock error:\n%s\n' "$output" >&2; failed=1; }
+  [[ "$(cat "$home/.custom-skills/GLOBAL.md")" == 'first rule' ]] || { printf '  Owner not written\n' >&2; failed=1; }
+  [[ ! -e "$home/.claude/CLAUDE.md" && ! -L "$home/.claude/CLAUDE.md" ]] || { printf '  Instruction Path linked without a lock\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass global_edit_creation_without_lock_keeps_file; else fail global_edit_creation_without_lock_keeps_file; fi
+}
+
+test_global_edit_usage_errors() {
+  local failed=0 home output status before after
+  home="$(global_cli_home global_edit_usage)"
+  printf 'old rule\n' >"$home/.custom-skills/GLOBAL.md"
+  before="$(global_cli_snapshot "$home")"
+  local -a bad=('global edit --nope' 'global edit extra' 'global edit --if-match' 'global edit --if-match nothex')
+  local args
+  for args in "${bad[@]}"; do
+    # shellcheck disable=SC2086
+    output="$(printf 'new rule\n' | run_nexus "$home" $args 2>&1)"; status=$?
+    [[ "$status" -eq 2 && "$output" == *'Usage:'* ]] || { printf '  "%s": status %s output %s\n' "$args" "$status" "$output" >&2; failed=1; }
+  done
+  after="$(global_cli_snapshot "$home")"
+  [[ "$before" == "$after" ]] || { printf '  usage error changed a tree\n' >&2; failed=1; }
+  [[ "$(cat "$home/.custom-skills/GLOBAL.md")" == 'old rule' ]] || { printf '  Owner was written\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass global_edit_usage_errors; else fail global_edit_usage_errors; fi
+}
+
+CASE_TESTS+=(
+  test_global_edit_creates_and_links
+  test_global_edit_clean_creation_links_both_paths
+  test_global_edit_overwrites_without_link
+  test_global_edit_if_match_success
+  test_global_edit_if_match_mismatch_refuses
+  test_global_edit_empty_sha_matches_absent_and_empty
+  test_global_edit_empty_stdin_writes_empty_file
+  test_global_edit_symlink_owner_is_refused
+  test_global_edit_directory_owner_is_refused
+  test_global_edit_missing_custom_root_is_refused
+  test_global_edit_creation_without_lock_keeps_file
+  test_global_edit_usage_errors
+)

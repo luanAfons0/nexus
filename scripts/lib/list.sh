@@ -10,7 +10,7 @@ update       Update one installed skill and relink.
 remove       Uninstall one installed skill and relink.
 new          Reserve a custom skill directory.
 list         Show installed, custom, and control skills.
-global       Show the Global Instructions: global show [--json].
+global       Show or replace the Global Instructions: global show [--json], global edit [--if-match <sha256>].
 help         Show this text.
 EOF
 }
