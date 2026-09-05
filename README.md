@@ -512,6 +512,31 @@ content security policy blocks one. To update the renderer by hand:
 4. Run `bash tests/run.sh`; the renderer test reads the version from the
    served file.
 
+### Save and conflicts
+
+"Save changes" and Ctrl+S send the whole editor content to `PUT api/global`
+with the sha256 the page read at open, and the server runs `nexus global
+edit --if-match <sha256>` with the content on standard input. When the file
+was absent, the page sends the sha256 of the empty string, so the first
+save creates the file and runs link; the link output, including any
+foreign entry notice, shows in the Last command panel. On exit 0 a toast
+says `Saved. Commit in ~/.custom-skills.`, the page reads the file again,
+and the kept sha256 is updated. Nexus never runs Git; you commit the
+change yourself.
+
+A conflict is an exit 1 whose message names the expected and the actual
+sha256: the file changed on disk since the page opened it. The page then
+shows a red banner with both hashes, reloads the current file into the
+editor, and moves your text to a read-only "Your unsaved version" panel
+with a Copy button. Nothing is overwritten and nothing is lost, and there
+is no overwrite button: copy what you need, edit again, and save. Any other
+exit 1 shows the CLI message in a banner and keeps your text in the editor.
+
+The page warns before the tab closes with unsaved edits, and Cancel asks
+before it discards them. A request without `Content-Type: application/json`
+is refused with 415 before any CLI child runs, and a body that is not one
+JSON object with `content` and `ifMatch` strings is refused with 400.
+
 ## Troubleshooting
 
 - **Already initialized:** setup is intentionally disabled; use `/nexus-link`,

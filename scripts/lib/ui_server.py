@@ -209,11 +209,43 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return None
         return body
 
+    def put_body(self, keys):
+        """Body of PUT api/global: JSON content type (415), one JSON object
+        with every named key as a string (400). None after refusing."""
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            self.read_body()
+            self.refuse(415, "json")
+            return None
+        raw = self.read_body()
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except ValueError:
+            body = None
+        if not isinstance(body, dict) or any(not isinstance(body.get(key), str) for key in keys):
+            self.refuse(400, "body")
+            return None
+        return body
+
     def do_PUT(self):
         rel = self.guard()
         if rel is None:
             return
-        self.refuse(404, "not found")
+        if rel != "api/global":
+            self.refuse(404, "not found")
+            return
+        body = self.put_body(["content", "ifMatch"])
+        if body is None:
+            return
+        # One mutating command at a time; a second one gets 409.
+        if not STATE.mutation.acquire(blocking=False):
+            self.refuse(409, "busy")
+            return
+        try:
+            envelope = run_cli(["global", "edit", "--if-match", body["ifMatch"]], body["content"])
+        finally:
+            STATE.mutation.release()
+        self.send_json(200, envelope)
 
     def do_POST(self):
         rel = self.guard()

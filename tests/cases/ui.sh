@@ -247,3 +247,108 @@ CASE_TESTS+=(
   test_ui_api_global_absent_and_fault
   test_ui_vendored_renderer_served
 )
+
+# Ticket #31: PUT api/global runs `nexus global edit --if-match` with the
+# body content on standard input.
+
+ui_put_global() {
+  local url="$1" content="$2" if_match="$3"
+  ui_http PUT "${url}api/global" -H 'Content-Type: application/json' \
+    -d "$(jq -c -n --arg content "$content" --arg ifMatch "$if_match" '{content: $content, ifMatch: $ifMatch}')"
+}
+
+ui_save_snapshot() {
+  local home="$1"
+  printf '%s|%s|%s\n' "$(snapshot_tree "$home/.custom-skills")" "$(snapshot_tree "$home/.claude")" "$(snapshot_tree "$home/.codex")"
+}
+
+test_ui_save_creates_and_links() {
+  local failed=0 home response body cli
+  home="$(ui_home ui_save_create)" || { fail ui_save_creates_and_links; return; }
+  write_skill "$home/.agents/skills" alpha
+  write_lock "$home/.nexus/skill-lock.json" alpha
+  cli="$REPO_ROOT/scripts/nexus"
+  ui_start "$home" || failed=1
+
+  response="$(ui_put_global "$UI_URL" $'rule one\n\nrule two\n' e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855)"
+  [[ "$(ui_status "$response")" == 200 ]] || { printf '  create status: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  body="$(ui_body "$response")"
+  jq -e '.exit == 0 and (.stdout | contains("link complete"))' <<<"$body" >/dev/null || { printf '  create envelope:\n%s\n' "$body" >&2; failed=1; }
+  [[ "$(jq -c .command <<<"$body")" == "$(jq -c -n --arg cli "$cli" '[$cli, "global", "edit", "--if-match", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"]')" ]] || { printf '  command: %s\n' "$(jq -c .command <<<"$body")" >&2; failed=1; }
+  [[ "$(cat "$home/.custom-skills/GLOBAL.md")" == $'rule one\n\nrule two' && -f "$home/.custom-skills/GLOBAL.md" && ! -L "$home/.custom-skills/GLOBAL.md" ]] || { printf '  file bytes differ\n' >&2; failed=1; }
+  assert_instruction_link "$home" "$home/.claude/CLAUDE.md" || failed=1
+  assert_instruction_link "$home" "$home/.codex/AGENTS.md" || failed=1
+  ui_stop
+  if (( failed == 0 )); then pass ui_save_creates_and_links; else fail ui_save_creates_and_links; fi
+}
+
+test_ui_save_replaces_without_link() {
+  local failed=0 home response body sha
+  home="$(ui_home ui_save_replace)" || { fail ui_save_replaces_without_link; return; }
+  write_skill "$home/.agents/skills" alpha
+  write_lock "$home/.nexus/skill-lock.json" alpha
+  printf 'old rule\n' >"$home/.custom-skills/GLOBAL.md"
+  printf 'hand written\n' >"$home/.codex/AGENTS.md"
+  sha="$(sha256sum <"$home/.custom-skills/GLOBAL.md" | awk '{print $1}')"
+  ui_start "$home" || failed=1
+
+  response="$(ui_put_global "$UI_URL" 'new rule' "$sha")"
+  [[ "$(ui_status "$response")" == 200 ]] || failed=1
+  body="$(ui_body "$response")"
+  jq -e '.exit == 0 and .stdout == "" and .stderr == ""' <<<"$body" >/dev/null || { printf '  replace envelope:\n%s\n' "$body" >&2; failed=1; }
+  [[ "$(cat "$home/.custom-skills/GLOBAL.md"; printf x)" == 'new rulex' ]] || { printf '  replaced bytes differ\n' >&2; failed=1; }
+  [[ -f "$home/.codex/AGENTS.md" && ! -L "$home/.codex/AGENTS.md" && "$(cat "$home/.codex/AGENTS.md")" == 'hand written' ]] || { printf '  Foreign Entry was touched\n' >&2; failed=1; }
+  [[ ! -e "$home/.claude/CLAUDE.md" && ! -L "$home/.claude/CLAUDE.md" ]] || { printf '  replace ran link\n' >&2; failed=1; }
+  ui_stop
+  if (( failed == 0 )); then pass ui_save_replaces_without_link; else fail ui_save_replaces_without_link; fi
+}
+
+test_ui_save_conflict_keeps_file() {
+  local failed=0 home response body
+  home="$(ui_home ui_save_conflict)" || { fail ui_save_conflict_keeps_file; return; }
+  printf 'current rule\n' >"$home/.custom-skills/GLOBAL.md"
+  ui_start "$home" || failed=1
+
+  response="$(ui_put_global "$UI_URL" 'stale edit' e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855)"
+  [[ "$(ui_status "$response")" == 200 ]] || failed=1
+  body="$(ui_body "$response")"
+  jq -e '.exit == 1 and (.stderr | contains("expected sha256 e3b0c442")) and (has("json") | not)' <<<"$body" >/dev/null || { printf '  conflict envelope:\n%s\n' "$body" >&2; failed=1; }
+  [[ "$(cat "$home/.custom-skills/GLOBAL.md")" == 'current rule' ]] || { printf '  conflict changed the file\n' >&2; failed=1; }
+  ui_stop
+  if (( failed == 0 )); then pass ui_save_conflict_keeps_file; else fail ui_save_conflict_keeps_file; fi
+}
+
+test_ui_save_refuses_bad_requests() {
+  local failed=0 home response before after
+  home="$(ui_home ui_save_bad)" || { fail ui_save_refuses_bad_requests; return; }
+  printf 'current rule\n' >"$home/.custom-skills/GLOBAL.md"
+  before="$(ui_save_snapshot "$home")"
+  ui_start "$home" || failed=1
+
+  response="$(ui_http PUT "${UI_URL}api/global" -H 'Content-Type: text/plain' -d '{"content":"x","ifMatch":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}')"
+  [[ "$(ui_status "$response")" == 415 && "$(ui_body "$response")" == json ]] || { printf '  text/plain: %s\n' "$response" >&2; failed=1; }
+  response="$(ui_http PUT "${UI_URL}api/global" -d '{"content":"x","ifMatch":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}')"
+  [[ "$(ui_status "$response")" == 415 ]] || { printf '  no content type: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  response="$(ui_http PUT "${UI_URL}api/global" -H 'Content-Type: application/json' -d '["x"]')"
+  [[ "$(ui_status "$response")" == 400 && "$(ui_body "$response")" == body ]] || { printf '  array body: %s\n' "$response" >&2; failed=1; }
+  response="$(ui_http PUT "${UI_URL}api/global" -H 'Content-Type: application/json' -d '{"content":"x"}')"
+  [[ "$(ui_status "$response")" == 400 ]] || { printf '  missing ifMatch: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  response="$(ui_http PUT "${UI_URL}api/global" -H 'Content-Type: application/json' -d 'not json')"
+  [[ "$(ui_status "$response")" == 400 ]] || failed=1
+  response="$(ui_http PUT "${UI_URL}api/list" -H 'Content-Type: application/json' -d '{}')"
+  [[ "$(ui_status "$response")" == 404 ]] || { printf '  PUT list: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  response="$(ui_http OPTIONS "${UI_URL}api/global" -H 'Origin: http://evil.example' -H 'Access-Control-Request-Method: PUT')"
+  [[ "$(ui_status "$response")" == 403 ]] || { printf '  preflight answered: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  ui_stop
+  after="$(ui_save_snapshot "$home")"
+  [[ "$before" == "$after" ]] || { printf '  a refused request changed a tree\n' >&2; failed=1; }
+  [[ "$(cat "$home/.custom-skills/GLOBAL.md")" == 'current rule' ]] || failed=1
+  if (( failed == 0 )); then pass ui_save_refuses_bad_requests; else fail ui_save_refuses_bad_requests; fi
+}
+
+CASE_TESTS+=(
+  test_ui_save_creates_and_links
+  test_ui_save_replaces_without_link
+  test_ui_save_conflict_keeps_file
+  test_ui_save_refuses_bad_requests
+)
