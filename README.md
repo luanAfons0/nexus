@@ -46,7 +46,7 @@ Native invocation forms are:
 | Show skills or command help | `/nexus-help` | `$nexus-help` |
 | Menu: list, update, remove, edit global instructions | `/nexus` | `$nexus` |
 
-The equivalent CLI is `~/.nexus/scripts/nexus {setup,link,install,update,remove,new,list,global,help}`.
+The equivalent CLI is `~/.nexus/scripts/nexus {setup,link,install,update,remove,new,list,global,ui,help}`.
 
 ## Setup and recovery
 
@@ -420,8 +420,99 @@ The contract is recorded in
   matching `Origin` when present, and a per-run Run Token in the URL path.
   Mutating requests need a JSON content type.
 
-The command, flags, endpoints, and page behavior are documented here as
-each part ships.
+### Start and stop
+
+```bash
+~/.nexus/scripts/nexus ui
+~/.nexus/scripts/nexus ui --port 8765 --no-open
+```
+
+The server runs in the foreground until Ctrl-C or SIGTERM stops it; on exit
+it kills any CLI child still running. There is no detached mode, no pid
+file, and no `stop` command: the terminal that shows the URL is the one
+place the server lives. The default port is ephemeral, chosen by the
+system; `--port N` binds a fixed port. Exit codes: 0 on a clean stop, 1 when
+the port cannot be bound, when `python3` is missing, or when the `web`
+directory in the Nexus home is absent, and 2 on usage.
+
+The first line on standard output is the handshake line, exactly:
+
+```
+nexus ui: http://127.0.0.1:PORT/t/TOKEN/
+```
+
+`TOKEN` is the Run Token: 32 hex characters from a cryptographic source,
+new on every run, valid only while that run lives. After the handshake line
+the server tries to open the browser with `$BROWSER`, then `xdg-open`,
+`wslview`, and `explorer.exe`, in that order; every failure is silent, so
+the printed URL is always the fallback. `--no-open` skips the attempt.
+
+### Loopback guard
+
+The listener binds `127.0.0.1` only. Every request passes four checks, in
+this order, and the first failure answers 403 with one reason word as the
+body (`peer`, `host`, `origin`, `token`) before any CLI child runs:
+
+1. The peer address is loopback.
+2. `Host` is exactly `127.0.0.1:PORT` or `localhost:PORT`.
+3. When `Origin` is present, it equals `http://` plus that `Host`.
+4. The path starts with `/t/TOKEN/`.
+
+The `Host` check stops DNS rebinding, the `Origin` check stops a page on
+another site from calling the endpoints, and the Run Token makes a guessed
+port useless on its own. Mutating requests also need a JSON content type,
+and the server answers no CORS preflight.
+
+### Static files
+
+The page is served from the `web` directory in the Nexus home, from an
+allowlist of four files: `index.html`, `app.css`, `app.js`, and
+`vendor/marked.min.js`. Any other path is 404, with no directory listing.
+Every response carries `Cache-Control: no-store`; static files also carry
+`Content-Security-Policy: default-src 'self'`, so no script, style, or
+fetch leaves the page origin. The page is one HTML file, one CSS file, and
+one JavaScript file with no build step and no framework.
+
+### Endpoints and envelope
+
+Every endpoint lives under `/t/TOKEN/api/` and is one CLI command:
+
+| Endpoint | Command |
+| --- | --- |
+| `GET api/list` | `nexus list --json` |
+| `GET api/global` | `nexus global show --json` |
+| `PUT api/global` with `{content, ifMatch}` | `nexus global edit --if-match <ifMatch>`, `content` on standard input |
+| `POST api/update` with `{name}` | `nexus update <name>` |
+| `POST api/remove` with `{name}` | `nexus remove <name>` |
+
+Every answer is HTTP 200 with one JSON object: `command` (the argv the
+server ran), `exit`, `stdout`, and `stderr`, plus `json` with the parsed
+standard output when `exit` is 0 and the output parses. A CLI refusal is
+`exit` 1 in the body with the CLI's own message, not an HTTP error, so the
+page shows exactly what the command line shows. HTTP errors exist only for
+the loopback guard (403), an unknown path or method (404), a mutating
+request without `Content-Type: application/json` (415), a body that is not
+a JSON object (400), and a second mutating request while one runs (409).
+
+### Skills table and Last command
+
+The Skills table is `nexus list --json` as rows, in CLI order: name, kind
+as a pill, source, the eight-character hash prefix with the full hash on
+hover, the update date as a local date with the ISO timestamp on hover,
+and actions. The filter box narrows by name only. An installed skill row
+has Update and Remove buttons. A custom skill row says `Custom Skill: git
+pull in ~/.custom-skills, then link`, and a control skill row says
+`Control Skill: never updated or removed`; neither has a button. When the
+lock is absent, an info banner above the table shows the CLI's own line
+and points at `/nexus-setup`, and only custom and control skills are
+listed.
+
+The Last command panel at the bottom of the page shows the exact command
+of the last call, an exit pill, a local timestamp, and standard output
+followed by standard error in red, as preformatted text. It persists until
+the next command. When a call cannot reach the server at all, a red banner
+says `Connection lost. Rerun nexus ui, then nexus list to check.` and the
+page does not retry on its own.
 
 ## Troubleshooting
 
