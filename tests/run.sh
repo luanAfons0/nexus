@@ -1243,7 +1243,7 @@ test_metadata() {
       nexus-help) command='/home/luanh/.nexus/scripts/nexus' ;;
       nexus-update) command='/home/luanh/.nexus/scripts/nexus update' ;;
       nexus-remove) command='/home/luanh/.nexus/scripts/nexus remove' ;;
-      nexus) command='/home/luanh/.nexus/scripts/nexus list --json' ;;
+      nexus) command='/home/luanh/.nexus/scripts/nexus ui' ;;
     esac
     assert_file "skills/$name/SKILL.md" || failed=1
     [[ ! -e "$REPO_ROOT/skills/$name/claude-command.md" ]] || { printf '  unexpected adapter file: %s\n' "$name" >&2; failed=1; }

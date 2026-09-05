@@ -44,7 +44,7 @@ Native invocation forms are:
 | Update one skill | `/nexus-update` | `$nexus-update` |
 | Remove one skill | `/nexus-remove` | `$nexus-remove` |
 | Show skills or command help | `/nexus-help` | `$nexus-help` |
-| Menu: list, update, remove, edit global instructions | `/nexus` | `$nexus` |
+| Open the Web UI: list, update, remove, edit global instructions | `/nexus` | `$nexus` |
 
 The equivalent CLI is `~/.nexus/scripts/nexus {setup,link,install,update,remove,new,list,global,ui,help}`.
 
@@ -358,42 +358,15 @@ exits 2.
 The `nexus-help` skill asks which of these two you want, runs the matching
 read-only command, and reports the result. It never runs a mutating command.
 
-## The nexus menu skill
+## The nexus launcher skill
 
-`/nexus` in Claude and `$nexus` in Codex open one menu: list skills, update
-one installed skill, remove one installed skill, edit the global
-instructions, quit. The menu returns after each action, and it ends on quit
-or on any command that exits non-zero, showing the exact command output so
-you never continue on a broken state.
-
-List runs `nexus list` and reports the table plus the global instructions
-line with the same explanations `nexus-help` gives. Update and remove run
-`nexus list --json` and offer only the installed rows, then run `nexus
-update <name>` or `nexus remove <name>` once, the same commands
-`/nexus-update` and `/nexus-remove` run. A custom or control name is never
-offered; if you type one, the skill explains the right path (`git pull` then
-link for a custom skill, never for a control skill) and runs nothing. Remove
-also asks you to type the name back and runs only when it matches exactly.
-The skill never runs install, setup, or new.
-
-Edit global instructions runs `nexus global show --json`. When the file is
-absent the skill says so and asks for the first content; when it is present
-the skill shows the content and asks what to change. The agent then produces
-the full new content, shows a unified diff, and asks for approval. Nothing
-is written before you approve. On approval the full content is piped to
-`nexus global edit --if-match <sha256 from show>` (the sha256 of the empty
-string when the file was absent); the agent never writes `GLOBAL.md` with
-its own file tools, so the same preflight rules apply in chat as on the
-command line. The result is reported, link notices from a first creation
-are shown, and on success the skill reminds you to commit in
-`~/.custom-skills`. A sha256 mismatch means the file changed since it was
-read: the skill runs show again and starts the edit over. The menu returns
-after the edit.
-
-The chat menu is the first front for this editor. The Web UI replaces it
-when `nexus ui` ships: `/nexus` then becomes a launcher that starts the
-server and prints the URL, and the menu text is deleted. See "Web UI"
-below.
+`/nexus` in Claude and `$nexus` in Codex start the Web UI: the skill runs
+`nexus ui` in the background of the chat's shell, prints the handshake
+line with the URL, and ends. The printed URL is the contract. The server
+tries to open a browser on its own, but from an agent sandbox it often
+cannot, so open the URL by hand. The skill never runs install, setup,
+link, update, remove, or global itself; the page does those through the
+same CLI, so the same refusals apply. The former chat menu is gone.
 
 ## Web UI
 
@@ -602,6 +575,22 @@ which the tests use with a short value.
 - **Retained temporary/residue paths:** read the command's exact path and
   recovery message first. Keep a copy until the situation is understood, then
   correct the cause before rerunning.
+- **`nexus ui` exits 1 at start:** the port from `--port N` is in use, or
+  `python3` is missing, or `~/.nexus/web` is absent. Pick another port or
+  omit `--port` for an ephemeral one.
+- **The page says "Connection lost":** the server stopped or the terminal
+  that ran it closed. Rerun `nexus ui`, open the new URL (the Run Token
+  changed), and run `nexus list` to check the state.
+- **403 with `token`, `host`, or `origin`:** the URL lacks the current Run
+  Token, or the request did not come from the page itself. Use the exact
+  URL from the handshake line; a bookmark from an earlier run is stale.
+- **The browser did not open:** the printed URL is the fallback. Copy it
+  from the handshake line; set `$BROWSER` to change the opener.
+- **"Not saved. GLOBAL.md changed on disk":** the file changed after the
+  editor read it. Your text is kept in the "Your unsaved version" panel;
+  copy it, apply it to the reloaded file, and save again.
+- **Another command is still running (409):** one upstream command at a
+  time. Wait for the Last command panel to show its result, then retry.
 
 ## Adding another agent
 
