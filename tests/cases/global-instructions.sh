@@ -129,3 +129,111 @@ CASE_TESTS+=(
   test_global_setup_ends_with_links
   test_global_bootstrap_never_links_instructions
 )
+
+# Ticket #9: legal states are notices with exit 0.
+
+test_global_absent_owner_is_a_notice() {
+  local failed=0 home output status
+  home="$(global_home global_absent_owner)"
+  printf 'hand written\n' >"$home/.claude/CLAUDE.md"
+
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '%s\n' "$output" >&2; failed=1; }
+  [[ "$output" == *"global instructions are absent: $home/.custom-skills/GLOBAL.md"* ]] || {
+    printf '  missing absent-owner notice:\n%s\n' "$output" >&2; failed=1;
+  }
+  [[ "$(grep -c 'global instructions are absent' <<<"$output")" -eq 1 ]] || { printf '  notice printed more than once\n' >&2; failed=1; }
+  [[ "$output" != *error* ]] || { printf '  unexpected error output\n' >&2; failed=1; }
+  [[ -f "$home/.claude/CLAUDE.md" && ! -L "$home/.claude/CLAUDE.md" && "$(cat "$home/.claude/CLAUDE.md")" == 'hand written' ]] || {
+    printf '  physical CLAUDE.md was not preserved byte-identical\n' >&2; failed=1;
+  }
+  [[ ! -e "$home/.codex/AGENTS.md" && ! -L "$home/.codex/AGENTS.md" ]] || failed=1
+  assert_link_to "$home/.claude/skills/mine" "$home/.custom-skills/mine" || failed=1
+  assert_link_to "$home/.codex/skills/installed" "$home/.agents/skills/installed" || failed=1
+  if (( failed == 0 )); then pass global_absent_owner_is_a_notice; else fail global_absent_owner_is_a_notice; fi
+}
+
+test_global_absent_owner_removes_stale_link_only() {
+  local failed=0 home output status
+  home="$(global_home global_absent_stale)"
+  printf 'rule one\n' >"$home/.custom-skills/GLOBAL.md"
+  run_nexus "$home" link >/dev/null 2>&1 || failed=1
+  assert_instruction_link "$home" "$home/.claude/CLAUDE.md" || failed=1
+  rm -- "$home/.custom-skills/GLOBAL.md"
+  rm -- "$home/.codex/AGENTS.md"
+  ln -s -- /unrelated/AGENTS.md "$home/.codex/AGENTS.md"
+
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '%s\n' "$output" >&2; failed=1; }
+  [[ ! -e "$home/.claude/CLAUDE.md" && ! -L "$home/.claude/CLAUDE.md" ]] || { printf '  dangling Managed Link was not removed\n' >&2; failed=1; }
+  [[ "$output" == *"removed stale managed link: $home/.claude/CLAUDE.md"* ]] || { printf '  missing stale removal line\n' >&2; failed=1; }
+  [[ -L "$home/.codex/AGENTS.md" && "$(readlink -- "$home/.codex/AGENTS.md")" == /unrelated/AGENTS.md ]] || {
+    printf '  unrelated symlink was not preserved\n' >&2; failed=1;
+  }
+  [[ "$output" != *"$home/.codex/AGENTS.md"* ]] || { printf '  unexpected per-path notice for the unrelated symlink\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass global_absent_owner_removes_stale_link_only; else fail global_absent_owner_removes_stale_link_only; fi
+}
+
+test_global_foreign_file_is_preserved_with_hint() {
+  local failed=0 home output status
+  home="$(global_home global_foreign_file)"
+  printf 'rule one\n' >"$home/.custom-skills/GLOBAL.md"
+  printf 'hand written\n' >"$home/.claude/CLAUDE.md"
+
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '%s\n' "$output" >&2; failed=1; }
+  [[ "$output" == *"foreign entry at $home/.claude/CLAUDE.md"* ]] || { printf '  missing foreign notice:\n%s\n' "$output" >&2; failed=1; }
+  [[ "$output" == *"mv $home/.claude/CLAUDE.md $home/.custom-skills/GLOBAL.md"* ]] || { printf '  missing move hint\n' >&2; failed=1; }
+  [[ "$output" != *error* ]] || { printf '  unexpected error output\n' >&2; failed=1; }
+  [[ -f "$home/.claude/CLAUDE.md" && ! -L "$home/.claude/CLAUDE.md" && "$(cat "$home/.claude/CLAUDE.md")" == 'hand written' ]] || {
+    printf '  physical CLAUDE.md was not preserved\n' >&2; failed=1;
+  }
+  assert_instruction_link "$home" "$home/.codex/AGENTS.md" || failed=1
+  [[ -z "$(find "$home/.claude" -maxdepth 1 -name '.nexus-*' -print -quit)" ]] || { printf '  staging residue left in the Agent Home\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass global_foreign_file_is_preserved_with_hint; else fail global_foreign_file_is_preserved_with_hint; fi
+}
+
+test_global_foreign_symlink_is_preserved_with_hint() {
+  local failed=0 home output status
+  home="$(global_home global_foreign_symlink)"
+  printf 'rule one\n' >"$home/.custom-skills/GLOBAL.md"
+  ln -s -- /unrelated/AGENTS.md "$home/.codex/AGENTS.md"
+
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '%s\n' "$output" >&2; failed=1; }
+  [[ "$output" == *"foreign entry at $home/.codex/AGENTS.md"* && "$output" == *"mv $home/.codex/AGENTS.md $home/.custom-skills/GLOBAL.md"* ]] || {
+    printf '  missing foreign notice for the unrelated symlink:\n%s\n' "$output" >&2; failed=1;
+  }
+  [[ -L "$home/.codex/AGENTS.md" && "$(readlink -- "$home/.codex/AGENTS.md")" == /unrelated/AGENTS.md ]] || {
+    printf '  unrelated symlink was not preserved\n' >&2; failed=1;
+  }
+  assert_instruction_link "$home" "$home/.claude/CLAUDE.md" || failed=1
+  if (( failed == 0 )); then pass global_foreign_symlink_is_preserved_with_hint; else fail global_foreign_symlink_is_preserved_with_hint; fi
+}
+
+# Skill links create the Native Skill Roots first (put_link creates the
+# parent), so by the time the Instruction Paths are reconciled the Agent Home
+# exists. This case fixes the reachable contract: an Agent Home that is absent
+# before link is not an error, the Claude Instruction Path is still linked,
+# and no physical file appears at the Codex Instruction Path.
+test_global_absent_agent_home_is_not_an_error() {
+  local failed=0 home output status
+  home="$(global_home global_no_codex)"
+  printf 'rule one\n' >"$home/.custom-skills/GLOBAL.md"
+  rm -rf -- "$home/.codex"
+
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '%s\n' "$output" >&2; failed=1; }
+  [[ "$output" != *error* ]] || { printf '  unexpected error output\n' >&2; failed=1; }
+  assert_instruction_link "$home" "$home/.claude/CLAUDE.md" || failed=1
+  [[ ! -e "$home/.codex/AGENTS.md" || -L "$home/.codex/AGENTS.md" ]] || { printf '  physical file at the Codex Instruction Path\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass global_absent_agent_home_is_not_an_error; else fail global_absent_agent_home_is_not_an_error; fi
+}
+
+CASE_TESTS+=(
+  test_global_absent_owner_is_a_notice
+  test_global_absent_owner_removes_stale_link_only
+  test_global_foreign_file_is_preserved_with_hint
+  test_global_foreign_symlink_is_preserved_with_hint
+  test_global_absent_agent_home_is_not_an_error
+)

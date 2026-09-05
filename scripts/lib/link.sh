@@ -59,29 +59,54 @@ remove_missing_managed_link() {
 
 # The Global Instructions are owned by GLOBAL.md at the top of the Custom
 # Root. Each Instruction Path becomes a relative Managed Link to that file.
-# A Foreign Entry at an Instruction Path is preserved and only that link is
-# skipped; it is deliberately not a collision (ADR 0003). Nexus never creates
-# an Agent Home, so an absent one skips its Instruction Path.
+# Three states are legal and end in a notice, not an error (ADR 0003): the
+# Owner file is absent, a Foreign Entry sits at an Instruction Path, or the
+# Agent Home is absent. A Foreign Entry is preserved and only that link is
+# skipped; it is deliberately not a collision. Nexus never creates an Agent
+# Home and never writes to the Custom Root.
 global_instructions_present() {
   [[ -f "$GLOBAL_INSTRUCTIONS" && ! -L "$GLOBAL_INSTRUCTIONS" ]]
 }
 
-link_instruction_path() {
-  local path="$1" home
+remove_stale_instruction_link() {
+  local path="$1"
+  [[ -L "$path" ]] || return 0
+  is_managed_link "$path" || return 0
+  if rm -- "$path"; then
+    info "removed stale managed link: $path"
+    return 0
+  fi
+  error "cannot remove stale managed link: $path"
+  return 1
+}
+
+reconcile_instruction_path() {
+  local path="$1" present="$2" home
   home="$(dirname -- "$path")"
-  [[ -d "$home" ]] || return 0
-  if [[ -L "$path" ]]; then
-    is_managed_link "$path" || return 0
-  elif [[ -e "$path" ]]; then
+  if [[ ! -d "$home" ]]; then
+    info "skipped $path: agent home is absent: $home"
+    return 0
+  fi
+  if [[ "$present" != true ]]; then
+    remove_stale_instruction_link "$path"
+    return
+  fi
+  if { [[ -L "$path" ]] && ! is_managed_link "$path"; } || { [[ ! -L "$path" && -e "$path" ]]; }; then
+    info "foreign entry at $path: preserved; to manage it, run: mv $path $GLOBAL_INSTRUCTIONS, then rerun link"
     return 0
   fi
   put_link "$GLOBAL_INSTRUCTIONS" "$path" false
 }
 
 link_instruction_paths() {
-  global_instructions_present || return 0
-  link_instruction_path "$CLAUDE_INSTRUCTIONS" || :
-  link_instruction_path "$CODEX_INSTRUCTIONS" || :
+  local present=false
+  if global_instructions_present; then
+    present=true
+  else
+    info "global instructions are absent: $GLOBAL_INSTRUCTIONS (create it and rerun link to link the Instruction Paths)"
+  fi
+  reconcile_instruction_path "$CLAUDE_INSTRUCTIONS" "$present" || :
+  reconcile_instruction_path "$CODEX_INSTRUCTIONS" "$present" || :
   return 0
 }
 
