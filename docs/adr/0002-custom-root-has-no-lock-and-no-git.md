@@ -17,8 +17,10 @@ repository for the user.
 The directory listing is the manifest. Every visible subdirectory of the
 custom root must be a valid custom skill with a real `SKILL.md`; dot entries
 and top-level files are ignored; anything else is a hard error. Nexus reads
-the custom root and never writes to it, never deletes from it, and never runs
-Git in it. Custom skills carry no version, hash, or source in `nexus list`.
+the custom root, never deletes from it, and never runs Git in it. Nexus writes
+exactly one path in it, the Global Instructions file `GLOBAL.md`, under the
+rules of ADR 0004; it never writes a Custom Skill directory. Custom skills
+carry no version, hash, or source in `nexus list`.
 
 ## Consequences
 

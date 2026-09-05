@@ -101,9 +101,17 @@ them one owner: the regular file `~/.custom-skills/GLOBAL.md` at the top of
 the custom root. Link places a relative managed link at each instruction path
 that resolves to that file, so one edit reaches both agents and both read
 byte-identical global instructions. The file is versioned in the custom root
-Git repository you already control. Nexus never writes to, moves, or deletes
-`GLOBAL.md`. The decision is recorded in
+Git repository you already control. The decision is recorded in
 `docs/adr/0003-global-instructions-are-a-managed-link-into-the-custom-root.md`.
+
+`GLOBAL.md` is the one path in the custom root that Nexus writes. `nexus
+global edit` replaces the whole file from standard input with a temporary
+file in the custom root plus a rename, so the file is never half written.
+Nexus never creates the custom root, never writes any other entry in it,
+never moves or deletes `GLOBAL.md`, and never runs Git in it; you commit the
+change yourself. A refused write leaves the custom root byte-identical. The
+exception is recorded in
+`docs/adr/0004-nexus-writes-only-global-md-in-the-custom-root.md`.
 
 The owner is named `GLOBAL.md`, not `AGENTS.md`, because Codex loads an
 `AGENTS.md` found in the working tree as project instructions. A file named
@@ -167,8 +175,10 @@ only the control skills and never touches an instruction path.
 ## Custom skills
 
 Custom skills are owned by the custom root `~/.custom-skills`, a Git
-repository you control. Nexus does not use Git: it reads the directory only.
-After a `git pull`, run link.
+repository you control. Nexus does not use Git. It reads the directory and
+writes exactly one path in it, the global instructions file `GLOBAL.md` (see
+"Global instructions"). It never writes, moves, or deletes a custom skill
+directory. After a `git pull`, run link.
 
 There is no custom lock file. The directory listing is the manifest. Nexus
 reads every visible subdirectory of `~/.custom-skills`, and each one must have
