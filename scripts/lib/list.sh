@@ -32,6 +32,7 @@ list_skills() {
   fi
 
   custom_root_preflight || return 1
+  global_instructions_preflight || return 1
   collect_custom_names custom_names || return 1
 
   for name in "${lock_names[@]}"; do

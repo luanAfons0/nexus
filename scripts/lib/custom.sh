@@ -7,6 +7,27 @@ custom_root_preflight() {
   return 0
 }
 
+# The Owner of the Global Instructions must be a regular file (empty allowed)
+# or absent. A symlink or a directory named GLOBAL.md is a configuration
+# fault of the same class as a malformed custom skill. The Custom Skill scan
+# keeps skipping top-level regular files, so this is a separate step.
+global_instructions_preflight() {
+  [[ -e "$GLOBAL_INSTRUCTIONS" || -L "$GLOBAL_INSTRUCTIONS" ]] || return 0
+  if [[ -L "$GLOBAL_INSTRUCTIONS" ]]; then
+    error "global instructions must be a regular file, not a symlink: $GLOBAL_INSTRUCTIONS"
+    return 1
+  fi
+  if [[ -d "$GLOBAL_INSTRUCTIONS" ]]; then
+    error "global instructions must be a regular file, not a directory: $GLOBAL_INSTRUCTIONS"
+    return 1
+  fi
+  if [[ ! -f "$GLOBAL_INSTRUCTIONS" ]]; then
+    error "global instructions must be a regular file: $GLOBAL_INSTRUCTIONS"
+    return 1
+  fi
+  return 0
+}
+
 collect_custom_names() {
   local output_array_name="$1" child name failed=0 nullglob_setting
   local -n output_array="$output_array_name"

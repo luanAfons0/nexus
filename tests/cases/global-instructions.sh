@@ -237,3 +237,60 @@ CASE_TESTS+=(
   test_global_foreign_symlink_is_preserved_with_hint
   test_global_absent_agent_home_is_not_an_error
 )
+
+# Ticket #10: an invalid GLOBAL.md is a preflight fault that changes nothing.
+
+global_snapshot() {
+  local home="$1"
+  printf '%s|%s|%s|%s\n' \
+    "$(snapshot_tree "$home/.claude")" "$(snapshot_tree "$home/.codex")" \
+    "$(snapshot_tree "$home/.agents")" "$(snapshot_tree "$home/.custom-skills")"
+}
+
+# $1 kind label, $2 command that creates the invalid Owner in the fake home.
+global_invalid_owner_case() {
+  local kind="$1" make="$2" failed=0 home output status before after
+  home="$(global_home "global_invalid_$kind")"
+  printf 'hand written\n' >"$home/.claude/CLAUDE.md"
+  ln -s -- ../.custom-skills/mine/SKILL.md "$home/.codex/AGENTS.md"
+  eval "$make"
+  before="$(global_snapshot "$home")"
+
+  output="$(run_nexus "$home" link 2>&1)"; status=$?
+  after="$(global_snapshot "$home")"
+  [[ "$status" -eq 1 ]] || { printf '  %s: link status %s\n' "$kind" "$status" >&2; failed=1; }
+  [[ "$output" == *"error: global instructions must be a regular file"* && "$output" == *"$home/.custom-skills/GLOBAL.md"* ]] || {
+    printf '  %s: missing preflight error:\n%s\n' "$kind" "$output" >&2; failed=1;
+  }
+  [[ "$output" == *'no changes were made'* ]] || { printf '  %s: missing no-change line\n' "$kind" >&2; failed=1; }
+  [[ "$before" == "$after" ]] || { printf '  %s: link mutated a root or an Instruction Path\n' "$kind" >&2; failed=1; }
+  [[ ! -e "$home/.claude/skills/mine" && ! -e "$home/.claude/skills/nexus-link" ]] || { printf '  %s: skill links were created\n' "$kind" >&2; failed=1; }
+
+  output="$(run_nexus "$home" list 2>&1)"; status=$?
+  after="$(global_snapshot "$home")"
+  [[ "$status" -ne 0 ]] || { printf '  %s: list status %s\n' "$kind" "$status" >&2; failed=1; }
+  [[ "$output" == *"error: global instructions must be a regular file"* ]] || { printf '  %s: list missing preflight error\n' "$kind" >&2; failed=1; }
+  [[ "$before" == "$after" ]] || { printf '  %s: list mutated a tree\n' "$kind" >&2; failed=1; }
+  return "$failed"
+}
+
+test_global_owner_symlink_is_a_fault() {
+  if global_invalid_owner_case symlink 'ln -s -- mine/SKILL.md "$home/.custom-skills/GLOBAL.md"'; then
+    pass global_owner_symlink_is_a_fault
+  else
+    fail global_owner_symlink_is_a_fault
+  fi
+}
+
+test_global_owner_directory_is_a_fault() {
+  if global_invalid_owner_case directory 'mkdir -- "$home/.custom-skills/GLOBAL.md"'; then
+    pass global_owner_directory_is_a_fault
+  else
+    fail global_owner_directory_is_a_fault
+  fi
+}
+
+CASE_TESTS+=(
+  test_global_owner_symlink_is_a_fault
+  test_global_owner_directory_is_a_fault
+)

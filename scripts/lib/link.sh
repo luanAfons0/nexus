@@ -120,6 +120,7 @@ link_all() {
   # configuration fault, not a per-link failure, so nothing is mutated until
   # every check passes.
   custom_root_preflight || preflight_failed=1
+  global_instructions_preflight || preflight_failed=1
   collect_custom_names custom_names || preflight_failed=1
   custom_canonical_preflight || preflight_failed=1
   custom_collision_preflight lock_names custom_names || preflight_failed=1
