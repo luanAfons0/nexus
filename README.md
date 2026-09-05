@@ -553,6 +553,32 @@ content security policy blocks one. To update the renderer by hand:
 4. Run `bash tests/run.sh`; the renderer test reads the version from the
    served file.
 
+### Update and remove
+
+Update and Remove on an installed skill row run `nexus update <name>` and
+`nexus remove <name>` through `POST api/update` and `POST api/remove`
+with the body `{"name": "<name>"}`. The name is one argv element and never
+goes through a shell; the CLI's own name checks are the only validation,
+so a refused name comes back as the CLI's exit code and message in the
+envelope. Custom and control rows have no button.
+
+Update runs at once. The row shows a spinner and every other mutation
+button is disabled until the response; the Last command panel shows the
+result; then the page refetches `list` and `global`. Remove first opens a
+dialog that names the command, explains that upstream deletes the skill
+under the canonical root and that Nexus then publishes the lock and links,
+and asks you to type the skill name. The Remove button in the dialog is
+enabled only when the typed text equals the name byte for byte; Esc or
+Cancel closes the dialog without running anything.
+
+The server runs one mutating command at a time. A second mutating request
+while one runs is answered 409, and the page says another command is
+still running. Reads are not locked. A CLI child that runs longer than 300
+seconds is killed together with its process group; the envelope then
+carries exit 124 and a standard error line that names the timeout. The
+environment variable `NEXUS_UI_TIMEOUT` (seconds) overrides the limit,
+which the tests use with a short value.
+
 ## Troubleshooting
 
 - **Already initialized:** setup is intentionally disabled; use `/nexus-link`,

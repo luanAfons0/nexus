@@ -147,8 +147,8 @@ function localDate(iso) {
 function skillActions(row) {
   if (row.kind === 'installed') {
     return el('div', { class: 'actions' }, [
-      el('button', { class: 'btn sm', type: 'button', 'data-action': 'update', 'data-name': row.name, disabled: '', text: 'Update' }),
-      el('button', { class: 'btn sm', type: 'button', 'data-action': 'remove', 'data-name': row.name, disabled: '', text: 'Remove' }),
+      el('button', { class: 'btn sm', type: 'button', 'data-action': 'update', 'data-name': row.name, text: 'Update' }),
+      el('button', { class: 'btn sm', type: 'button', 'data-action': 'remove', 'data-name': row.name, text: 'Remove' }),
     ]);
   }
   if (row.kind === 'custom') {
@@ -460,3 +460,102 @@ async function loadGlobal() {
 }
 
 loadGlobal();
+
+// --- update and remove ------------------------------------------------------
+
+// One mutation at a time on the page as on the server: while a command
+// runs, every mutation button is disabled and the row shows a spinner.
+const mutationState = { running: null };
+
+function setMutationButtons(enabled) {
+  for (const button of document.querySelectorAll('#skills-body button[data-action]')) {
+    button.disabled = !enabled;
+  }
+  const save = document.getElementById('save-button');
+  if (save && !enabled) save.disabled = true;
+}
+
+function showRowSpinner(name, label) {
+  const row = document.querySelector('#skills-body tr[data-name="' + CSS.escape(name) + '"]');
+  if (!row) return;
+  const button = row.querySelector('button[data-action="' + label.toLowerCase() + '"]');
+  if (button) replaceChildren(button, [el('span', { class: 'spin' }), label === 'update' ? 'Updating' : 'Removing']);
+}
+
+async function refreshAll() {
+  await loadSkills();
+  await loadGlobal();
+}
+
+// Run update or remove for one Installed Skill through the CLI, then
+// refetch list and global so the page never shows stale state.
+async function runMutation(action, name) {
+  if (mutationState.running) return;
+  mutationState.running = action + ' ' + name;
+  setMutationButtons(false);
+  showRowSpinner(name, action);
+  clearBanner('mutation');
+  try {
+    const envelope = await api(action, { method: 'POST', body: { name } });
+    if (envelope.exit !== 0) {
+      banner('mutation', 'err', [
+        el('strong', { text: 'nexus ' + action + ' ' + name + ' failed (exit ' + envelope.exit + ').' }),
+        ' The exact output is in Last command.',
+      ]);
+    } else {
+      toast([action === 'update' ? 'Updated ' : 'Removed ', el('code', { text: name }), '.']);
+    }
+  } catch (error) {
+    if (error.status === 409) {
+      banner('mutation', 'warn', [el('strong', { text: 'Another command is still running.' }), ' Wait for it, then try again.']);
+    } else if (error.status) {
+      banner('mutation', 'err', [el('strong', { text: 'Request refused: HTTP ' + error.status + ' ' + (error.text || '') })]);
+    }
+  } finally {
+    mutationState.running = null;
+  }
+  await refreshAll();
+  setMutationButtons(true);
+}
+
+function openRemoveDialog(name) {
+  const input = el('input', { class: 'input mono', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: name });
+  const confirmButton = el('button', { class: 'btn dng', type: 'button', disabled: '', text: 'Remove ' + name });
+  const dialog = el('dialog', { class: 'modal' }, [
+    el('div', { class: 'modal-hd', text: 'Remove Installed Skill' }),
+    el('div', { class: 'modal-body' }, [
+      el('div', null, [
+        'This runs ', el('code', { text: 'nexus remove ' + name }), '. Upstream ',
+        el('code', { text: 'npx skills remove' }),
+        ' deletes the skill under the Canonical Root, then Nexus publishes the lock and links. Foreign Entries and other skills are left alone.',
+      ]),
+      el('div', { class: 'hint' }, ['Type ', el('span', { class: 'mono strong', text: name }), ' to confirm.']),
+      input,
+    ]),
+    el('div', { class: 'modal-ft' }, [
+      el('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: () => dialog.close() }),
+      confirmButton,
+    ]),
+  ]);
+  input.addEventListener('input', () => { confirmButton.disabled = input.value !== name; });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && input.value === name) confirmButton.click();
+  });
+  confirmButton.addEventListener('click', () => {
+    if (input.value !== name) return;
+    dialog.close();
+    runMutation('remove', name);
+  });
+  dialog.addEventListener('close', () => dialog.remove());
+  document.body.append(dialog);
+  dialog.showModal();
+  input.focus();
+}
+
+document.getElementById('skills-body').addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-action]');
+  if (!button || button.disabled) return;
+  const { action, name } = button.dataset;
+  if (action === 'update') runMutation('update', name);
+  else if (action === 'remove') openRemoveDialog(name);
+});
