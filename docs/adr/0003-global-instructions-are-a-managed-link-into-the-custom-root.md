@@ -37,7 +37,9 @@ a fault, the same as a malformed custom skill.
 - One edit to `GLOBAL.md` reaches both agents at once; there is no drift and
   no "which side changed" logic.
 - The Custom Root now owns two things: Custom Skills and the Global
-  Instructions. Nexus still never writes to it or runs Git in it.
+  Instructions. Nexus still never runs Git in it. Nexus writes exactly one
+  path in it, `GLOBAL.md`, under the rules of ADR 0004, and never a Custom
+  Skill directory.
 - Migration is the user's job: move the existing `CLAUDE.md` to `GLOBAL.md`,
   make its wording agent-neutral, then run link.
 - Nexus never creates an Agent Home; an absent `~/.codex` skips that

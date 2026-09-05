@@ -56,8 +56,10 @@ _Avoid_: agents root, upstream root
 
 **Custom Root**:
 `~/.custom-skills`, the Git repository the user controls that owns Custom
-Skills and the Global Instructions. Nexus reads it and never writes to it or
-runs Git in it.
+Skills and the Global Instructions. Nexus reads it and never runs Git in it.
+Nexus writes exactly one path in it, the Global Instructions file
+`GLOBAL.md`, and never writes, moves, or deletes a Custom Skill directory
+(ADR 0004).
 _Avoid_: custom skills repo, private skills folder
 
 **Agent Home**:
@@ -94,7 +96,9 @@ _Avoid_: broken link, dangling link, orphan
 **Global Instructions**:
 The one document of user rules that every agent loads at the start of every
 session, regardless of project. It is owned by the Custom Root as
-`~/.custom-skills/GLOBAL.md` and is byte-identical for all agents.
+`~/.custom-skills/GLOBAL.md` and is byte-identical for all agents. It is the
+one path in the Custom Root that Nexus writes: `nexus global edit` replaces
+the whole file atomically, and the user commits the change (ADR 0004).
 _Avoid_: global rules, rules, memory, system prompt, CLAUDE.md, AGENTS.md
 
 **Instruction Path**:
