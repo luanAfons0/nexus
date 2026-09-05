@@ -14,6 +14,7 @@ _nexus_source_libraries() {
   source "$SCRIPT_DIR/lib/update.sh"
   source "$SCRIPT_DIR/lib/remove.sh"
   source "$SCRIPT_DIR/lib/list.sh"
+  source "$SCRIPT_DIR/lib/global.sh"
 }
 _nexus_source_libraries
 unset -f _nexus_source_libraries
@@ -45,6 +46,8 @@ main() {
     link)
       [[ "$#" -eq 1 ]] || { usage >&2; return 2; }
       link_all false ;;
+    global)
+      global_command "${@:2}" ;;
     help|-h|--help)
       [[ "$#" -eq 1 ]] || { usage >&2; return 2; }
       help_text ;;

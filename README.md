@@ -45,7 +45,7 @@ Native invocation forms are:
 | Remove one skill | `/nexus-remove` | `$nexus-remove` |
 | Show skills or command help | `/nexus-help` | `$nexus-help` |
 
-The equivalent CLI is `~/.nexus/scripts/nexus {setup,link,install,update,remove,new,list,help}`.
+The equivalent CLI is `~/.nexus/scripts/nexus {setup,link,install,update,remove,new,list,global,help}`.
 
 ## Setup and recovery
 
@@ -302,7 +302,16 @@ validation error and exits 1.
 
 `nexus help` (also `-h` and `--help`) prints the usage line and one line per
 subcommand: `bootstrap`, `setup`, `link`, `install`, `update`, `remove`,
-`new`, `list`, and `help`.
+`new`, `list`, `global`, and `help`.
+
+`nexus global show` prints the global instructions as-is to standard output,
+and nothing when `GLOBAL.md` is absent; both exit 0. `nexus global show
+--json` prints one object with the owner path, `present`, `sha256` of the
+content (null when absent), `content` (null when absent), and the `claude`
+and `codex` instruction path states using the same four words as `list`. A
+symlink or directory named `GLOBAL.md`, or an absent custom root, is the same
+fault as in link preflight and exits 1. An unknown flag or an extra argument
+exits 2.
 
 The `nexus-help` skill asks which of these two you want, runs the matching
 read-only command, and reports the result. It never runs a mutating command.

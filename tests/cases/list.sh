@@ -94,11 +94,11 @@ test_help_content() {
   for alias in help -h --help; do
     output="$(run_nexus "$home" "$alias")"; status=$?
     [[ "$status" -eq 0 ]] || { printf '  %s: unexpected status %s\n' "$alias" "$status" >&2; failed=1; }
-    [[ "$output" == *'Usage: nexus <bootstrap|setup|link|install|update|remove|new|list|help>'* ]] || {
+    [[ "$output" == *'Usage: nexus <bootstrap|setup|link|install|update|remove|new|list|global|help>'* ]] || {
       printf '  %s: missing usage line\n' "$alias" >&2; failed=1;
     }
     local sub
-    for sub in bootstrap setup link install update remove new list help; do
+    for sub in bootstrap setup link install update remove new list global help; do
       [[ "$output" == *"$sub"* ]] || { printf '  %s: missing subcommand %s\n' "$alias" "$sub" >&2; failed=1; }
     done
   done
