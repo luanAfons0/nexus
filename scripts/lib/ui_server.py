@@ -28,12 +28,18 @@ STATIC = {
     "vendor/marked.min.js": "text/javascript; charset=utf-8",
 }
 
-# name -> (method, CLI argv tail, reads stdin from body key or None)
-API = {
-    "list": ("GET", ["list", "--json"]),
-    "global": ("GET", ["global", "show", "--json"]),
+# Read endpoints: name -> CLI argv tail. Reads are not locked.
+READS = {
+    "list": ["list", "--json"],
+    "global": ["global", "show", "--json"],
 }
-MUTATIONS = {"global", "update", "remove"}
+# Mutating endpoints: (method, name) -> CLI subcommand. The body key `name`
+# is passed as one argv element, never through a shell; the CLI's own name
+# checks are the only validation.
+MUTATIONS = {
+    ("POST", "update"): "update",
+    ("POST", "remove"): "remove",
+}
 
 
 class State:
@@ -180,8 +186,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if rel.startswith("api/"):
             name = rel[4:]
-            if name in API and API[name][0] == "GET":
-                self.send_json(200, run_cli(API[name][1]))
+            if name in READS:
+                self.send_json(200, run_cli(READS[name]))
                 return
             self.refuse(404, "not found")
             return
@@ -190,32 +196,50 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_HEAD(self):
         self.do_GET()
 
-    def mutate(self, rel, expected):
-        """Common path of PUT and POST: content type, body, one at a time."""
-        if rel != expected:
-            self.refuse(404, "not found")
-            return None
+    def json_body(self, keys):
+        """Body of a mutating request: JSON content type (415), one JSON
+        object with every named key as a string (400). None after refusing."""
         content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
         if content_type != "application/json":
+            self.read_body()
             self.refuse(415, "json")
             return None
         raw = self.read_body()
         try:
             body = json.loads(raw.decode("utf-8"))
-            if not isinstance(body, dict):
-                raise ValueError("not an object")
         except ValueError:
+            body = None
+        if not isinstance(body, dict) or any(not isinstance(body.get(key), str) for key in keys):
             self.refuse(400, "body")
             return None
         return body
 
-    def do_PUT(self):
+    def mutate(self, tail, stdin_text=None):
+        """Run one mutating CLI command, one at a time: 409 while another
+        runs. Reads are never locked."""
+        if not STATE.mutation.acquire(blocking=False):
+            self.refuse(409, "busy")
+            return
+        try:
+            envelope = run_cli(tail, stdin_text)
+        finally:
+            STATE.mutation.release()
+        self.send_json(200, envelope)
+
+    def do_POST(self):
         rel = self.guard()
         if rel is None:
             return
-        self.refuse(404, "not found")
+        subcommand = MUTATIONS.get(("POST", rel[4:])) if rel.startswith("api/") else None
+        if subcommand is None:
+            self.refuse(404, "not found")
+            return
+        body = self.json_body(["name"])
+        if body is None:
+            return
+        self.mutate([subcommand, body["name"]])
 
-    def do_POST(self):
+    def do_PUT(self):
         rel = self.guard()
         if rel is None:
             return
