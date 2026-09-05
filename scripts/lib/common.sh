@@ -6,6 +6,9 @@ nexus_init() {
   CUSTOM_WORKSPACES="$CUSTOM_ROOT/.workspaces"
   CLAUDE_SKILLS="$HOME/.claude/skills"
   CODEX_SKILLS="$HOME/.codex/skills"
+  CLAUDE_INSTRUCTIONS="$HOME/.claude/CLAUDE.md"
+  CODEX_INSTRUCTIONS="$HOME/.codex/AGENTS.md"
+  GLOBAL_INSTRUCTIONS="$CUSTOM_ROOT/GLOBAL.md"
   declare -g -a CONTROL_SKILLS=(nexus-setup nexus-link nexus-install nexus-new nexus-help nexus-update nexus-remove)
   ERRORS=0
   CANONICAL_CURRENT=''

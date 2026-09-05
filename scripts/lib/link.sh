@@ -57,6 +57,34 @@ remove_missing_managed_link() {
   return 1
 }
 
+# The Global Instructions are owned by GLOBAL.md at the top of the Custom
+# Root. Each Instruction Path becomes a relative Managed Link to that file.
+# A Foreign Entry at an Instruction Path is preserved and only that link is
+# skipped; it is deliberately not a collision (ADR 0003). Nexus never creates
+# an Agent Home, so an absent one skips its Instruction Path.
+global_instructions_present() {
+  [[ -f "$GLOBAL_INSTRUCTIONS" && ! -L "$GLOBAL_INSTRUCTIONS" ]]
+}
+
+link_instruction_path() {
+  local path="$1" home
+  home="$(dirname -- "$path")"
+  [[ -d "$home" ]] || return 0
+  if [[ -L "$path" ]]; then
+    is_managed_link "$path" || return 0
+  elif [[ -e "$path" ]]; then
+    return 0
+  fi
+  put_link "$GLOBAL_INSTRUCTIONS" "$path" false
+}
+
+link_instruction_paths() {
+  global_instructions_present || return 0
+  link_instruction_path "$CLAUDE_INSTRUCTIONS" || :
+  link_instruction_path "$CODEX_INSTRUCTIONS" || :
+  return 0
+}
+
 link_all() {
   local force="${1:-false}" name target preflight_failed=0
   local -a lock_names=() custom_names=()
@@ -102,6 +130,7 @@ link_all() {
     put_link "$target" "$CLAUDE_SKILLS/$name" "$force" || :
     put_link "$target" "$CODEX_SKILLS/$name" "$force" || :
   done
+  link_instruction_paths
   if (( ERRORS != 0 )); then
     printf 'nexus: error: link failed with %s error(s)\n' "$ERRORS" >&2
     return 1
