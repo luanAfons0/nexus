@@ -113,6 +113,38 @@ change yourself. A refused write leaves the custom root byte-identical. The
 exception is recorded in
 `docs/adr/0004-nexus-writes-only-global-md-in-the-custom-root.md`.
 
+Read the global instructions with `nexus global show`, which prints the file
+bytes as-is, or `nexus global show --json`, which prints one object with the
+owner path, `present`, `sha256`, `content`, and the `claude` and `codex`
+instruction path states. Replace them with the full new content on standard
+input:
+
+```bash
+~/.nexus/scripts/nexus global show --json
+printf '%s\n' 'Answer in short sentences.' | ~/.nexus/scripts/nexus global edit --if-match <sha256>
+```
+
+`global edit` runs these checks in this order before any write, and any
+failure exits 1 with the tree byte-identical: the custom root exists and is a
+directory; `GLOBAL.md` is not a symlink or a directory (the same fault as in
+link preflight); and, when `--if-match <sha256>` is given, the sha256 of the
+current content equals it. `--if-match` is optional. Pass the `sha256` from
+`global show --json` so an edit made elsewhere since you read the file is
+refused instead of overwritten; the refusal names the expected and the
+actual hash. An absent file and an empty file both hash as the empty string
+(`e3b0c442...b855`), so that one value means "I expect no content yet".
+Empty standard input writes an empty file, which is valid. There is no size
+limit.
+
+When `GLOBAL.md` did not exist before the write, `global edit` runs link
+afterward through the same path as `nexus link` and forwards its output,
+including any foreign entry notice, so both instruction paths become managed
+links at once. That link run has the same needs as `nexus link`: with no
+Nexus lock yet it reports the missing lock and exits 1, the new `GLOBAL.md`
+stays in place, and setup followed by link finishes the job. When the file
+existed, link does not run and nothing is printed. Exit codes: 0 success, 1 refusal or fault, 2 usage (unknown flag,
+extra argument, or `--if-match` without a hex sha256).
+
 The owner is named `GLOBAL.md`, not `AGENTS.md`, because Codex loads an
 `AGENTS.md` found in the working tree as project instructions. A file named
 `AGENTS.md` at the top of the custom root would be loaded twice when you work
