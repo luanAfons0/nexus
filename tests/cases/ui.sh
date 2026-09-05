@@ -172,6 +172,199 @@ CASE_TESTS+=(
   test_ui_cli_usage_and_port
 )
 
+# Ticket #29: GET api/list runs `nexus list --json` and answers the envelope.
+
+test_ui_list_present() {
+  local failed=0 home response body expected cli
+  home="$(ui_home ui_list_present)" || { fail ui_list_present; return; }
+  write_skill "$home/.agents/skills" alpha
+  write_skill "$home/.custom-skills" mine
+  write_lock "$home/.nexus/skill-lock.json" alpha
+  printf 'rule one\n' >"$home/.custom-skills/GLOBAL.md"
+  expected="$(run_nexus "$home" list --json)" || failed=1
+  ui_start "$home" || failed=1
+
+  response="$(ui_http GET "${UI_URL}api/list")"
+  [[ "$(ui_status "$response")" == 200 ]] || { printf '  list status: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  [[ "$(ui_header "$response" content-type)" == 'application/json; charset=utf-8' ]] || failed=1
+  [[ "$(ui_header "$response" cache-control)" == 'no-store' ]] || failed=1
+  body="$(ui_body "$response")"
+  jq -e '.exit == 0 and .stderr == "" and (.json | type) == "object"' <<<"$body" >/dev/null || { printf '  envelope:\n%s\n' "$body" >&2; failed=1; }
+  cli="$REPO_ROOT/scripts/nexus"
+  [[ "$(jq -c .command <<<"$body")" == "$(jq -c -n --arg cli "$cli" '[$cli, "list", "--json"]')" ]] || { printf '  command: %s\n' "$(jq -c .command <<<"$body")" >&2; failed=1; }
+  [[ "$(jq -c .json.skills <<<"$body")" == "$(jq -c .skills <<<"$expected")" ]] || { printf '  json.skills differs from the CLI\n' >&2; failed=1; }
+  [[ "$(jq -c .json.globalInstructions <<<"$body")" == "$(jq -c .globalInstructions <<<"$expected")" ]] || failed=1
+  [[ "$(jq -c .stdout <<<"$body")" == "$(jq -c -n --arg s "$expected"$'\n' '$s')" ]] || { printf '  stdout is not the CLI bytes\n' >&2; failed=1; }
+  [[ "$(jq -r '.json.skills[] | select(.name == "alpha") | .kind' <<<"$body")" == installed ]] || failed=1
+  [[ "$(jq -r '.json.skills[] | select(.name == "mine") | .kind' <<<"$body")" == custom ]] || failed=1
+  [[ "$(jq -r '.json.skills[] | select(.name == "nexus") | .kind' <<<"$body")" == control ]] || failed=1
+
+  # Only GET is an API method for list.
+  response="$(ui_http POST "${UI_URL}api/list" -H 'Content-Type: application/json' -d '{}')"
+  [[ "$(ui_status "$response")" == 404 ]] || { printf '  POST list: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  ui_stop
+  if (( failed == 0 )); then pass ui_list_present; else fail ui_list_present; fi
+}
+
+test_ui_list_lock_absent() {
+  local failed=0 home response body
+  home="$(ui_home ui_list_absent)" || { fail ui_list_lock_absent; return; }
+  write_skill "$home/.custom-skills" only-custom
+  ui_start "$home" || failed=1
+
+  response="$(ui_http GET "${UI_URL}api/list")"
+  [[ "$(ui_status "$response")" == 200 ]] || failed=1
+  body="$(ui_body "$response")"
+  jq -e '.exit == 0' <<<"$body" >/dev/null || { printf '  envelope:\n%s\n' "$body" >&2; failed=1; }
+  [[ "$(jq -r .stderr <<<"$body")" == "nexus: lock is absent: $home/.nexus/skill-lock.json" ]] || { printf '  stderr: %s\n' "$(jq -r .stderr <<<"$body")" >&2; failed=1; }
+  [[ "$(jq -r '[.json.skills[].kind] | unique | join(",")' <<<"$body")" == 'control,custom' ]] || { printf '  kinds: %s\n' "$(jq -c '[.json.skills[].kind]' <<<"$body")" >&2; failed=1; }
+  [[ "$(jq -r '.json.skills | length' <<<"$body")" -eq 9 ]] || failed=1
+  [[ ! -e "$home/.nexus/skill-lock.json" ]] || { printf '  list created a lock\n' >&2; failed=1; }
+  ui_stop
+  if (( failed == 0 )); then pass ui_list_lock_absent; else fail ui_list_lock_absent; fi
+}
+
+CASE_TESTS+=(
+  test_ui_list_present
+  test_ui_list_lock_absent
+)
+
+# Ticket #32: POST api/update and api/remove, one mutation at a time, timeout.
+
+test_ui_remove_refusals_pass_argv_through() {
+  local failed=0 home response body before after cli
+  home="$(ui_home ui_remove_refusals)" || { fail ui_remove_refusals_pass_argv_through; return; }
+  write_skill "$home/.agents/skills" alpha
+  write_skill "$home/.custom-skills" mine
+  write_lock "$home/.nexus/skill-lock.json" alpha
+  run_nexus "$home" link >/dev/null 2>&1 || failed=1
+  mkdir -p -- "$home/fakebin"
+  printf '%s\n' '#!/usr/bin/env bash' ': >"$HOME/npx-invoked"' >"$home/fakebin/npx"; chmod 755 "$home/fakebin/npx"
+  cli="$REPO_ROOT/scripts/nexus"
+  before="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")|$(snapshot_tree "$home/.agents")|$(cat "$home/.nexus/skill-lock.json")"
+  PATH="$home/fakebin:$PATH" ui_start "$home" || failed=1
+
+  # A Control Skill name: the CLI refuses, exit 1 in the envelope, HTTP 200.
+  response="$(ui_http POST "${UI_URL}api/remove" -H 'Content-Type: application/json' -d '{"name":"nexus"}')"
+  [[ "$(ui_status "$response")" == 200 ]] || { printf '  control remove status: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  body="$(ui_body "$response")"
+  # The CLI treats a control name as a usage fault (exit 2); the envelope
+  # carries the CLI's exit code and message as they are.
+  jq -e '.exit == 2 and (.stderr | contains("reserved control skill name: nexus")) and (has("json") | not)' <<<"$body" >/dev/null || { printf '  control remove envelope:\n%s\n' "$body" >&2; failed=1; }
+  [[ "$(jq -c .command <<<"$body")" == "$(jq -c -n --arg cli "$cli" '[$cli, "remove", "nexus"]')" ]] || { printf '  command: %s\n' "$(jq -c .command <<<"$body")" >&2; failed=1; }
+
+  # A name that is not installed, and a Custom Skill name.
+  response="$(ui_http POST "${UI_URL}api/remove" -H 'Content-Type: application/json' -d '{"name":"missing"}')"
+  jq -e '.exit == 1' <<<"$(ui_body "$response")" >/dev/null || { printf '  missing name: %s\n' "$response" >&2; failed=1; }
+  response="$(ui_http POST "${UI_URL}api/remove" -H 'Content-Type: application/json' -d '{"name":"mine"}')"
+  jq -e '.exit == 1' <<<"$(ui_body "$response")" >/dev/null || { printf '  custom name: %s\n' "$response" >&2; failed=1; }
+
+  # An unsafe name reaches the CLI as one argv element and is refused there.
+  response="$(ui_http POST "${UI_URL}api/update" -H 'Content-Type: application/json' -d '{"name":"../escape; touch pwned"}')"
+  body="$(ui_body "$response")"
+  [[ "$(ui_status "$response")" == 200 ]] || failed=1
+  [[ "$(jq -c .command <<<"$body")" == "$(jq -c -n --arg cli "$cli" '[$cli, "update", "../escape; touch pwned"]')" ]] || { printf '  unsafe argv: %s\n' "$(jq -c .command <<<"$body")" >&2; failed=1; }
+  jq -e '.exit != 0' <<<"$body" >/dev/null || failed=1
+  [[ ! -e "$home/pwned" && ! -e "$REPO_ROOT/pwned" ]] || { printf '  shell evaluated the name\n' >&2; failed=1; }
+
+  # Wrong content type, a body that is not an object, and a missing name.
+  response="$(ui_http POST "${UI_URL}api/remove" -H 'Content-Type: text/plain' -d '{"name":"alpha"}')"
+  [[ "$(ui_status "$response")" == 415 && "$(ui_body "$response")" == json ]] || { printf '  text/plain: %s\n' "$response" >&2; failed=1; }
+  response="$(ui_http POST "${UI_URL}api/remove" -d '{"name":"alpha"}')"
+  [[ "$(ui_status "$response")" == 415 ]] || { printf '  no content type: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  response="$(ui_http POST "${UI_URL}api/remove" -H 'Content-Type: application/json' -d '[1]')"
+  [[ "$(ui_status "$response")" == 400 ]] || { printf '  array body: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  response="$(ui_http POST "${UI_URL}api/remove" -H 'Content-Type: application/json' -d '{}')"
+  [[ "$(ui_status "$response")" == 400 ]] || { printf '  missing name: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  response="$(ui_http OPTIONS "${UI_URL}api/remove" -H 'Origin: http://evil.example' -H 'Access-Control-Request-Method: POST')"
+  [[ "$(ui_status "$response")" == 403 ]] || { printf '  preflight answered: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  response="$(ui_http GET "${UI_URL}api/remove")"
+  [[ "$(ui_status "$response")" == 404 ]] || failed=1
+
+  ui_stop
+  after="$(snapshot_tree "$home/.claude")|$(snapshot_tree "$home/.codex")|$(snapshot_tree "$home/.agents")|$(cat "$home/.nexus/skill-lock.json")"
+  [[ "$before" == "$after" ]] || { printf '  a refused mutation changed a tree\n' >&2; failed=1; }
+  [[ ! -e "$home/npx-invoked" ]] || { printf '  upstream npx ran for a refusal\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass ui_remove_refusals_pass_argv_through; else fail ui_remove_refusals_pass_argv_through; fi
+}
+
+test_ui_one_mutation_at_a_time() {
+  local failed=0 home response body i
+  home="$(ui_home ui_mutation_lock)" || { fail ui_one_mutation_at_a_time; return; }
+  write_skill "$home/.agents/skills" alpha
+  write_lock "$home/.nexus/skill-lock.json" alpha
+  UI_FAULT=ui_slow_child ui_start "$home" || failed=1
+
+  ui_http POST "${UI_URL}api/update" -H 'Content-Type: application/json' -d '{"name":"alpha"}' >"$home/first-response" &
+  local first=$!
+  for i in {1..200}; do [[ -e "$home/child-started" ]] && break; sleep .02; done
+  [[ -e "$home/child-started" ]] || { printf '  slow child never started\n' >&2; failed=1; }
+
+  # A second mutation is refused while the first runs; reads are not locked.
+  response="$(ui_http POST "${UI_URL}api/remove" -H 'Content-Type: application/json' -d '{"name":"alpha"}')"
+  [[ "$(ui_status "$response")" == 409 && "$(ui_body "$response")" == busy ]] || { printf '  second mutation: %s\n' "$response" >&2; failed=1; }
+  response="$(ui_http GET "${UI_URL}api/list")"
+  [[ "$(ui_status "$response")" == 200 ]] || { printf '  read during mutation: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+
+  : >"$home/child-release"
+  wait "$first" || failed=1
+  body="$(ui_body "$(cat "$home/first-response")")"
+  jq -e '.exit == 0 and (.stdout | contains("slow child finished"))' <<<"$body" >/dev/null || { printf '  first response:\n%s\n' "$body" >&2; failed=1; }
+
+  # The lock is released: the same call now runs again.
+  rm -f -- "$home/child-started"; : >"$home/child-release"
+  response="$(ui_http POST "${UI_URL}api/update" -H 'Content-Type: application/json' -d '{"name":"alpha"}')"
+  [[ "$(ui_status "$response")" == 200 ]] || { printf '  after release: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  ui_stop
+  if (( failed == 0 )); then pass ui_one_mutation_at_a_time; else fail ui_one_mutation_at_a_time; fi
+}
+
+test_ui_child_timeout() {
+  local failed=0 home response body
+  home="$(ui_home ui_timeout)" || { fail ui_child_timeout; return; }
+  write_skill "$home/.agents/skills" alpha
+  write_lock "$home/.nexus/skill-lock.json" alpha
+  NEXUS_UI_TIMEOUT=1 UI_FAULT=ui_timeout_child ui_start "$home" || failed=1
+
+  response="$(ui_http POST "${UI_URL}api/update" -H 'Content-Type: application/json' -d '{"name":"alpha"}')"
+  [[ "$(ui_status "$response")" == 200 ]] || { printf '  timeout status: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  body="$(ui_body "$response")"
+  jq -e '.exit == 124 and (.stderr | contains("timeout")) and (.stderr | contains("1"))' <<<"$body" >/dev/null || { printf '  timeout envelope:\n%s\n' "$body" >&2; failed=1; }
+  ! pgrep -f -- "$REPO_ROOT/tests/faults.sh update alpha" >/dev/null || { printf '  timed-out child still runs\n' >&2; failed=1; }
+
+  # The lock is released after a timeout.
+  response="$(ui_http POST "${UI_URL}api/remove" -H 'Content-Type: application/json' -d '{"name":"nexus"}')"
+  [[ "$(ui_status "$response")" == 200 ]] || { printf '  after timeout: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  ui_stop
+  if (( failed == 0 )); then pass ui_child_timeout; else fail ui_child_timeout; fi
+}
+
+test_ui_stop_kills_running_child() {
+  local failed=0 home i status
+  home="$(ui_home ui_stop_child)" || { fail ui_stop_kills_running_child; return; }
+  write_skill "$home/.agents/skills" alpha
+  write_lock "$home/.nexus/skill-lock.json" alpha
+  UI_FAULT=ui_slow_child ui_start "$home" || failed=1
+  ui_http POST "${UI_URL}api/update" -H 'Content-Type: application/json' -d '{"name":"alpha"}' >/dev/null 2>&1 &
+  local request=$!
+  for i in {1..200}; do [[ -e "$home/child-started" ]] && break; sleep .02; done
+  [[ -e "$home/child-started" ]] || failed=1
+  pgrep -f -- "$REPO_ROOT/tests/faults.sh update alpha" >/dev/null || { printf '  child not visible before the stop\n' >&2; failed=1; }
+  ui_stop; status="$NEXUS_WAIT_STATUS"
+  [[ "$status" -eq 0 ]] || { printf '  stop status with a child: %s\n' "$status" >&2; failed=1; }
+  wait "$request" 2>/dev/null || :
+  for i in {1..100}; do pgrep -f -- "$REPO_ROOT/tests/faults.sh update alpha" >/dev/null || break; sleep .02; done
+  ! pgrep -f -- "$REPO_ROOT/tests/faults.sh update alpha" >/dev/null || { printf '  CLI child survived the stop\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass ui_stop_kills_running_child; else fail ui_stop_kills_running_child; fi
+}
+
+CASE_TESTS+=(
+  test_ui_remove_refusals_pass_argv_through
+  test_ui_one_mutation_at_a_time
+  test_ui_child_timeout
+  test_ui_stop_kills_running_child
+)
+
 # Ticket #30: GET api/global and the vendored renderer.
 
 test_ui_api_global_present() {

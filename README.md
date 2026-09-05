@@ -473,6 +473,47 @@ Every response carries `Cache-Control: no-store`; static files also carry
 fetch leaves the page origin. The page is one HTML file, one CSS file, and
 one JavaScript file with no build step and no framework.
 
+### Endpoints and envelope
+
+Every endpoint lives under `/t/TOKEN/api/` and is one CLI command:
+
+| Endpoint | Command |
+| --- | --- |
+| `GET api/list` | `nexus list --json` |
+| `GET api/global` | `nexus global show --json` |
+| `PUT api/global` with `{content, ifMatch}` | `nexus global edit --if-match <ifMatch>`, `content` on standard input |
+| `POST api/update` with `{name}` | `nexus update <name>` |
+| `POST api/remove` with `{name}` | `nexus remove <name>` |
+
+Every answer is HTTP 200 with one JSON object: `command` (the argv the
+server ran), `exit`, `stdout`, and `stderr`, plus `json` with the parsed
+standard output when `exit` is 0 and the output parses. A CLI refusal is
+`exit` 1 in the body with the CLI's own message, not an HTTP error, so the
+page shows exactly what the command line shows. HTTP errors exist only for
+the loopback guard (403), an unknown path or method (404), a mutating
+request without `Content-Type: application/json` (415), a body that is not
+a JSON object (400), and a second mutating request while one runs (409).
+
+### Skills table and Last command
+
+The Skills table is `nexus list --json` as rows, in CLI order: name, kind
+as a pill, source, the eight-character hash prefix with the full hash on
+hover, the update date as a local date with the ISO timestamp on hover,
+and actions. The filter box narrows by name only. An installed skill row
+has Update and Remove buttons. A custom skill row says `Custom Skill: git
+pull in ~/.custom-skills, then link`, and a control skill row says
+`Control Skill: never updated or removed`; neither has a button. When the
+lock is absent, an info banner above the table shows the CLI's own line
+and points at `/nexus-setup`, and only custom and control skills are
+listed.
+
+The Last command panel at the bottom of the page shows the exact command
+of the last call, an exit pill, a local timestamp, and standard output
+followed by standard error in red, as preformatted text. It persists until
+the next command. When a call cannot reach the server at all, a red banner
+says `Connection lost. Rerun nexus ui, then nexus list to check.` and the
+page does not retry on its own.
+
 ### Editor
 
 The Global Instructions section reads `nexus global show --json` through
@@ -511,6 +552,32 @@ content security policy blocks one. To update the renderer by hand:
    new file names the same version.
 4. Run `bash tests/run.sh`; the renderer test reads the version from the
    served file.
+
+### Update and remove
+
+Update and Remove on an installed skill row run `nexus update <name>` and
+`nexus remove <name>` through `POST api/update` and `POST api/remove`
+with the body `{"name": "<name>"}`. The name is one argv element and never
+goes through a shell; the CLI's own name checks are the only validation,
+so a refused name comes back as the CLI's exit code and message in the
+envelope. Custom and control rows have no button.
+
+Update runs at once. The row shows a spinner and every other mutation
+button is disabled until the response; the Last command panel shows the
+result; then the page refetches `list` and `global`. Remove first opens a
+dialog that names the command, explains that upstream deletes the skill
+under the canonical root and that Nexus then publishes the lock and links,
+and asks you to type the skill name. The Remove button in the dialog is
+enabled only when the typed text equals the name byte for byte; Esc or
+Cancel closes the dialog without running anything.
+
+The server runs one mutating command at a time. A second mutating request
+while one runs is answered 409, and the page says another command is
+still running. Reads are not locked. A CLI child that runs longer than 300
+seconds is killed together with its process group; the envelope then
+carries exit 124 and a standard error line that names the timeout. The
+environment variable `NEXUS_UI_TIMEOUT` (seconds) overrides the limit,
+which the tests use with a short value.
 
 ## Troubleshooting
 
