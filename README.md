@@ -390,15 +390,38 @@ are shown, and on success the skill reminds you to commit in
 read: the skill runs show again and starts the edit over. The menu returns
 after the edit.
 
-The chat menu is the first front for this editor. A later change replaces
-it with `nexus ui`, a local page served by Python's `http.server` that calls
-`list --json`, `global show --json`, `global edit --if-match`, `update`, and
-`remove`. Its editor is GitHub-style, with Edit and Preview tabs, line
-numbers, soft wrap, and Cancel and "Save changes" buttons ("Save", not
-"Commit", so the word is not confused with publish or Git). The preview
-renderer is vendored in `~/.nexus`; the page makes no network fetch. When
-`nexus ui` ships, `/nexus` becomes a launcher that starts the server and
-prints the URL.
+The chat menu is the first front for this editor. The Web UI replaces it
+when `nexus ui` ships: `/nexus` then becomes a launcher that starts the
+server and prints the URL, and the menu text is deleted. See "Web UI"
+below.
+
+## Web UI
+
+`nexus ui` serves a local page, the Web UI, from Python's `http.server`.
+It is the one command in which Nexus opens a network listener, and that
+listener is bound to `127.0.0.1` only, in the foreground, until Ctrl-C or
+SIGTERM stops it. The page shows every skill of all three kinds in one
+table and edits the global instructions in a GitHub-style editor with Edit
+and Preview tabs, line numbers, soft wrap, and Cancel and "Save changes"
+buttons ("Save", not "Commit", so the word is not confused with publish or
+Git). The preview renderer is vendored in `~/.nexus`; the page makes no
+network fetch.
+
+The contract is recorded in
+`docs/adr/0005-nexus-opens-one-loopback-listener-only-in-nexus-ui.md`:
+
+- One listener, only in `nexus ui`, on `127.0.0.1` only.
+- The server never touches `GLOBAL.md`, the Nexus lock, or any skill root.
+  Every read and every mutation is a subprocess call to the CLI: `list
+  --json`, `global show --json`, `global edit --if-match`, `update`, and
+  `remove`. ADR 0004 is unchanged: the CLI is still the one writer of
+  `GLOBAL.md`.
+- Every request passes a loopback guard: loopback peer, exact `Host`,
+  matching `Origin` when present, and a per-run Run Token in the URL path.
+  Mutating requests need a JSON content type.
+
+The command, flags, endpoints, and page behavior are documented here as
+each part ships.
 
 ## Troubleshooting
 

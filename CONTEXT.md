@@ -168,3 +168,20 @@ _Avoid_: orphan directory, leftover
 A retained temporary or recovery path left behind by an interrupted Setup.
 Nexus names it and asks the user to review before retrying.
 _Avoid_: garbage, temp files
+
+### Web UI
+
+**Web UI**:
+The local page served by `nexus ui`, the one process in which Nexus opens a
+network listener, bound to `127.0.0.1` only (ADR 0005). It shows the skills of
+all three kinds and edits the Global Instructions. Every read and every
+mutation on the page is a subprocess call to the Nexus CLI; the server never
+touches a file itself.
+_Avoid_: dashboard, web app, admin page, GUI
+
+**Run Token**:
+The random secret in the URL path of the Web UI (`/t/<token>/`). It is 32 hex
+characters from a cryptographic source, generated once per `nexus ui` run,
+printed once in the handshake line, and lives as long as that server run. A
+request without it is refused before any CLI child runs.
+_Avoid_: session token, API key, auth token, password
