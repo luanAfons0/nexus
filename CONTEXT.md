@@ -33,9 +33,11 @@ The directory name of a skill. It must be safe (no path, option, or hidden
 form) and unique across all three kinds.
 
 **Collision**:
-Two skills of different kinds claiming the same Skill Name, or a desired link
-path already occupied by a Foreign Entry. A collision is a configuration
-fault: Nexus reports it and changes nothing.
+Two skills of different kinds claiming the same Skill Name, or a desired skill
+link path already occupied by a Foreign Entry. A collision is a configuration
+fault: Nexus reports it and changes nothing. A Foreign Entry at an Instruction
+Path is not a collision: Nexus reports it, preserves it, and skips only that
+link.
 _Avoid_: conflict, clash
 
 ### Ownership
@@ -54,12 +56,14 @@ _Avoid_: agents root, upstream root
 
 **Custom Root**:
 `~/.custom-skills`, the Git repository the user controls that owns Custom
-Skills. Nexus reads it and never writes to it or runs Git in it.
+Skills and the Global Instructions. Nexus reads it and never writes to it or
+runs Git in it.
 _Avoid_: custom skills repo, private skills folder
 
 **Agent Home**:
 The whole configuration directory of one agent (`~/.claude`, `~/.codex`).
-Setup backs it up; Nexus otherwise touches only its Native Skill Root.
+Setup backs it up; Nexus otherwise touches only its Native Skill Root and its
+Instruction Path.
 _Avoid_: live root, agent root, agent data
 
 **Native Skill Root**:
@@ -68,12 +72,14 @@ Nexus places Managed Links here and owns nothing else inside it.
 _Avoid_: agent skills folder, target root, live root
 
 **Managed Link**:
-A relative symlink in a Native Skill Root that Nexus created and that resolves
-into an Owner. Nexus may create, update, or remove only these.
+A relative symlink at a Native Skill Root entry or an Instruction Path that
+Nexus created and that resolves into an Owner. Nexus may create, update, or
+remove only these.
 _Avoid_: Nexus-managed link, reconciled link, symlink
 
 **Foreign Entry**:
-Anything in a Native Skill Root that is not a Managed Link: a physical
+Anything at a Native Skill Root entry or an Instruction Path that is not a
+Managed Link: a physical
 directory or file, a symlink to an unrelated place, or Codex's `.system`
 directory. Nexus preserves it and never claims or deletes it.
 _Avoid_: physical entry, unrelated link, external link, non-managed entry
@@ -82,6 +88,20 @@ _Avoid_: physical entry, unrelated link, external link, non-managed entry
 A Managed Link whose Skill Name is no longer desired, or whose owner no
 longer has a `SKILL.md`. Link removes it.
 _Avoid_: broken link, dangling link, orphan
+
+### Instructions
+
+**Global Instructions**:
+The one document of user rules that every agent loads at the start of every
+session, regardless of project. It is owned by the Custom Root as
+`~/.custom-skills/GLOBAL.md` and is byte-identical for all agents.
+_Avoid_: global rules, rules, memory, system prompt, CLAUDE.md, AGENTS.md
+
+**Instruction Path**:
+The native file one agent reads its Global Instructions from
+(`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`). Nexus places a Managed Link
+here.
+_Avoid_: global memory file, rules file, agent instructions file
 
 ### Lock
 
