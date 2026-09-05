@@ -40,6 +40,8 @@ MUTATIONS = {
     ("POST", "update"): "update",
     ("POST", "remove"): "remove",
 }
+# PUT api/global runs `global edit --if-match <ifMatch>` with `content` on
+# standard input; see do_PUT.
 
 
 class State:
@@ -243,7 +245,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         rel = self.guard()
         if rel is None:
             return
-        self.refuse(404, "not found")
+        if rel != "api/global":
+            self.refuse(404, "not found")
+            return
+        body = self.json_body(["content", "ifMatch"])
+        if body is None:
+            return
+        self.mutate(["global", "edit", "--if-match", body["ifMatch"]], body["content"])
 
     def do_OPTIONS(self):
         rel = self.guard()

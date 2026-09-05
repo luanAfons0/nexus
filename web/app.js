@@ -461,6 +461,149 @@ async function loadGlobal() {
 
 loadGlobal();
 
+// --- save global instructions ----------------------------------------------
+
+const saveState = { busy: false, unsaved: null };
+
+function editorDirty() {
+  return editor.textarea && editor.textarea.value !== editorState.loaded;
+}
+
+function abbreviatedHash(hash) {
+  return el('code', { class: 'mono', title: hash, text: hash.slice(0, 4) + '…' + hash.slice(-4) });
+}
+
+// The read-only panel that keeps the user's text after a conflict. Nothing
+// on the page can write it to disk: the user copies it and edits again.
+function showUnsavedPanel(text) {
+  removeUnsavedPanel();
+  const pre = el('pre', { class: 'log mono muted', text });
+  const copy = el('button', { class: 'btn sm', type: 'button', text: 'Copy', onclick: async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      copy.textContent = 'Copied';
+    } catch (error) {
+      const range = document.createRange();
+      range.selectNodeContents(pre);
+      const selection = getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      copy.textContent = 'Selected';
+    }
+    setTimeout(() => { copy.textContent = 'Copy'; }, 2000);
+  } });
+  saveState.unsaved = el('div', { class: 'card', id: 'unsaved-panel' }, [
+    el('div', { class: 'out-hd' }, [
+      el('span', { class: 'cmd', text: 'Your unsaved version' }),
+      el('span', { text: 'kept until you reload the page' }),
+      el('div', { class: 'grow' }),
+      copy,
+    ]),
+    pre,
+  ]);
+  document.getElementById('global').append(saveState.unsaved);
+}
+
+function removeUnsavedPanel() {
+  if (saveState.unsaved) saveState.unsaved.remove();
+  saveState.unsaved = null;
+}
+
+function showConflict(stderr, text) {
+  const match = /expected sha256 ([0-9a-f]{64}), actual ([0-9a-f]{64})/.exec(stderr);
+  const expected = match ? abbreviatedHash(match[1]) : el('code', { text: '?' });
+  const found = match ? abbreviatedHash(match[2]) : el('code', { text: '?' });
+  banner('global-conflict', 'err', [
+    el('strong', { text: 'Not saved. GLOBAL.md changed on disk since you opened it.' }), el('br'),
+    'Nexus refused the write with ', el('code', { text: '--if-match' }), '. Expected sha256 ', expected,
+    ', found ', found, '. The editor now shows the current file. Your unsaved text is kept below.',
+  ]);
+  showUnsavedPanel(text);
+}
+
+function setSaving(busy) {
+  saveState.busy = busy;
+  editor.save.disabled = busy;
+  editor.cancel.disabled = busy;
+  replaceChildren(editor.save, busy ? [el('span', { class: 'spin' }), 'Saving'] : ['Save changes']);
+}
+
+async function saveGlobal() {
+  if (saveState.busy || !editor.textarea || editor.save.disabled) return;
+  const content = editor.textarea.value;
+  const ifMatch = editorState.sha256;
+  setSaving(true);
+  let envelope;
+  try {
+    envelope = await api('global', { method: 'PUT', body: { content, ifMatch } });
+  } catch (error) {
+    setSaving(false);
+    if (error.status) {
+      banner('global-save-error', 'err', [
+        el('strong', { text: 'Not saved.' }), ' The server answered HTTP ' + error.status + ' (' + error.text + ').',
+      ]);
+    }
+    return;
+  }
+  setSaving(false);
+  if (envelope.exit === 0) {
+    clearBanner('global-conflict');
+    clearBanner('global-save-error');
+    removeUnsavedPanel();
+    toast(['Saved. Commit in ', el('code', { text: '~/.custom-skills' }), '.']);
+    await loadGlobal();
+    return;
+  }
+  const stderr = envelope.stderr || '';
+  if (stderr.includes('global instructions changed since they were read')) {
+    clearBanner('global-save-error');
+    showConflict(stderr, content);
+    await loadGlobal();
+    return;
+  }
+  clearBanner('global-conflict');
+  banner('global-save-error', 'err', [
+    el('strong', { text: 'Not saved.' }), ' ', el('code', { text: commandLabel(envelope.command) }),
+    ' exited ' + envelope.exit + '.',
+    el('pre', { class: 'log mono', text: (stderr || envelope.stdout || '').trim() }),
+  ]);
+}
+
+function cancelEdit() {
+  if (saveState.busy || !editor.textarea) return;
+  if (editorDirty() && !confirm('Discard your unsaved edits and restore the file as it was loaded?')) return;
+  editor.textarea.value = editorState.loaded;
+  editor.textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  if (editorState.tab === 'preview') renderPreview();
+}
+
+function initSave() {
+  const wire = () => {
+    if (!editor.save) return false;
+    editor.save.disabled = false;
+    editor.save.addEventListener('click', saveGlobal);
+    editor.cancel.addEventListener('click', cancelEdit);
+    return true;
+  };
+  // The editor is built by loadGlobal(); wire once it exists.
+  if (!wire()) {
+    const timer = setInterval(() => { if (wire()) clearInterval(timer); }, 50);
+  }
+  document.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && (event.key === 's' || event.key === 'S')) {
+      event.preventDefault();
+      saveGlobal();
+    }
+  });
+  window.addEventListener('beforeunload', (event) => {
+    if (!editorDirty()) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
+}
+
+initSave();
+
 // --- update and remove ------------------------------------------------------
 
 // One mutation at a time on the page as on the server: while a command
