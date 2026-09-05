@@ -9,6 +9,8 @@ skills exist. The native Claude and Codex skill roots contain managed links,
 relative symlinks into those owners. Anything else in a native skill root is a
 foreign entry: a physical directory, a symlink to an unrelated place, or
 Codex's `.system` directory. Nexus never claims or deletes a foreign entry.
+The custom root also owns the global instructions, `~/.custom-skills/GLOBAL.md`,
+which link places at each agent's instruction path as a managed link.
 `CONTEXT.md` defines these terms.
 
 ## Requirements and first use
@@ -84,9 +86,83 @@ are preserved rather than claimed or deleted. Correct a collision or a missing
 skill and rerun link.
 
 Link runs its preflight checks before it changes anything. A malformed custom
-root, a name collision, or a custom skill reachable through the canonical root
-is a configuration fault, not a per-link failure, so link reports the fault and
-leaves both agent roots exactly as they were.
+root, a name collision, a custom skill reachable through the canonical root,
+or an invalid `GLOBAL.md` is a configuration fault, not a per-link failure, so
+link reports the fault and leaves both agent roots exactly as they were.
+
+After the skill links, link reconciles the two instruction paths against the
+global instructions. See "Global instructions" below.
+
+## Global instructions
+
+Claude loads `~/.claude/CLAUDE.md` and Codex loads `~/.codex/AGENTS.md` at the
+start of every session. These two files are the instruction paths. Nexus gives
+them one owner: the regular file `~/.custom-skills/GLOBAL.md` at the top of
+the custom root. Link places a relative managed link at each instruction path
+that resolves to that file, so one edit reaches both agents and both read
+byte-identical global instructions. The file is versioned in the custom root
+Git repository you already control. Nexus never writes to, moves, or deletes
+`GLOBAL.md`. The decision is recorded in
+`docs/adr/0003-global-instructions-are-a-managed-link-into-the-custom-root.md`.
+
+The owner is named `GLOBAL.md`, not `AGENTS.md`, because Codex loads an
+`AGENTS.md` found in the working tree as project instructions. A file named
+`AGENTS.md` at the top of the custom root would be loaded twice when you work
+inside that repository. `GLOBAL.md` is a top-level regular file, so the custom
+skill scan skips it as repository furniture; it is not a skill.
+
+Migration is one manual step. Move your existing instruction file into the
+custom root, make its wording agent-neutral, commit it, then run link:
+
+```bash
+mv ~/.claude/CLAUDE.md ~/.custom-skills/GLOBAL.md
+~/.nexus/scripts/nexus link
+```
+
+Link reconciles each instruction path in this order, and the three skipped
+states below are notices, not errors, so link still exits 0:
+
+- The agent home (`~/.claude` or `~/.codex`) is absent: a notice, and that
+  instruction path is skipped. Nexus never creates an agent home for the
+  instruction link.
+- `GLOBAL.md` is absent: one notice for the whole run names the expected path.
+  Skills are still reconciled. A managed link at an instruction path is now a
+  stale link and is removed; anything else there is left alone.
+- `GLOBAL.md` exists and the instruction path is a foreign entry, that is a
+  physical file, a symlink to an unrelated place, or a directory: a notice
+  names the path and the exact move to make (`mv <path>
+  ~/.custom-skills/GLOBAL.md`, then rerun link). The entry is preserved and
+  only that link is skipped; the other instruction path is still linked. A
+  foreign entry at an instruction path is deliberately not a collision, because
+  a physical `CLAUDE.md` is the normal state before you migrate.
+- `GLOBAL.md` exists and the instruction path is a managed link to another
+  managed place: it is replaced by a link to `GLOBAL.md`.
+- `GLOBAL.md` exists and the instruction path is a managed link to it: nothing
+  happens and nothing is printed.
+- `GLOBAL.md` exists and nothing is at the instruction path: the managed link
+  is created.
+
+An empty `GLOBAL.md` is valid and links silently. A `GLOBAL.md` that is a
+symlink or a directory is a configuration fault: link reports it in preflight,
+exits 1, and changes nothing in either native skill root or instruction path.
+List fails with the same error.
+
+`nexus list` ends with one line that shows the owner and the state of each
+instruction path, so drift is visible without running link:
+
+```
+global instructions: /home/you/.custom-skills/GLOBAL.md (claude: linked, codex: foreign)
+```
+
+Each state is exactly one of `linked` (a managed link resolving to
+`GLOBAL.md`), `foreign` (anything else at the path, including a managed link
+that does not resolve to `GLOBAL.md`), `absent` (nothing at the path, agent
+home present), or `no home` (agent home absent). When `GLOBAL.md` is missing
+the line reads `global instructions: absent (<owner path>)` followed by the
+same per-agent states.
+
+Setup ends with link, so a fresh setup reaches the same state. Bootstrap links
+only the control skills and never touches an instruction path.
 
 ## Custom skills
 
@@ -98,7 +174,7 @@ There is no custom lock file. The directory listing is the manifest. Nexus
 reads every visible subdirectory of `~/.custom-skills`, and each one must have
 a safe skill name and a real (not symlinked) `SKILL.md`. Entries beginning with `.` and
 top-level regular files are repository furniture and are skipped, so `.git`,
-`.gitignore`, `.workspaces`, and `README.md` are ignored. Anything else is a
+`.gitignore`, `.workspaces`, `README.md`, and `GLOBAL.md` are ignored. Anything else is a
 hard error that names the entry; Nexus does not skip an unexplained directory
 silently.
 
@@ -208,10 +284,11 @@ survives the removal is reported as untracked for your review.
 tab-separated columns: name, kind (`installed`, `custom`, `control`), source,
 an eight-character `skillFolderHash` prefix, and `updatedAt`. Installed rows
 come from the validated Nexus lock; custom and control rows show a dash for
-the last three columns because they carry no upstream version. When the lock
-is absent, `list` prints one info line saying so, then only the custom and
-control rows, and still exits 0. An invalid lock reports the validation error
-and exits 1.
+the last three columns because they carry no upstream version. After the
+table, one line reports the global instructions (see "Global instructions").
+When the lock is absent, `list` prints one info line saying so, then only the
+custom and control rows, and still exits 0. An invalid lock reports the
+validation error and exits 1.
 
 `nexus help` (also `-h` and `--help`) prints the usage line and one line per
 subcommand: `bootstrap`, `setup`, `link`, `install`, `update`, `remove`,
@@ -231,6 +308,11 @@ read-only command, and reports the result. It never runs a mutating command.
   inspect the retained backup/recovery paths, then retry setup.
 - **Collision:** preserve the foreign entry, resolve it manually,
   and rerun link or bootstrap as appropriate.
+- **Foreign entry at an instruction path:** your instruction file has not been
+  migrated. Move it to `~/.custom-skills/GLOBAL.md` and rerun link; nothing
+  was lost.
+- **Global instructions must be a regular file:** `~/.custom-skills/GLOBAL.md`
+  is a symlink or a directory. Replace it with a regular file and rerun link.
 - **NVM/npx:** ensure direct `npx` works, or install/select a default NVM Node
   version. Nexus only loads NVM as the fallback when `npx` is unavailable.
 - **Upstream failure:** inspect the `npx skills` error and any reported

@@ -1,7 +1,8 @@
 # Nexus
 
-Nexus is the skill manager for Claude and Codex. See `README.md` for
-behavior, safety contract, and recovery. Run `bash tests/run.sh` before a
+Nexus is the skill manager for Claude and Codex. It also links the Global
+Instructions (`~/.custom-skills/GLOBAL.md`) into each agent's Instruction
+Path. See `README.md` for behavior, safety contract, and recovery. Run `bash tests/run.sh` before a
 commit.
 
 ## Agent skills
