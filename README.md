@@ -582,11 +582,21 @@ and shows on both: it belongs to the run, not to a page.
 
 ### Skills table and Last command
 
-The Skills table is `nexus list --json` as rows, in CLI order: name, kind
-as a pill, source, the eight-character hash prefix with the full hash on
-hover, the update date as a local date with the ISO timestamp on hover,
-and actions. The filter box narrows by name only. An installed skill row
-has Update and Remove buttons. A custom skill row says `Custom Skill: git
+The Skills table is `nexus list --json` as rows, grouped by kind: installed
+first, then custom, then control. Each group is headed by the kind pill and
+the count of the rows shown under it, and a kind with no rows is not drawn,
+so an absent lock shows only the custom and control groups. Kind is the
+group rather than a column, because it decides what a row can do. Inside a
+group the rows keep CLI order, and each row is name, source, the
+eight-character hash prefix with the full hash on hover, the update date as
+a local date with the ISO timestamp on hover, and actions.
+
+Two filters sit above the table and compose, so you can ask for one name
+inside one kind. The kind filter picks `All kinds`, `Installed`, `Custom`,
+or `Control`; the filter box narrows by name. The hint reads `N skills` when
+neither filter narrows the table and `M of N skills` when either does, and
+the table says `No skill matches these filters.` when nothing is left. An
+installed skill row has Update and Remove buttons. A custom skill row says `Custom Skill: git
 pull in ~/.custom-skills, then link`, and a control skill row says
 `Control Skill: never updated or removed`; neither has a button. When the
 lock is absent, an info banner above the table shows the CLI's own line

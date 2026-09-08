@@ -26,6 +26,12 @@
     <div class="sec-hd">
       <h2>Skills</h2>
       <div class="sec-tools" id="skills-tools">
+        <select class="input" id="skills-kind" aria-label="Filter by kind">
+          <option value="all">All kinds</option>
+          <option value="installed">Installed</option>
+          <option value="custom">Custom</option>
+          <option value="control">Control</option>
+        </select>
         <input class="input" id="skills-filter" type="search" placeholder="Filter by name" autocomplete="off" spellcheck="false">
         <span class="hint" id="skills-count"></span>
       </div>
