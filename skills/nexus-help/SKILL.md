@@ -1,6 +1,6 @@
 ---
 name: nexus-help
-description: Show installed skills with their versions or describe every Nexus command; also trigger when explicitly invoked as $nexus-help.
+description: Show the Agent Context Nexus manages for Claude and Codex (installed skills with their versions) or describe every Nexus command; also trigger when explicitly invoked as $nexus-help.
 ---
 
 # Nexus help

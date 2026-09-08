@@ -1,6 +1,6 @@
 ---
 name: nexus-install
-description: Install selected skills through Nexus for Claude and Codex; also trigger when explicitly invoked as $nexus-install.
+description: Install selected skills into the Agent Context Nexus manages for Claude and Codex; also trigger when explicitly invoked as $nexus-install.
 ---
 
 # Nexus skill installation

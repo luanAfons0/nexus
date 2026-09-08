@@ -1,6 +1,6 @@
 ---
 name: nexus-setup
-description: Set up, initialize, migrate, or bootstrap Nexus; also trigger when explicitly invoked as $nexus-setup.
+description: Set up, initialize, migrate, or bootstrap Nexus, the context manager for Claude and Codex; also trigger when explicitly invoked as $nexus-setup.
 ---
 
 # Nexus setup

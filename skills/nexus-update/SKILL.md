@@ -1,6 +1,6 @@
 ---
 name: nexus-update
-description: Update one installed skill through Nexus and relink it for Claude and Codex; also trigger when explicitly invoked as $nexus-update.
+description: Update one installed skill in the Agent Context Nexus manages and relink it for Claude and Codex; also trigger when explicitly invoked as $nexus-update.
 ---
 
 # Nexus skill update

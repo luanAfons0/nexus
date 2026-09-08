@@ -1,6 +1,6 @@
 ---
 name: nexus
-description: Open the Nexus Web UI to list skills, update or remove one Installed Skill, or edit the Global Instructions in a real editor; also trigger when explicitly invoked as /nexus or $nexus.
+description: Open the Nexus Web UI to manage the Agent Context of Claude and Codex: list skills, update or remove one Installed Skill, or edit the Global Instructions in a real editor; also trigger when explicitly invoked as /nexus or $nexus.
 ---
 
 # Nexus launcher

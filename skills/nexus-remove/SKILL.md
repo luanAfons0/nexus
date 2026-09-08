@@ -1,6 +1,6 @@
 ---
 name: nexus-remove
-description: Uninstall one installed skill through Nexus and relink Claude and Codex; also trigger when explicitly invoked as $nexus-remove.
+description: Uninstall one installed skill from the Agent Context Nexus manages and relink Claude and Codex; also trigger when explicitly invoked as $nexus-remove.
 ---
 
 # Nexus skill removal

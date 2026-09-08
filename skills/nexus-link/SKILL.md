@@ -1,6 +1,6 @@
 ---
 name: nexus-link
-description: Reconcile, repair, or remove stale Nexus-managed links; also trigger when explicitly invoked as $nexus-link.
+description: Reconcile, repair, or remove stale Nexus-managed links so Claude and Codex load the same Agent Context; also trigger when explicitly invoked as $nexus-link.
 ---
 
 # Nexus link reconciliation

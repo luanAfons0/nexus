@@ -1,6 +1,6 @@
 ---
 name: nexus-new
-description: Create a new custom skill in the Nexus custom skill root and link it for Claude and Codex; also trigger when explicitly invoked as $nexus-new.
+description: Create a new custom skill in the Nexus custom root and link it into the Agent Context of Claude and Codex; also trigger when explicitly invoked as $nexus-new.
 ---
 
 # Nexus custom skill creation
