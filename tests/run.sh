@@ -1304,8 +1304,26 @@ test_readme_documentation() {
   if (( failed == 0 )); then pass readme_documentation; else fail readme_documentation; fi
 }
 
+# The decision records and the Ubiquitous Language ship with the code, and a
+# term that is not in CONTEXT.md is a term the next reader has to invent.
+test_domain_documents() {
+  local failed=0 adr term
+  for adr in 0005-nexus-opens-one-loopback-listener-only-in-nexus-ui \
+             0006-a-web-ui-run-is-recorded-in-a-run-file-and-can-be-stopped \
+             0007-the-tray-is-a-windows-client-of-the-nexus-cli; do
+    assert_file "docs/adr/$adr.md" || failed=1
+  done
+  assert_contains docs/adr/0007-the-tray-is-a-windows-client-of-the-nexus-cli.md 'Accepted' || failed=1
+  assert_contains README.md '0007-the-tray-is-a-windows-client-of-the-nexus-cli.md' || failed=1
+  for term in '**Tray**' '**Tray Home**' '**Web UI**' '**Run File**' '**Run Token**' '**Detached Run**'; do
+    assert_contains CONTEXT.md "$term" || failed=1
+  done
+  if (( failed == 0 )); then pass domain_documents; else fail domain_documents; fi
+}
+
 test_metadata
 test_readme_documentation
+test_domain_documents
 test_source_hygiene
 test_shell_syntax
 test_bootstrap

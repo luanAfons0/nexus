@@ -212,3 +212,22 @@ default of `nexus ui`, it is recorded in the Run File, and it ends on
 **Foreground Run**, which `--foreground` selects and which ends on Ctrl-C or
 SIGTERM.
 _Avoid_: daemon, background job, service
+
+### Tray
+
+**Tray**:
+The Windows notification-area client of the Nexus CLI. It shows whether a Web
+UI run is live and holds the actions that open, start, and stop one. It owns
+no state: it never reads the Run File and never touches the Global
+Instructions, the Nexus Lock, or a Native Skill Root, and every action it
+takes is a `nexus ui` call through `wsl.exe` (ADR 0007). It exists on Windows
+because WSLg hosts no notification area.
+_Avoid_: daemon, service, supervisor, agent, systray app, background process
+
+**Tray Home**:
+`%LOCALAPPDATA%\Nexus\Tray`, the directory on the Windows filesystem that the
+Tray runs from. It holds a copy of the Tray and its launch shim and nothing
+else. The Windows installer writes it and the uninstaller removes it. The
+Tray runs from here rather than from the Nexus home over `\\wsl.localhost\`,
+which would boot the distribution at every logon.
+_Avoid_: install directory, tray folder, Windows Nexus home, app data

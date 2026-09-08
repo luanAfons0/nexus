@@ -412,6 +412,12 @@ not widen the network surface: it is created at owner-only permissions, it
 lives in the Nexus home and is never served by the page, it dies with the run,
 and a reader who can open it already has your filesystem.
 
+`docs/adr/0007-the-tray-is-a-windows-client-of-the-nexus-cli.md` adds the
+Tray, the Windows notification-area client of the CLI, and states what it may
+never do: it owns no state, it reads no Nexus file, and every action it takes
+is a `nexus ui` call. ADR 0005 is unchanged by it — the Tray opens no socket
+of its own, so it adds no network surface.
+
 ### Start and stop
 
 ```bash
