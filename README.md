@@ -398,6 +398,15 @@ The contract is recorded in
   matching `Origin` when present, and a per-run Run Token in the URL path.
   Mutating requests need a JSON content type.
 
+`docs/adr/0006-a-web-ui-run-is-recorded-in-a-run-file-and-can-be-stopped.md`
+revises exactly one clause of ADR 0005 — "There is no detached mode, no pid
+file, and no `stop` command" — and leaves every other clause standing. A run
+records itself in a Run File in the Nexus home, holding its pid, its port, its
+Run Token, and its mode, and removes the file when it ends. The Run File does
+not widen the network surface: it is created at owner-only permissions, it
+lives in the Nexus home and is never served by the page, it dies with the run,
+and a reader who can open it already has your filesystem.
+
 ### Start and stop
 
 ```bash

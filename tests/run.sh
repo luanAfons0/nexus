@@ -1273,7 +1273,8 @@ test_readme_documentation() {
               '`/nexus`' '`$nexus`' 'nexus ui' 'http.server' 'Save changes' \
               '## Global instructions' '~/.custom-skills/GLOBAL.md' '0003-global-instructions-are-a-managed-link-into-the-custom-root.md' \
               '0004-nexus-writes-only-global-md-in-the-custom-root.md' \
-              '## Web UI' '0005-nexus-opens-one-loopback-listener-only-in-nexus-ui.md'; do
+              '## Web UI' '0005-nexus-opens-one-loopback-listener-only-in-nexus-ui.md' \
+              '0006-a-web-ui-run-is-recorded-in-a-run-file-and-can-be-stopped.md' 'Run File'; do
     assert_contains README.md "$term" || failed=1
   done
   assert_contains README.md 'Setup preflight checks `jq`, `python3`, and the' || failed=1
