@@ -1,10 +1,21 @@
 # Nexus
 
-Nexus is the skill manager for Claude and Codex. It gives installed, custom,
-and control skills one explicit, recoverable owner and reconciles the native
-skill folders of both agents into links that point at that owner.
+Nexus is the context manager for Claude and Codex. An Agent Context is the
+set of files an agent loads before it reads a prompt: its Skills and its
+Global Instructions. Nexus gives every part of that context one explicit,
+recoverable Owner and reconciles the native folders of both agents into
+Managed Links that point at that Owner.
 
 ## Language
+
+### Context
+
+**Agent Context**:
+Everything one agent loads before it reads a prompt, independent of the
+project: its Skills (installed, custom, and control) and its Global
+Instructions. Nexus manages exactly this set and nothing else in an Agent
+Home.
+_Avoid_: configuration, setup, memory, prompt, agent state
 
 ### Skills
 

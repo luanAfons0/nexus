@@ -1,6 +1,11 @@
-# Nexus skill manager
+# Nexus context manager
 
-Nexus gives Claude and Codex one explicit, recoverable owner for every skill.
+Nexus is the context manager for Claude and Codex. An agent's context is the
+set of files it loads before it reads your prompt: its skills and its global
+instructions. Nexus gives every part of that context one explicit,
+recoverable owner and reconciles both agents to it, so Claude and Codex load
+the same skills and byte-identical global instructions.
+
 Each skill has one kind and one owner: installed skills are owned by the
 canonical root `~/.agents/skills`, custom skills by the custom root
 `~/.custom-skills`, and control skills by `~/.nexus`. The Nexus lock
