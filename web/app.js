@@ -41,6 +41,9 @@ const ROUTES = ['skills', 'global'];
 const DEFAULT_ROUTE = 'skills';
 
 const routeState = { current: null, restoring: false };
+// The run this page is served from; see "the run" below. Declared here
+// because the router refuses to leave the stopped state.
+const runState = { pid: null, mode: null, stopped: false };
 
 function routeFromHash() {
   const name = location.hash.replace(/^#\/?/, '');
@@ -61,6 +64,9 @@ function confirmLeaveEditor() {
 
 function renderRoute(route) {
   routeState.current = route;
+  // The stopped state replaces both routed sections; nothing brings them
+  // back, because the run they read from is gone.
+  if (runState.stopped) return;
   for (const name of ROUTES) {
     document.getElementById(name).hidden = name !== route;
   }
@@ -85,6 +91,10 @@ function onHashChange() {
   }
   const next = routeFromHash();
   if (next === routeState.current) return;
+  if (runState.stopped) {
+    renderRoute(next);
+    return;
+  }
   if (routeState.current === 'global' && !confirmLeaveEditor()) {
     routeState.restoring = true;
     location.hash = routeHash('global');
@@ -110,6 +120,110 @@ function initShell() {
 }
 
 initShell();
+
+// --- the run ---------------------------------------------------------------
+
+// GET api/run and POST api/shutdown are the two endpoints with no CLI
+// command behind them: they are the server's own state. They answer no
+// {command, exit, stdout, stderr} envelope, so they never go through api()
+// and never appear in Last command.
+async function serverState(name, options) {
+  const { method = 'GET', body } = options || {};
+  const init = { method, headers: {}, cache: 'no-store' };
+  if (body !== undefined) {
+    init.headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(body);
+  }
+  const response = await fetch(API + name, init);
+  if (!response.ok) {
+    const error = new Error('HTTP ' + response.status);
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
+function setRunBadge(kind, text) {
+  const badge = document.getElementById('run-badge');
+  badge.className = 'badge ' + kind;
+  badge.hidden = false;
+  document.getElementById('run-badge-text').textContent = text;
+}
+
+async function loadRun() {
+  let run;
+  try {
+    run = await serverState('run');
+  } catch (error) {
+    setRunBadge('unreachable', 'unreachable');
+    return;
+  }
+  runState.pid = run.pid;
+  runState.mode = run.mode;
+  setRunBadge('linked', 'running \u00b7 '
+    + (run.mode === 'detached' ? 'detached' : 'this terminal')
+    + ' \u00b7 pid ' + run.pid);
+  document.getElementById('stop-server').disabled = false;
+}
+
+// A run the user chose to end must not look like a failure, so the page
+// becomes a calm stopped state rather than the red connectionLost() banner,
+// which is kept for a run that ended without being asked to.
+function renderStopped() {
+  runState.stopped = true;
+  setRunBadge('absent', 'stopped');
+  document.getElementById('stop-server').disabled = true;
+  for (const button of document.querySelectorAll('#subnav button[data-route]')) {
+    button.disabled = true;
+  }
+  for (const id of ['banners', 'skills', 'global', 'last-command']) {
+    document.getElementById(id).hidden = true;
+  }
+  document.getElementById('stopped').hidden = false;
+}
+
+function openStopDialog() {
+  const confirmButton = el('button', { class: 'btn dng', type: 'button', text: 'Stop server' });
+  const dialog = el('dialog', { class: 'modal' }, [
+    el('div', { class: 'modal-hd', text: 'Stop the Nexus server' }),
+    el('div', { class: 'modal-body' }, [
+      el('div', { text: 'This stops the server that serves this page. It runs no CLI command and changes nothing on disk.' }),
+      el('div', { class: 'hint' }, [
+        'The Run Token dies with the run, so this URL stops answering. Unsaved editor text is lost. Start a new run with ',
+        el('code', { text: 'nexus ui' }), '.',
+      ]),
+    ]),
+    el('div', { class: 'modal-ft' }, [
+      el('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: () => dialog.close() }),
+      confirmButton,
+    ]),
+  ]);
+  confirmButton.addEventListener('click', async () => {
+    confirmButton.disabled = true;
+    try {
+      await serverState('shutdown', { method: 'POST', body: {} });
+    } catch (error) {
+      dialog.close();
+      banner('stop', 'err', [
+        el('strong', { text: 'Not stopped.' }),
+        ' The server refused the request' + (error.status ? ': HTTP ' + error.status : '') + '.',
+      ]);
+      return;
+    }
+    dialog.close();
+    renderStopped();
+  });
+  dialog.addEventListener('close', () => dialog.remove());
+  document.body.append(dialog);
+  dialog.showModal();
+}
+
+document.getElementById('stop-server').addEventListener('click', () => {
+  if (runState.stopped) return;
+  openStopDialog();
+});
+
+loadRun();
 
 // --- api client, banners, toasts, Last command panel ----------------------
 
