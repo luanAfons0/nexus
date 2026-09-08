@@ -471,6 +471,7 @@ Every endpoint lives under `/t/TOKEN/api/` and is one CLI command:
 | `PUT api/global` with `{content, ifMatch}` | `nexus global edit --if-match <ifMatch>`, `content` on standard input |
 | `POST api/update` with `{name}` | `nexus update <name>` |
 | `POST api/remove` with `{name}` | `nexus remove <name>` |
+| `POST api/shutdown` | none: it stops the run |
 
 Every answer is HTTP 200 with one JSON object: `command` (the argv the
 server ran), `exit`, `stdout`, and `stderr`, plus `json` with the parsed
@@ -480,6 +481,18 @@ page shows exactly what the command line shows. HTTP errors exist only for
 the loopback guard (403), an unknown path or method (404), a mutating
 request without `Content-Type: application/json` (415), a body that is not
 a JSON object (400), and a second mutating request while one runs (409).
+
+`POST api/shutdown` is the one endpoint with no CLI command behind it: it
+stops the run. Because no command ran, it answers no envelope — there is no
+`command` to report and no exit code to show, and inventing one would break
+the one promise the envelope makes. It answers `200 {"stopping": true}`,
+written and flushed before the listener closes, so the caller reads a result
+rather than a dropped connection, and the page never shows it in Last
+command. It passes the same loopback guard in the same order and, being a
+mutating request, needs `Content-Type: application/json`. It does not take
+the mutation lock, because a stop must work while a slow CLI child runs; the
+stop then follows the path SIGTERM already takes and kills that child.
+`GET api/shutdown` is 404, as any other unknown method-and-path pair is.
 
 ### Pages and routes
 

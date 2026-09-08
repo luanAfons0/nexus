@@ -1275,7 +1275,7 @@ test_readme_documentation() {
               '0004-nexus-writes-only-global-md-in-the-custom-root.md' \
               '## Web UI' '0005-nexus-opens-one-loopback-listener-only-in-nexus-ui.md' \
               '0006-a-web-ui-run-is-recorded-in-a-run-file-and-can-be-stopped.md' 'Run File' \
-              '#/skills' '#/global'; do
+              '#/skills' '#/global' 'POST api/shutdown'; do
     assert_contains README.md "$term" || failed=1
   done
   assert_contains README.md 'Setup preflight checks `jq`, `python3`, and the' || failed=1

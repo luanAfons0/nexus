@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """The Web UI server behind `nexus ui`.
 
-One loopback listener (ADR 0005). Static files come from an allowlist in
-the web directory; every API call is a subprocess run of the Nexus CLI and
-answers HTTP 200 with the envelope {command, exit, stdout, stderr} plus
-`json` when stdout parses. HTTP errors exist only for the loopback guard
-(403), an unknown path (404), a missing JSON content type (415), and a
-concurrent mutation (409). The server never reads or writes GLOBAL.md, the
-Nexus Lock, or any skill root.
+One loopback listener (ADR 0005, revised in part by ADR 0006). Static files
+come from an allowlist in the web directory; every API call is a subprocess
+run of the Nexus CLI and answers HTTP 200 with the envelope {command, exit,
+stdout, stderr} plus `json` when stdout parses. The one exception is
+`POST api/shutdown`, which stops the run: no CLI command runs behind it, so
+it answers no envelope. HTTP errors exist only for the loopback guard (403),
+an unknown path (404), a missing JSON content type (415), and a concurrent
+mutation (409). The server never reads or writes GLOBAL.md, the Nexus Lock,
+or any skill root.
 """
 import argparse
 import http.server
@@ -42,6 +44,8 @@ MUTATIONS = {
 }
 # PUT api/global runs `global edit --if-match <ifMatch>` with `content` on
 # standard input; see do_PUT.
+# POST api/shutdown is the one mutating endpoint with no CLI command behind
+# it; see do_POST and shutdown_run.
 
 
 class State:
@@ -54,6 +58,9 @@ class State:
         self.mutation = threading.Lock()
         self.child_lock = threading.Lock()
         self.child = None
+        # Set by SIGINT, by SIGTERM, and by POST api/shutdown; main() waits
+        # on it and then takes the one teardown path.
+        self.stop = threading.Event()
 
 
 STATE = None
@@ -198,13 +205,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_HEAD(self):
         self.do_GET()
 
-    def json_body(self, keys):
-        """Body of a mutating request: JSON content type (415), one JSON
-        object with every named key as a string (400). None after refusing."""
+    def json_type(self):
+        """Every mutating request needs a JSON content type. False after
+        refusing with 415."""
         content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
         if content_type != "application/json":
             self.read_body()
             self.refuse(415, "json")
+            return False
+        return True
+
+    def json_body(self, keys):
+        """Body of a mutating request: JSON content type (415), one JSON
+        object with every named key as a string (400). None after refusing."""
+        if not self.json_type():
             return None
         raw = self.read_body()
         try:
@@ -228,9 +242,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
             STATE.mutation.release()
         self.send_json(200, envelope)
 
+    def shutdown_run(self):
+        """Stop the run. No CLI command runs behind this, so there is no
+        envelope to answer: a `command` field for a command that never ran
+        would break the one promise the envelope makes. It never takes the
+        mutation lock, because a stop must work while a slow CLI child runs;
+        the teardown kills that child exactly as SIGTERM does. The answer is
+        written and flushed before the listener closes, so the caller reads
+        200 rather than a dropped connection."""
+        self.send_json(200, {"stopping": True})
+        self.close_connection = True
+        try:
+            self.wfile.flush()
+        except OSError:
+            pass
+        STATE.stop.set()
+
     def do_POST(self):
         rel = self.guard()
         if rel is None:
+            return
+        if rel == "api/shutdown":
+            if not self.json_type():
+                return
+            self.read_body()
+            self.shutdown_run()
             return
         subcommand = MUTATIONS.get(("POST", rel[4:])) if rel.startswith("api/") else None
         if subcommand is None:
@@ -302,7 +338,7 @@ def main(argv):
     STATE.port = server.server_address[1]
     url = "http://127.0.0.1:%d/t/%s/" % (STATE.port, STATE.token)
 
-    stop = threading.Event()
+    stop = STATE.stop
 
     def on_signal(signum, frame):
         stop.set()
