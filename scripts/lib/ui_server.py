@@ -10,6 +10,21 @@ it answers no envelope. HTTP errors exist only for the loopback guard (403),
 an unknown path (404), a missing JSON content type (415), and a concurrent
 mutation (409). The server never reads or writes GLOBAL.md, the Nexus Lock,
 or any skill root.
+
+The one file this program owns is the Run File in the Nexus home: the record
+of the one live run, holding its pid, its port, its Run Token, and its mode
+at owner-only permissions (ADR 0006). `--status` and `--stop` read it and
+then confirm the run over the loopback, never by pid: a recorded pid can be
+reused by an unrelated process, but a port that answers the recorded Run
+Token cannot be anything but this server. Where the probe fails, the run is
+gone and the stale Run File is removed.
+
+A run detaches by default. The socket is bound first, so a port that cannot
+be bound still exits 1 with its own message before anything detaches; only
+after a successful bind does the process fork. The child keeps the bound
+socket, calls setsid, records itself, and serves with its diagnostics
+redirected to a log in the Nexus home; the parent prints the handshake line
+and exits 0. `--foreground` keeps the run in the terminal instead.
 """
 import argparse
 import http.server
@@ -22,6 +37,9 @@ import signal
 import subprocess
 import sys
 import threading
+import time
+import urllib.error
+import urllib.request
 
 STATIC = {
     "index.html": "text/html; charset=utf-8",
@@ -106,6 +124,143 @@ def kill_child(child):
         os.killpg(child.pid, signal.SIGKILL)
     except OSError:
         pass
+
+
+# --- the Run File ----------------------------------------------------------
+
+# How long a loopback probe of the recorded run may take, and how long
+# `--stop` waits for the run it asked to stop to clear its Run File.
+PROBE_TIMEOUT = 5.0
+STOP_TIMEOUT = 10.0
+# How long the parent of a Detached Run waits for the child to record itself
+# before it reports that the run did not start.
+DETACH_TIMEOUT = 10.0
+
+RUN_FIELDS = (("pid", int), ("port", int), ("token", str), ("mode", str))
+
+
+def write_run_file(path, run):
+    """Record the run at owner-only permissions: the Run File holds the Run
+    Token, so no other account on the machine may read it."""
+    handle = os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w")
+    with handle:
+        json.dump(run, handle)
+        handle.write("\n")
+    os.chmod(path, 0o600)
+
+
+def read_run_file(path):
+    """The recorded run, or None when there is no Run File that names one."""
+    try:
+        with open(path, "r") as handle:
+            run = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(run, dict):
+        return None
+    for name, kind in RUN_FIELDS:
+        if not isinstance(run.get(name), kind) or isinstance(run.get(name), bool):
+            return None
+    return run
+
+
+def remove_run_file(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def run_url(run):
+    return "http://127.0.0.1:%d/t/%s/" % (run["port"], run["token"])
+
+
+def loopback_request(url, data=None, headers=()):
+    """One request to the recorded run. False for any failure at all: an
+    unreachable port, a refusal, or a foreign listener that is not us."""
+    request = urllib.request.Request(url, data=data,
+                                     method="POST" if data is not None else "GET")
+    for name, value in headers:
+        request.add_header(name, value)
+    try:
+        with urllib.request.urlopen(request, timeout=PROBE_TIMEOUT) as response:
+            response.read()
+            return response.status == 200
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
+def run_answers(run):
+    """True when the recorded port answers the recorded Run Token. This, and
+    never a recorded pid, is what proves a run is alive."""
+    return loopback_request(run_url(run))
+
+
+def wait_for_detach(path, child):
+    """The parent returns only once the Detached Run has recorded itself in
+    the Run File. A child that exits before that is a failed start."""
+    deadline = time.monotonic() + DETACH_TIMEOUT
+    while time.monotonic() < deadline:
+        if os.path.exists(path):
+            return True
+        if os.waitpid(child, os.WNOHANG)[0] == child:
+            return False
+        time.sleep(0.02)
+    return os.path.exists(path)
+
+
+def redirect_to_log(path):
+    """A Detached Run has no terminal, so its diagnostics go to a log in the
+    Nexus home, truncated at each start. The log is owner-only, because a
+    refusal line carries the path it refused and so the Run Token."""
+    log = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.chmod(path, 0o600)
+    devnull = os.open(os.devnull, os.O_RDONLY)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.dup2(devnull, 0)
+    os.dup2(log, 1)
+    os.dup2(log, 2)
+    for handle in (log, devnull):
+        if handle > 2:
+            os.close(handle)
+
+
+def status_mode(path):
+    """Print the live URL of the recorded run, or `not running`. A Run File
+    whose port does not answer is stale: remove it and say so. Exit 0 either
+    way, because this is a question, not an assertion."""
+    run = read_run_file(path)
+    if run is None:
+        sys.stdout.write("nexus ui: not running\n")
+        return 0
+    if not run_answers(run):
+        remove_run_file(path)
+        sys.stdout.write("nexus ui: not running\n")
+        return 0
+    sys.stdout.write("nexus ui: %s\n" % run_url(run))
+    return 0
+
+
+def stop_mode(path):
+    """End the recorded run with the same POST api/shutdown the page sends,
+    then wait for it to clear its own Run File. Exit 0 either way."""
+    run = read_run_file(path)
+    if run is None:
+        sys.stdout.write("nexus ui: not running\n")
+        return 0
+    stopped = loopback_request(run_url(run) + "api/shutdown", b"{}",
+                               [("Content-Type", "application/json")])
+    if not stopped:
+        remove_run_file(path)
+        sys.stdout.write("nexus ui: not running\n")
+        return 0
+    deadline = time.monotonic() + STOP_TIMEOUT
+    while os.path.exists(path) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    remove_run_file(path)
+    sys.stdout.write("nexus ui: stopped\n")
+    return 0
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -317,27 +472,23 @@ def open_browser(url):
             continue
 
 
-def main(argv):
-    global STATE
-    parser = argparse.ArgumentParser(prog="nexus ui")
-    parser.add_argument("--port", type=int, default=0)
-    parser.add_argument("--cli", required=True)
-    parser.add_argument("--web", required=True)
-    parser.add_argument("--timeout", type=float, default=300)
-    parser.add_argument("--no-open", action="store_true")
-    args = parser.parse_args(argv[1:])
-    STATE = State(args)
-
+def record_run(path, mode):
+    """Write the Run File for this process, or report why it cannot be
+    written. True on success."""
     try:
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+        write_run_file(path, {"pid": os.getpid(), "port": STATE.port,
+                              "token": STATE.token, "mode": mode})
+        return True
     except OSError as error:
-        sys.stderr.write("nexus: error: cannot bind 127.0.0.1:%d: %s\n"
-                         % (args.port, error.strerror or error))
-        return 1
-    server.daemon_threads = True
-    STATE.port = server.server_address[1]
-    url = "http://127.0.0.1:%d/t/%s/" % (STATE.port, STATE.token)
+        sys.stderr.write("nexus: error: cannot write the Run File %s: %s\n"
+                         % (path, error.strerror or error))
+        return False
 
+
+def serve(server, args, url):
+    """Serve until the stop event, then take the one teardown path: kill any
+    CLI child, close the listener, remove the Run File. SIGINT, SIGTERM, and
+    POST api/shutdown all end here."""
     stop = STATE.stop
 
     def on_signal(signum, frame):
@@ -350,8 +501,6 @@ def main(argv):
     thread.daemon = True
     thread.start()
 
-    sys.stdout.write("nexus ui: %s\n" % url)
-    sys.stdout.flush()
     if not args.no_open:
         open_browser(url)
 
@@ -366,6 +515,83 @@ def main(argv):
         kill_child(child)
     server.shutdown()
     server.server_close()
+    remove_run_file(args.run_file)
+    return 0
+
+
+def main(argv):
+    global STATE
+    parser = argparse.ArgumentParser(prog="nexus ui")
+    parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--cli")
+    parser.add_argument("--web")
+    parser.add_argument("--timeout", type=float, default=300)
+    parser.add_argument("--no-open", action="store_true")
+    parser.add_argument("--foreground", action="store_true")
+    parser.add_argument("--run-file", required=True)
+    parser.add_argument("--log-file")
+    parser.add_argument("--status", action="store_true")
+    parser.add_argument("--stop", action="store_true")
+    args = parser.parse_args(argv[1:])
+    if args.status:
+        return status_mode(args.run_file)
+    if args.stop:
+        return stop_mode(args.run_file)
+    if not args.foreground and not args.log_file:
+        sys.stderr.write("nexus: error: a Detached Run needs --log-file\n")
+        return 1
+    STATE = State(args)
+
+    # One run at a time. A recorded run whose port still answers wins and
+    # this start is refused; a Run File whose port does not answer is stale,
+    # so remove it and start normally.
+    recorded = read_run_file(args.run_file)
+    if recorded is not None:
+        if run_answers(recorded):
+            sys.stderr.write("nexus: error: a Web UI run is already live: %s\n"
+                             % run_url(recorded))
+            return 1
+        remove_run_file(args.run_file)
+
+    # Bind first, so a port that cannot be bound exits 1 with this message
+    # before anything detaches.
+    try:
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    except OSError as error:
+        sys.stderr.write("nexus: error: cannot bind 127.0.0.1:%d: %s\n"
+                         % (args.port, error.strerror or error))
+        return 1
+    server.daemon_threads = True
+    STATE.port = server.server_address[1]
+    url = "http://127.0.0.1:%d/t/%s/" % (STATE.port, STATE.token)
+
+    if args.foreground:
+        if not record_run(args.run_file, "foreground"):
+            server.server_close()
+            return 1
+        sys.stdout.write("nexus ui: %s\n" % url)
+        sys.stdout.flush()
+        return serve(server, args, url)
+
+    # Detach. The fork happens before any thread starts, so the child keeps
+    # the already-bound socket and nothing else.
+    child = os.fork()
+    if child == 0:
+        os.setsid()
+        if not record_run(args.run_file, "detached"):
+            os._exit(1)
+        redirect_to_log(args.log_file)
+        return serve(server, args, url)
+
+    # The parent owns neither the listener nor the run any more. It returns
+    # the prompt as soon as the child has recorded itself.
+    server.server_close()
+    if not wait_for_detach(args.run_file, child):
+        sys.stderr.write("nexus: error: the Detached Run did not start; see %s\n"
+                         % args.log_file)
+        return 1
+    sys.stdout.write("nexus ui: %s\n" % url)
+    sys.stdout.flush()
     return 0
 
 

@@ -366,19 +366,24 @@ read-only command, and reports the result. It never runs a mutating command.
 ## The nexus launcher skill
 
 `/nexus` in Claude and `$nexus` in Codex start the Web UI: the skill runs
-`nexus ui` in the background of the chat's shell, prints the handshake
-line with the URL, and ends. The printed URL is the contract. The server
-tries to open a browser on its own, but from an agent sandbox it often
-cannot, so open the URL by hand. The skill never runs install, setup,
-link, update, remove, or global itself; the page does those through the
-same CLI, so the same refusals apply. The former chat menu is gone.
+`nexus ui`, prints the handshake line with the URL, and ends. The run
+detaches itself and the command returns, so the run outlives the agent
+session that started it and the skill needs no `nohup`, no log file, and no
+`disown`. The printed URL is the contract. The server tries to open a
+browser on its own, but from an agent sandbox it often cannot, so open the
+URL by hand. To end the run, press `Stop server` in the page header or run
+`nexus ui --stop`. The skill never runs install, setup, link, update,
+remove, or global itself; the page does those through the same CLI, so the
+same refusals apply. The former chat menu is gone.
 
 ## Web UI
 
 `nexus ui` serves a local page, the Web UI, from Python's `http.server`.
 It is the one command in which Nexus opens a network listener, and that
-listener is bound to `127.0.0.1` only, in the foreground, until Ctrl-C or
-SIGTERM stops it. The page shows every skill of all three kinds in one
+listener is bound to `127.0.0.1` only. The run detaches by default and ends
+on `nexus ui --stop` or on `Stop server` in the page; `--foreground` keeps it
+in the terminal, where Ctrl-C or SIGTERM stops it. The page shows every skill
+of all three kinds in one
 table and edits the global instructions in a GitHub-style editor with Edit
 and Preview tabs, line numbers, soft wrap, and Cancel and "Save changes"
 buttons ("Save", not "Commit", so the word is not confused with publish or
@@ -412,15 +417,52 @@ and a reader who can open it already has your filesystem.
 ```bash
 ~/.nexus/scripts/nexus ui
 ~/.nexus/scripts/nexus ui --port 8765 --no-open
+~/.nexus/scripts/nexus ui --foreground
+~/.nexus/scripts/nexus ui --status
+~/.nexus/scripts/nexus ui --stop
 ```
 
-The server runs in the foreground until Ctrl-C or SIGTERM stops it; on exit
-it kills any CLI child still running. There is no detached mode, no pid
-file, and no `stop` command: the terminal that shows the URL is the one
-place the server lives. The default port is ephemeral, chosen by the
-system; `--port N` binds a fixed port. Exit codes: 0 on a clean stop, 1 when
-the port cannot be bound, when `python3` is missing, or when the `web`
-directory in the Nexus home is absent, and 2 on usage.
+`nexus ui` binds the port, prints the handshake line, detaches, and returns
+your prompt, so starting the Web UI does not cost you a terminal. The
+detached run ends on `nexus ui --stop` or on `Stop server` in the page.
+`nexus ui --foreground` keeps the run in the terminal, where Ctrl-C or
+SIGTERM stops it. Either way, on exit the run kills any CLI child still
+running. The default port is ephemeral, chosen by the system; `--port N`
+binds a fixed port. Exit codes: 0 on a clean stop, 1 when the port cannot be
+bound, when a run is already live, when `python3` is missing, or when the
+`web` directory in the Nexus home is absent, and 2 on usage.
+
+Detaching happens after the bind, so a port that cannot be bound still exits
+1 with its own message before anything detaches. A detached run has no
+terminal for its diagnostics, so they go to the log `~/.nexus/ui.log`,
+truncated at each start and owner-only, because a refusal line carries the
+path it refused and so the Run Token. The handshake line still reaches
+standard output.
+
+One run at a time. `nexus ui` refuses to start while the Run File names a run
+whose port still answers, prints that run's URL, and exits 1. Where the
+recorded run does not answer, the Run File is stale: Nexus removes it and
+starts normally.
+
+Every run records itself in the Run File `~/.nexus/ui-run.json`, which holds
+the run's pid, its port, its Run Token, and its mode. It is created at
+owner-only permissions, because it holds the Run Token, and the run removes
+it when it ends: on Ctrl-C, on SIGTERM, and after a shutdown request.
+
+`nexus ui --status` prints the live URL of the recorded run, in the same
+shape as the handshake line, and `nexus ui --stop` ends that run. Both are
+whole modes and take no other flag; combining one with `--port`, `--no-open`,
+or the other is a usage fault and exits 2. Both are questions rather than
+assertions: they exit 0 whether or not a run exists, and print `nexus ui:
+not running` when there is none.
+
+Both confirm the run over the loopback and never by pid. A recorded pid can
+be reused by an unrelated process, but a port that answers the recorded Run
+Token cannot be anything but the Nexus server, so `--status` probes the
+recorded URL and `--stop` sends the same `POST api/shutdown` the page sends.
+Where the probe fails the run is gone: Nexus removes the stale Run File and
+reports `not running`. No Nexus command signals a pid it has not confirmed,
+so there is no stale-pid hazard to reason about.
 
 The first line on standard output is the handshake line, exactly:
 
