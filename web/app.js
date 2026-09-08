@@ -314,6 +314,13 @@ function showLastCommand(envelope) {
 
 // --- skills table -----------------------------------------------------------
 
+// Kind decides what a row can do, not just what it says: an Installed Skill
+// has Update and Remove, a Custom Skill points at the Custom Root, and a
+// Control Skill is never updated or removed. So the table groups by kind
+// rather than carrying a Kind column, and the kind filter narrows to one
+// group. Row order inside a group stays the CLI order.
+const KINDS = ['installed', 'custom', 'control'];
+
 const skillsState = { rows: [], busy: false };
 
 function localDate(iso) {
@@ -341,7 +348,6 @@ function skillRow(row) {
   const dash = el('span', { class: 'muted', text: '–' });
   return el('tr', { 'data-name': row.name }, [
     el('td', { class: 'mono', text: row.name }),
-    el('td', null, [el('span', { class: 'kind ' + row.kind, text: row.kind })]),
     el('td', null, [row.source ? document.createTextNode(row.source) : dash.cloneNode(true)]),
     el('td', { class: 'mono muted', title: row.hash || null }, [row.hash ? document.createTextNode(row.hash.slice(0, 8)) : dash.cloneNode(true)]),
     el('td', { class: 'muted', title: row.updatedAt || null }, [row.updatedAt ? document.createTextNode(localDate(row.updatedAt)) : dash.cloneNode(true)]),
@@ -349,33 +355,70 @@ function skillRow(row) {
   ]);
 }
 
+function skillCount(shown) {
+  return shown + (shown === 1 ? ' skill' : ' skills');
+}
+
+// One tbody per kind, headed by the kind pill and the count of the rows
+// shown under it. A kind with no rows at all is not drawn, so an absent
+// Nexus Lock shows only Custom and Control.
+function skillGroup(kind, rows) {
+  return el('tbody', { 'data-kind': kind }, [
+    el('tr', { class: 'grp' }, [
+      el('td', { colspan: '5' }, [
+        el('span', { class: 'kind ' + kind, text: kind }),
+        el('span', { class: 'hint grp-count' }),
+      ]),
+    ]),
+    ...rows.map(skillRow),
+  ]);
+}
+
 function renderSkills(rows) {
   const body = document.getElementById('skills-body');
   body.classList.remove('empty');
+  const groups = KINDS
+    .map((kind) => [kind, rows.filter((row) => row.kind === kind)])
+    .filter(([, kindRows]) => kindRows.length !== 0)
+    .map(([kind, kindRows]) => skillGroup(kind, kindRows));
   replaceChildren(body, [
     el('table', null, [
       el('thead', null, [el('tr', null, [
-        el('th', { class: 'name', text: 'Name' }), el('th', { text: 'Kind' }), el('th', { text: 'Source' }),
+        el('th', { class: 'name', text: 'Name' }), el('th', { text: 'Source' }),
         el('th', { text: 'Hash' }), el('th', { text: 'Updated' }), el('th', { class: 'right', text: 'Actions' }),
       ])]),
-      el('tbody', null, rows.map(skillRow)),
+      ...groups,
+      el('tbody', { id: 'skills-none', hidden: '' }, [
+        el('tr', null, [el('td', { colspan: '5', class: 'muted', text: 'No skill matches these filters.' })]),
+      ]),
     ]),
   ]);
   applySkillsFilter();
 }
 
+// The two filters compose: the kind picks the group, the needle picks the
+// row inside it.
 function applySkillsFilter() {
   const needle = document.getElementById('skills-filter').value.trim().toLowerCase();
-  const rows = Array.from(document.querySelectorAll('#skills-body tbody tr'));
+  const kind = document.getElementById('skills-kind').value;
   let shown = 0;
-  for (const row of rows) {
-    const match = needle === '' || row.dataset.name.toLowerCase().includes(needle);
-    row.classList.toggle('hidden', !match);
-    if (match) shown += 1;
+  for (const group of document.querySelectorAll('#skills-body tbody[data-kind]')) {
+    const inKind = kind === 'all' || group.dataset.kind === kind;
+    let here = 0;
+    for (const row of group.querySelectorAll('tr[data-name]')) {
+      const match = inKind && (needle === '' || row.dataset.name.toLowerCase().includes(needle));
+      row.classList.toggle('hidden', !match);
+      if (match) here += 1;
+    }
+    group.classList.toggle('hidden', here === 0);
+    group.querySelector('.grp-count').textContent = skillCount(here);
+    shown += here;
   }
-  const count = document.getElementById('skills-count');
+  const none = document.getElementById('skills-none');
+  if (none) none.hidden = shown !== 0;
   const total = skillsState.rows.length;
-  count.textContent = needle === '' ? total + ' skills' : shown + ' of ' + total + ' skills';
+  document.getElementById('skills-count').textContent =
+    needle === '' && kind === 'all' ? skillCount(total) : shown + ' of ' + skillCount(total);
 }
 
 function showLockBanner(envelope) {
@@ -410,6 +453,7 @@ async function loadSkills() {
 }
 
 document.getElementById('skills-filter').addEventListener('input', applySkillsFilter);
+document.getElementById('skills-kind').addEventListener('change', applySkillsFilter);
 loadSkills();
 
 // --- global instructions editor -------------------------------------------

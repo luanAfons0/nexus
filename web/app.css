@@ -131,7 +131,11 @@ th.right, td.right { text-align: right; }
 th.name { width: 30%; }
 td { padding: 10px 16px; border-bottom: 1px solid #d8dee4; vertical-align: middle; }
 tr:last-child td { border-bottom: 0; }
-tr.hidden { display: none; }
+tr.hidden, tbody.hidden { display: none; }
+/* One group header per kind: the pill the Kind column used to carry, and
+   the count of rows shown under it. */
+tr.grp td { background: #f6f8fa; padding: 8px 16px; border-bottom: 1px solid #d8dee4; }
+tr.grp .hint { margin-left: 8px; }
 .actions { display: inline-flex; gap: 8px; }
 
 /* Editor */
