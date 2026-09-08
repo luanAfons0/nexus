@@ -426,6 +426,7 @@ of its own, so it adds no network surface.
 ~/.nexus/scripts/nexus ui --foreground
 ~/.nexus/scripts/nexus ui --status
 ~/.nexus/scripts/nexus ui --stop
+~/.nexus/scripts/nexus ui --open
 ```
 
 `nexus ui` binds the port, prints the handshake line, detaches, and returns
@@ -461,6 +462,18 @@ whole modes and take no other flag; combining one with `--port`, `--no-open`,
 or the other is a usage fault and exits 2. Both are questions rather than
 assertions: they exit 0 whether or not a run exists, and print `nexus ui:
 not running` when there is none.
+
+`nexus ui --open` is the idempotent "show me the Web UI", and it is the
+answer to a lost URL. Where the recorded run answers, it opens your browser
+at that run and starts nothing; where no run is recorded, or the recorded one
+does not answer, it removes any stale Run File, starts a Detached Run, and
+opens your browser at the new one. Either way it prints the same handshake
+line and exits 0, so a shortcut or a script needs no branch and reads no exit
+code for meaning it does not carry. It never starts a second run while one is
+live. `--open` is a whole mode too: combining it with `--port`, `--no-open`,
+`--foreground`, `--status`, or `--stop` exits 2. Its exit codes are a start's:
+0 on success, 1 when `python3` is missing, when `~/.nexus/web` is absent, or
+when the port cannot be bound.
 
 Both confirm the run over the loopback and never by pid. A recorded pid can
 be reused by an unrelated process, but a port that answers the recorded Run

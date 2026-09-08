@@ -9,9 +9,12 @@
 # free as soon as the handshake line is printed. --foreground keeps the run
 # in the terminal, where Ctrl-C and SIGTERM stop it.
 #
-# --status and --stop are whole modes, not flags on a run. They read the Run
-# File and confirm the recorded run over the loopback, never by pid, so no
-# command signals a process it has not confirmed (ADR 0006).
+# --status, --stop, and --open are whole modes, not flags on a run. --status
+# and --stop read the Run File and confirm the recorded run over the
+# loopback, never by pid, so no command signals a process it has not
+# confirmed (ADR 0006). --open is the idempotent "show me the Web UI": it
+# opens the recorded run when it answers, and otherwise starts one and opens
+# that.
 
 # The CLI the server runs for every request. Tests override this to inject
 # faults into the child; the real path is the script that is running now.
@@ -63,14 +66,18 @@ parse_ui_args() {
         UI_MODE=stop
         modes=$(( modes + 1 ))
         shift ;;
+      --open)
+        UI_MODE=open
+        modes=$(( modes + 1 ))
+        shift ;;
       *)
-        error "ui accepts only --port <N>, --no-open, --foreground, --status, and --stop"
+        error "ui accepts only --port <N>, --no-open, --foreground, --status, --stop, and --open"
         usage >&2
         return 2 ;;
     esac
   done
   if (( modes > 1 || ( modes == 1 && run_flags == 1 ) )); then
-    error "ui: --status and --stop are whole modes and take no other flag"
+    error "ui: --status, --stop, and --open are whole modes and take no other flag"
     usage >&2
     return 2
   fi
@@ -88,7 +95,7 @@ ui_command() {
   web="$NEXUS_HOME/web"
   cli="$(ui_cli_path)"
   argv=(python3 "$NEXUS_SCRIPTS_DIR/lib/ui_server.py" --run-file "$(ui_run_file)")
-  if [[ "$UI_MODE" != serve ]]; then
+  if [[ "$UI_MODE" == status || "$UI_MODE" == stop ]]; then
     # A question about the recorded run: it needs no page to serve.
     argv+=("--$UI_MODE")
     exec "${argv[@]}"
@@ -97,8 +104,13 @@ ui_command() {
     error "web directory is absent or incomplete: $web"
     return 1
   fi
+  # --open is the asymmetry: it is a whole mode like the other two, but it
+  # may end in a run, so it carries the full serve arguments rather than the
+  # run-file-only list. Its defaults are a plain start with the browser
+  # opened, which is exactly what it needs when no run answers.
   argv+=(--port "$UI_PORT" --cli "$cli" --web "$web"
          --log-file "$(ui_log_file)" --timeout "${NEXUS_UI_TIMEOUT:-300}")
+  [[ "$UI_MODE" != open ]] || argv+=(--open)
   [[ "$UI_OPEN" == true ]] || argv+=(--no-open)
   [[ "$UI_FOREGROUND" == false ]] || argv+=(--foreground)
   exec "${argv[@]}"
