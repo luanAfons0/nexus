@@ -471,6 +471,7 @@ Every endpoint lives under `/t/TOKEN/api/` and is one CLI command:
 | `PUT api/global` with `{content, ifMatch}` | `nexus global edit --if-match <ifMatch>`, `content` on standard input |
 | `POST api/update` with `{name}` | `nexus update <name>` |
 | `POST api/remove` with `{name}` | `nexus remove <name>` |
+| `POST api/shutdown` | none: it stops the run |
 
 Every answer is HTTP 200 with one JSON object: `command` (the argv the
 server ran), `exit`, `stdout`, and `stderr`, plus `json` with the parsed
@@ -480,6 +481,36 @@ page shows exactly what the command line shows. HTTP errors exist only for
 the loopback guard (403), an unknown path or method (404), a mutating
 request without `Content-Type: application/json` (415), a body that is not
 a JSON object (400), and a second mutating request while one runs (409).
+
+`POST api/shutdown` is the one endpoint with no CLI command behind it: it
+stops the run. Because no command ran, it answers no envelope — there is no
+`command` to report and no exit code to show, and inventing one would break
+the one promise the envelope makes. It answers `200 {"stopping": true}`,
+written and flushed before the listener closes, so the caller reads a result
+rather than a dropped connection, and the page never shows it in Last
+command. It passes the same loopback guard in the same order and, being a
+mutating request, needs `Content-Type: application/json`. It does not take
+the mutation lock, because a stop must work while a slow CLI child runs; the
+stop then follows the path SIGTERM already takes and kills that child.
+`GET api/shutdown` is 404, as any other unknown method-and-path pair is.
+
+### Pages and routes
+
+Skills and Global Instructions are two pages, not two anchors in one
+scrolling document. The route is the URL hash: `#/skills` and `#/global`.
+Each renders one section, and the sub-nav marks the current route and
+carries `aria-current="page"`, so a reload lands on the page you were on and
+Back and Forward move between the two. An absent, empty, or unknown hash
+resolves to `#/skills`.
+
+The route is a hash and not a path, so no server change is needed: a path
+route would force the server to serve `index.html` for paths outside the
+four-file static allowlist. Nothing is destroyed on a route change, because
+both sections stay in the page and are only toggled, so the Skills filter
+text, the editor content, the banners, and the "Your unsaved version" panel
+all survive it. Leaving `#/global` with unsaved edits asks first; refusing
+leaves the route unchanged. The Last command panel sits outside both routes
+and shows on both: it belongs to the run, not to a page.
 
 ### Skills table and Last command
 
