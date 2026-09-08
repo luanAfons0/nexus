@@ -481,6 +481,24 @@ the loopback guard (403), an unknown path or method (404), a mutating
 request without `Content-Type: application/json` (415), a body that is not
 a JSON object (400), and a second mutating request while one runs (409).
 
+### Pages and routes
+
+Skills and Global Instructions are two pages, not two anchors in one
+scrolling document. The route is the URL hash: `#/skills` and `#/global`.
+Each renders one section, and the sub-nav marks the current route and
+carries `aria-current="page"`, so a reload lands on the page you were on and
+Back and Forward move between the two. An absent, empty, or unknown hash
+resolves to `#/skills`.
+
+The route is a hash and not a path, so no server change is needed: a path
+route would force the server to serve `index.html` for paths outside the
+four-file static allowlist. Nothing is destroyed on a route change, because
+both sections stay in the page and are only toggled, so the Skills filter
+text, the editor content, the banners, and the "Your unsaved version" panel
+all survive it. Leaving `#/global` with unsaved edits asks first; refusing
+leaves the route unchanged. The Last command panel sits outside both routes
+and shows on both: it belongs to the run, not to a page.
+
 ### Skills table and Last command
 
 The Skills table is `nexus list --json` as rows, in CLI order: name, kind

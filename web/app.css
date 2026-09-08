@@ -37,14 +37,18 @@ button:disabled { cursor: not-allowed; }
   position: sticky; top: 0; z-index: 10;
   display: flex; gap: 4px; padding: 0 32px; background: #fff; border-bottom: 1px solid #d0d7de;
 }
-.subnav a { padding: 10px 12px; color: #1f2328; border-bottom: 2px solid transparent; font-weight: 500; }
-.subnav a:hover { text-decoration: none; border-bottom-color: #d0d7de; }
-.subnav a.on { border-bottom-color: #fd8c73; }
+.subnav button {
+  padding: 10px 12px; color: #1f2328; background: none; border: 0;
+  border-bottom: 2px solid transparent; font-weight: 500;
+}
+.subnav button:hover { border-bottom-color: #d0d7de; }
+.subnav button.on { border-bottom-color: #fd8c73; }
 
 /* Page and sections */
 .page { padding: 24px 32px 40px; display: flex; flex-direction: column; gap: 32px; max-width: 1216px; }
 h2 { font-size: 20px; font-weight: 600; margin: 0; }
-.sec { display: flex; flex-direction: column; gap: 12px; scroll-margin-top: 56px; }
+.sec { display: flex; flex-direction: column; gap: 12px; }
+.sec[hidden] { display: none; }
 .sec-hd { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .sec-tools { display: flex; gap: 8px; align-items: center; }
 .card { background: #fff; border: 1px solid #d0d7de; border-radius: 6px; overflow: hidden; }

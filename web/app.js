@@ -30,19 +30,83 @@ function replaceChildren(node, children) {
   node.replaceChildren(...children.filter((child) => child !== null && child !== undefined));
 }
 
+// --- routes ----------------------------------------------------------------
+
+// Two routes, one section each, on the hash: a path route would force the
+// server to serve index.html outside the four-file static allowlist. Both
+// sections stay in the DOM and are toggled, so the editor text, the Skills
+// filter, the banners, and the unsaved-version panel survive a route change.
+// The Last command panel is outside both: it belongs to the run, not a page.
+const ROUTES = ['skills', 'global'];
+const DEFAULT_ROUTE = 'skills';
+
+const routeState = { current: null, restoring: false };
+
+function routeFromHash() {
+  const name = location.hash.replace(/^#\/?/, '');
+  return ROUTES.includes(name) ? name : DEFAULT_ROUTE;
+}
+
+function routeHash(route) {
+  return '#/' + route;
+}
+
+// The editor is never destroyed by a route change, but leaving with unsaved
+// text hides it behind a page, so ask first with the same dirty check that
+// guards beforeunload.
+function confirmLeaveEditor() {
+  if (!editorDirty()) return true;
+  return confirm('Leave Global Instructions with unsaved edits? Your text stays in the editor until you reload the page.');
+}
+
+function renderRoute(route) {
+  routeState.current = route;
+  for (const name of ROUTES) {
+    document.getElementById(name).hidden = name !== route;
+  }
+  for (const button of document.querySelectorAll('#subnav button[data-route]')) {
+    const on = button.dataset.route === route;
+    button.classList.toggle('on', on);
+    if (on) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  }
+}
+
+function goToRoute(route) {
+  if (routeState.current === route) return;
+  location.hash = routeHash(route);
+}
+
+function onHashChange() {
+  // The hash we put back after a refusal fires this too; ignore that one.
+  if (routeState.restoring) {
+    routeState.restoring = false;
+    return;
+  }
+  const next = routeFromHash();
+  if (next === routeState.current) return;
+  if (routeState.current === 'global' && !confirmLeaveEditor()) {
+    routeState.restoring = true;
+    location.hash = routeHash('global');
+    return;
+  }
+  renderRoute(next);
+}
+
 function initShell() {
   document.getElementById('base-url').textContent = location.origin + BASE;
-  const links = Array.from(document.querySelectorAll('#subnav a'));
-  const sections = links.map((link) => document.querySelector(link.getAttribute('href')));
-  function markActive() {
-    let current = 0;
-    sections.forEach((section, index) => {
-      if (section && section.getBoundingClientRect().top <= 80) current = index;
-    });
-    links.forEach((link, index) => link.classList.toggle('on', index === current));
+  const route = routeFromHash();
+  // An absent, empty, or unknown hash resolves to Skills, and the URL says
+  // so without adding a history entry.
+  if (location.hash !== routeHash(route)) {
+    history.replaceState(null, '', location.pathname + location.search + routeHash(route));
   }
-  window.addEventListener('scroll', markActive, { passive: true });
-  markActive();
+  renderRoute(route);
+  document.getElementById('subnav').addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-route]');
+    if (button) goToRoute(button.dataset.route);
+  });
+  window.addEventListener('hashchange', onHashChange);
 }
 
 initShell();
