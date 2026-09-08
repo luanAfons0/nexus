@@ -43,7 +43,11 @@ const DEFAULT_ROUTE = 'skills';
 const routeState = { current: null, restoring: false };
 // The run this page is served from; see "the run" below. Declared here
 // because the router refuses to leave the stopped state.
-const runState = { pid: null, mode: null, stopped: false };
+const runState = { pid: null, mode: null, stopped: false, poll: null };
+
+// How often the header re-reads the run. The check runs no CLI child, so a
+// tab left open costs one loopback request every few seconds.
+const RUN_POLL_MS = 5000;
 
 function routeFromHash() {
   const name = location.hash.replace(/^#\/?/, '');
@@ -143,27 +147,42 @@ async function serverState(name, options) {
   return response.json();
 }
 
-function setRunBadge(kind, text) {
+// The tab title carries the same state as the badge, because a narrow tab
+// shows the title and not the header.
+function setRunBadge(kind, text, title) {
   const badge = document.getElementById('run-badge');
   badge.className = 'badge ' + kind;
   badge.hidden = false;
   document.getElementById('run-badge-text').textContent = text;
+  document.title = title;
 }
 
+// Read the run again. The badge is only as true as its last check, so a tab
+// left open in the background keeps checking: green while the port answers,
+// red as soon as it does not. One failed check is not final — the poll goes
+// on, so a transient failure corrects itself.
 async function loadRun() {
+  if (runState.stopped) return;
   let run;
   try {
     run = await serverState('run');
   } catch (error) {
-    setRunBadge('unreachable', 'unreachable');
+    setRunBadge('unreachable', 'unreachable', 'Nexus \u2014 not running');
+    document.getElementById('stop-server').disabled = true;
     return;
   }
   runState.pid = run.pid;
   runState.mode = run.mode;
   setRunBadge('linked', 'running \u00b7 '
     + (run.mode === 'detached' ? 'detached' : 'this terminal')
-    + ' \u00b7 pid ' + run.pid);
+    + ' \u00b7 pid ' + run.pid, 'Nexus');
   document.getElementById('stop-server').disabled = false;
+}
+
+function stopPollingRun() {
+  if (runState.poll === null) return;
+  clearInterval(runState.poll);
+  runState.poll = null;
 }
 
 // A run the user chose to end must not look like a failure, so the page
@@ -171,7 +190,10 @@ async function loadRun() {
 // which is kept for a run that ended without being asked to.
 function renderStopped() {
   runState.stopped = true;
-  setRunBadge('absent', 'stopped');
+  // A Run Token dies with its run, so nothing brings this page back and
+  // there is nothing left to check.
+  stopPollingRun();
+  setRunBadge('absent', 'stopped', 'Nexus \u2014 stopped');
   document.getElementById('stop-server').disabled = true;
   for (const button of document.querySelectorAll('#subnav button[data-route]')) {
     button.disabled = true;
@@ -224,6 +246,7 @@ document.getElementById('stop-server').addEventListener('click', () => {
 });
 
 loadRun();
+runState.poll = setInterval(loadRun, RUN_POLL_MS);
 
 // --- api client, banners, toasts, Last command panel ----------------------
 
