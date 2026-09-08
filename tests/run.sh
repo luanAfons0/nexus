@@ -1225,13 +1225,16 @@ test_setup_canonical_scan_failure_is_propagated() {
 
 test_metadata() {
   local failed=0
-  assert_contains .gitignore 'skill-lock.json' || failed=1
-  if git -C "$REPO_ROOT" check-ignore -q -- skill-lock.json; then
-    :
-  else
-    printf '  skill-lock.json is not actually ignored\n' >&2
-    failed=1
-  fi
+  local ignored
+  for ignored in skill-lock.json ui-run.json; do
+    assert_contains .gitignore "$ignored" || failed=1
+    if git -C "$REPO_ROOT" check-ignore -q -- "$ignored"; then
+      :
+    else
+      printf '  %s is not actually ignored\n' "$ignored" >&2
+      failed=1
+    fi
+  done
 
   local name command
   for name in nexus-setup nexus-link nexus-install nexus-new nexus-help nexus-update nexus-remove nexus; do
