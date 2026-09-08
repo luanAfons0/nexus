@@ -63,7 +63,9 @@ MUTATIONS = {
 # PUT api/global runs `global edit --if-match <ifMatch>` with `content` on
 # standard input; see do_PUT.
 # POST api/shutdown is the one mutating endpoint with no CLI command behind
-# it; see do_POST and shutdown_run.
+# it; see do_POST and shutdown_run. GET api/run is its read counterpart: it
+# answers the run's pid, port and mode, which is what the Run File records.
+# Neither answers the envelope, because no CLI command ran behind them.
 
 
 class State:
@@ -76,6 +78,7 @@ class State:
         self.mutation = threading.Lock()
         self.child_lock = threading.Lock()
         self.child = None
+        self.mode = None
         # Set by SIGINT, by SIGTERM, and by POST api/shutdown; main() waits
         # on it and then takes the one teardown path.
         self.stop = threading.Event()
@@ -350,6 +353,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if rel.startswith("api/"):
             name = rel[4:]
+            if name == "run":
+                # Server state, not a CLI call: the same fields the Run File
+                # records, and so no envelope and nothing in Last command.
+                self.send_json(200, {"pid": os.getpid(), "port": STATE.port,
+                                     "mode": STATE.mode})
+                return
             if name in READS:
                 self.send_json(200, run_cli(READS[name]))
                 return
@@ -478,6 +487,7 @@ def record_run(path, mode):
     try:
         write_run_file(path, {"pid": os.getpid(), "port": STATE.port,
                               "token": STATE.token, "mode": mode})
+        STATE.mode = mode
         return True
     except OSError as error:
         sys.stderr.write("nexus: error: cannot write the Run File %s: %s\n"

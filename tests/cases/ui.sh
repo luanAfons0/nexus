@@ -893,3 +893,45 @@ CASE_TESTS+=(
   test_ui_one_run_at_a_time
   test_ui_foreground_run
 )
+
+# Ticket #46: GET api/run, the read counterpart of POST api/shutdown. It is
+# server state, not a CLI call, so it answers no envelope.
+
+test_ui_api_run_reports_the_run() {
+  local failed=0 home response body bare
+  home="$(ui_home ui_api_run)" || { fail ui_api_run_reports_the_run; return; }
+  ui_start "$home" || failed=1
+
+  response="$(ui_http GET "${UI_URL}api/run")"
+  [[ "$(ui_status "$response")" == 200 ]] || { printf '  run status: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  [[ "$(ui_header "$response" content-type)" == 'application/json; charset=utf-8' ]] || failed=1
+  [[ "$(ui_header "$response" cache-control)" == 'no-store' ]] || failed=1
+  body="$(ui_body "$response")"
+  # The same fields the Run File records, and no envelope: no command ran.
+  jq -e --argjson pid "$UI_PID" --argjson port "$UI_PORT" '
+    .pid == $pid and .port == $port and .mode == "detached" and
+    ([has("command"), has("exit"), has("stdout"), has("stderr")] | any | not)
+  ' <<<"$body" >/dev/null || { printf '  run body: %s\n' "$body" >&2; failed=1; }
+  [[ "$(jq -r .mode <<<"$body")" == "$(jq -r .mode -- "$(ui_run_file_path "$home")")" ]] || { printf '  mode differs from the Run File\n' >&2; failed=1; }
+  # The Run Token is not handed back to anyone who already has it.
+  jq -e 'has("token") | not' <<<"$body" >/dev/null || { printf '  api/run answers the Run Token\n' >&2; failed=1; }
+
+  # The same guard as every other request, in the same order.
+  bare="http://127.0.0.1:$UI_PORT"
+  response="$(ui_http GET "$bare/api/run")"
+  [[ "$(ui_status "$response")" == 403 && "$(ui_body "$response")" == token ]] || { printf '  no token: %s\n' "$response" >&2; failed=1; }
+  response="$(ui_http GET "${UI_URL}api/run" -H "Host: example.com:$UI_PORT")"
+  [[ "$(ui_status "$response")" == 403 && "$(ui_body "$response")" == host ]] || failed=1
+  response="$(ui_http GET "${UI_URL}api/run" -H 'Origin: http://evil.example')"
+  [[ "$(ui_status "$response")" == 403 && "$(ui_body "$response")" == origin ]] || failed=1
+
+  # One method: reading the run never mutates it.
+  response="$(ui_http POST "${UI_URL}api/run" -H 'Content-Type: application/json' -d '{}')"
+  [[ "$(ui_status "$response")" == 404 ]] || { printf '  POST run: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  ui_stop
+  if (( failed == 0 )); then pass ui_api_run_reports_the_run; else fail ui_api_run_reports_the_run; fi
+}
+
+CASE_TESTS+=(
+  test_ui_api_run_reports_the_run
+)

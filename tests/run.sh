@@ -1291,7 +1291,8 @@ test_readme_documentation() {
               '0006-a-web-ui-run-is-recorded-in-a-run-file-and-can-be-stopped.md' 'Run File' \
               '#/skills' '#/global' 'POST api/shutdown' \
               'nexus ui --status' 'nexus ui --stop' '~/.nexus/ui-run.json' \
-              '--foreground' '~/.nexus/ui.log' 'One run at a time'; do
+              '--foreground' '~/.nexus/ui.log' 'One run at a time' \
+              'GET api/run' 'Stop server' 'Connection lost.'; do
     assert_contains README.md "$term" || failed=1
   done
   assert_contains README.md 'Setup preflight checks `jq`, `python3`, and the' || failed=1

@@ -513,6 +513,7 @@ Every endpoint lives under `/t/TOKEN/api/` and is one CLI command:
 | `PUT api/global` with `{content, ifMatch}` | `nexus global edit --if-match <ifMatch>`, `content` on standard input |
 | `POST api/update` with `{name}` | `nexus update <name>` |
 | `POST api/remove` with `{name}` | `nexus remove <name>` |
+| `GET api/run` | none: it reports the run |
 | `POST api/shutdown` | none: it stops the run |
 
 Every answer is HTTP 200 with one JSON object: `command` (the argv the
@@ -535,6 +536,31 @@ mutating request, needs `Content-Type: application/json`. It does not take
 the mutation lock, because a stop must work while a slow CLI child runs; the
 stop then follows the path SIGTERM already takes and kills that child.
 `GET api/shutdown` is 404, as any other unknown method-and-path pair is.
+
+`GET api/run` is the read counterpart and the only other endpoint with no CLI
+command behind it. It answers the run's pid, port, and mode — the same fields
+the Run File records — and so answers no envelope either, and the page does
+not show it in Last command.
+
+### The run in the header
+
+The header carries the run this page is served from: a badge with its state,
+its mode, and its pid, next to a `Stop server` button. The badge is green
+while the run is alive (`running · detached · pid 48213`, or
+`running · this terminal · pid 48213` for a foreground run), and red when the
+run cannot be reached. It reads `GET api/run`.
+
+`Stop server` asks first. The dialog names what stopping costs — the Run Token
+dies with the run, so this URL stops answering, and unsaved editor text is
+lost — and says plainly that it runs no CLI command and changes nothing on
+disk. Cancel changes nothing. Confirm sends `POST api/shutdown`, and on 200
+the page becomes a calm stopped state: a grey `stopped` badge, one sentence
+saying you stopped it, and `nexus ui` as the way back. The sub-nav and the
+`Stop server` button go inert, because the run they act on is gone.
+
+A run that ends without being asked to still shows the red `Connection lost.`
+banner. That distinction is the point: one state for a choice, one for a
+surprise.
 
 ### Pages and routes
 
