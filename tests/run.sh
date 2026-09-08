@@ -1236,7 +1236,7 @@ test_metadata() {
     fi
   done
 
-  local name command
+  local name command wrapper
   for name in nexus-setup nexus-link nexus-install nexus-new nexus-help nexus-update nexus-remove nexus; do
     case "$name" in
       nexus-setup) command='/home/luanh/.nexus/scripts/nexus setup' ;;
@@ -1252,6 +1252,17 @@ test_metadata() {
     [[ ! -e "$REPO_ROOT/skills/$name/claude-command.md" ]] || { printf '  unexpected adapter file: %s\n' "$name" >&2; failed=1; }
     assert_line "skills/$name/SKILL.md" "name: $name" || failed=1
     assert_contains "skills/$name/SKILL.md" "$command" || failed=1
+    if [[ "$name" == nexus ]]; then
+      # The launcher runs one plain command that ends: no shell wrapper.
+      for wrapper in nohup disown mktemp sleep; do
+        if grep -Fq -- "$wrapper" "$REPO_ROOT/skills/$name/SKILL.md"; then
+          printf '  nexus launcher still wraps the run: %s\n' "$wrapper" >&2
+          failed=1
+        fi
+      done
+      assert_contains "skills/$name/SKILL.md" 'nexus ui --stop' || failed=1
+      assert_contains "skills/$name/SKILL.md" 'Stop server' || failed=1
+    fi
     if [[ "$name" == nexus-install ]]; then
       assert_contains "skills/$name/SKILL.md" '--skill "skill-a" --skill "skill-b"' || failed=1
       if grep -Fq 'install "/path/to/source" "skill-a"' "$REPO_ROOT/skills/$name/SKILL.md"; then
@@ -1279,7 +1290,8 @@ test_readme_documentation() {
               '## Web UI' '0005-nexus-opens-one-loopback-listener-only-in-nexus-ui.md' \
               '0006-a-web-ui-run-is-recorded-in-a-run-file-and-can-be-stopped.md' 'Run File' \
               '#/skills' '#/global' 'POST api/shutdown' \
-              'nexus ui --status' 'nexus ui --stop' '~/.nexus/ui-run.json'; do
+              'nexus ui --status' 'nexus ui --stop' '~/.nexus/ui-run.json' \
+              '--foreground' '~/.nexus/ui.log' 'One run at a time'; do
     assert_contains README.md "$term" || failed=1
   done
   assert_contains README.md 'Setup preflight checks `jq`, `python3`, and the' || failed=1

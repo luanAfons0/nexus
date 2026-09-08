@@ -5,6 +5,10 @@
 # signals, and its exit code. The server never touches a file itself: every
 # read and mutation on the page is a subprocess call to this CLI.
 #
+# A run detaches by default, so the terminal — and the agent session — is
+# free as soon as the handshake line is printed. --foreground keeps the run
+# in the terminal, where Ctrl-C and SIGTERM stop it.
+#
 # --status and --stop are whole modes, not flags on a run. They read the Run
 # File and confirm the recorded run over the loopback, never by pid, so no
 # command signals a process it has not confirmed (ADR 0006).
@@ -20,10 +24,17 @@ ui_run_file() {
   printf '%s\n' "$NEXUS_HOME/ui-run.json"
 }
 
+# Where a Detached Run writes its diagnostics, because it has no terminal.
+# Truncated at each start.
+ui_log_file() {
+  printf '%s\n' "$NEXUS_HOME/ui.log"
+}
+
 parse_ui_args() {
   local run_flags=0 modes=0
   UI_PORT=0
   UI_OPEN=true
+  UI_FOREGROUND=false
   UI_MODE=serve
   while (( $# != 0 )); do
     case "$1" in
@@ -40,6 +51,10 @@ parse_ui_args() {
         UI_OPEN=false
         run_flags=1
         shift ;;
+      --foreground)
+        UI_FOREGROUND=true
+        run_flags=1
+        shift ;;
       --status)
         UI_MODE=status
         modes=$(( modes + 1 ))
@@ -49,7 +64,7 @@ parse_ui_args() {
         modes=$(( modes + 1 ))
         shift ;;
       *)
-        error "ui accepts only --port <N>, --no-open, --status, and --stop"
+        error "ui accepts only --port <N>, --no-open, --foreground, --status, and --stop"
         usage >&2
         return 2 ;;
     esac
@@ -83,7 +98,8 @@ ui_command() {
     return 1
   fi
   argv+=(--port "$UI_PORT" --cli "$cli" --web "$web"
-         --timeout "${NEXUS_UI_TIMEOUT:-300}")
+         --log-file "$(ui_log_file)" --timeout "${NEXUS_UI_TIMEOUT:-300}")
   [[ "$UI_OPEN" == true ]] || argv+=(--no-open)
+  [[ "$UI_FOREGROUND" == false ]] || argv+=(--foreground)
   exec "${argv[@]}"
 }
