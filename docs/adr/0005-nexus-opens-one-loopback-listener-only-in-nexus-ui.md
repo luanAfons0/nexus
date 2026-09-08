@@ -4,6 +4,8 @@
 
 Accepted
 
+Superseded in part by ADR 0006.
+
 ## Context
 
 Every Nexus command so far is a short process that reads or writes local

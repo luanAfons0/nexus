@@ -196,3 +196,19 @@ characters from a cryptographic source, generated once per `nexus ui` run,
 printed once in the handshake line, and lives as long as that server run. A
 request without it is refused before any CLI child runs.
 _Avoid_: session token, API key, auth token, password
+
+**Run File**:
+The file in the Nexus home that records the one live Web UI run: its pid, its
+port, its Run Token, and whether it is detached. `nexus ui` writes it at
+owner-only permissions, `nexus ui --status` and `nexus ui --stop` read it, and
+the run removes it when it ends. A Run File whose port no longer answers is
+stale: any command that finds one removes it (ADR 0006).
+_Avoid_: pid file, lock file, state file, session file
+
+**Detached Run**:
+A Web UI run that no longer holds the terminal that started it. It is the
+default of `nexus ui`, it is recorded in the Run File, and it ends on
+`nexus ui --stop` or on `Stop server` in the page. Its opposite is a
+**Foreground Run**, which `--foreground` selects and which ends on Ctrl-C or
+SIGTERM.
+_Avoid_: daemon, background job, service
