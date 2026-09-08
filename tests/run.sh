@@ -1226,7 +1226,7 @@ test_setup_canonical_scan_failure_is_propagated() {
 test_metadata() {
   local failed=0
   local ignored
-  for ignored in skill-lock.json ui-run.json; do
+  for ignored in skill-lock.json ui-run.json ui.log; do
     assert_contains .gitignore "$ignored" || failed=1
     if git -C "$REPO_ROOT" check-ignore -q -- "$ignored"; then
       :
