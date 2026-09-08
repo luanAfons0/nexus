@@ -1,8 +1,13 @@
-# Web UI tests. Every case starts `nexus ui` as a subprocess against an
-# isolated fake HOME/NEXUS_HOME with `--port 0 --no-open`, reads the port
-# and the Run Token from the handshake line, calls the server with Python's
-# urllib, and asserts on the HTTP status, the JSON envelope, and the
-# filesystem. No case inspects Python internals or page DOM.
+# Web UI tests. Every case starts `nexus ui` against an isolated fake
+# HOME/NEXUS_HOME with `--port 0 --no-open`, reads the port and the Run
+# Token from the handshake line, calls the server with Python's urllib, and
+# asserts on the HTTP status, the JSON envelope, and the filesystem. No case
+# inspects Python internals or page DOM.
+#
+# `nexus ui` detaches by default, so ui_start runs the command to completion
+# and reads the handshake from its output; ui_start_foreground keeps a run
+# in this shell for the cases that assert on the terminal contract. Each
+# case has its own Nexus home, so Run Files never collide between cases.
 
 UI_CLIENT="$REPO_ROOT/tests/ui_client.py"
 
@@ -15,13 +20,42 @@ ui_home() {
   printf '%s\n' "$home"
 }
 
-# Start the server in the background and wait for the handshake line.
-# Sets UI_PID, UI_URL (base URL with the token), UI_PORT, UI_TOKEN.
+ui_handshake() {
+  local line="$1"
+  [[ "$line" =~ ^nexus\ ui:\ (http://127\.0\.0\.1:([0-9]+)/t/([0-9a-f]{32})/)$ ]] || return 1
+  UI_URL="${BASH_REMATCH[1]}"; UI_PORT="${BASH_REMATCH[2]}"; UI_TOKEN="${BASH_REMATCH[3]}"
+  return 0
+}
+
+# Start a Detached Run. `nexus ui` returns once the run has recorded itself,
+# so the command runs to completion and the handshake line is read from its
+# output. Sets UI_URL, UI_PORT, UI_TOKEN, UI_HOME, UI_KIND, and UI_PID from
+# the Run File, because the run is not a child of this shell.
 ui_start() {
   local home="$1"; shift
+  local status
+  UI_PID=''; UI_URL=''; UI_PORT=''; UI_TOKEN=''; UI_HOME=''; UI_KIND=''
+  run_nexus_overridden "$home" "${UI_FAULT:-}" ui --port 0 --no-open "$@" \
+    >"$home/ui-output" 2>&1
+  status=$?
+  if (( status != 0 )) || ! ui_handshake "$(head -n 1 -- "$home/ui-output" 2>/dev/null)"; then
+    printf '  no handshake line (exit %s); output:\n' "$status" >&2
+    cat -- "$home/ui-output" >&2
+    return 1
+  fi
+  UI_HOME="$home"; UI_KIND=detached
+  UI_PID="$(jq -r '.pid' -- "$home/.nexus/ui-run.json" 2>/dev/null)"
+  [[ "$UI_PID" =~ ^[0-9]+$ ]] || { printf '  no pid in the Run File\n' >&2; return 1; }
+  return 0
+}
+
+# Start a Foreground Run in this shell, as a user with a terminal does, and
+# wait for the handshake line. Sets UI_PID to the run itself.
+ui_start_foreground() {
+  local home="$1"; shift
   local i line=''
-  UI_PID=''; UI_URL=''; UI_PORT=''; UI_TOKEN=''
-  start_nexus_overridden "$home" "${UI_FAULT:-}" "$home/ui-output" ui --port 0 --no-open "$@" || return 1
+  UI_PID=''; UI_URL=''; UI_PORT=''; UI_TOKEN=''; UI_HOME=''; UI_KIND=''
+  start_nexus_overridden "$home" "${UI_FAULT:-}" "$home/ui-output" ui --port 0 --no-open --foreground "$@" || return 1
   UI_PID="$NEXUS_TEST_PID"
   for i in {1..300}; do
     line="$(head -n 1 -- "$home/ui-output" 2>/dev/null)"
@@ -29,17 +63,25 @@ ui_start() {
     kill -0 "$UI_PID" 2>/dev/null || break
     sleep .02
   done
-  [[ "$line" =~ ^nexus\ ui:\ (http://127\.0\.0\.1:([0-9]+)/t/([0-9a-f]{32})/)$ ]] || {
+  ui_handshake "$line" || {
     printf '  no handshake line; output:\n' >&2; cat -- "$home/ui-output" >&2; return 1;
   }
-  UI_URL="${BASH_REMATCH[1]}"; UI_PORT="${BASH_REMATCH[2]}"; UI_TOKEN="${BASH_REMATCH[3]}"
+  UI_HOME="$home"; UI_KIND=foreground
   return 0
 }
 
+# End the run. A Foreground Run stops on SIGTERM, as it does under Ctrl-C;
+# a Detached Run stops with `nexus ui --stop`, the same request the page
+# sends. NEXUS_WAIT_STATUS carries the exit status of whichever ended it.
 ui_stop() {
   [[ -n "${UI_PID:-}" ]] || return 0
-  stop_and_reap "$UI_PID"
-  UI_PID=''
+  if [[ "$UI_KIND" == foreground ]]; then
+    stop_and_reap "$UI_PID"
+  else
+    run_nexus "$UI_HOME" ui --stop >/dev/null 2>&1
+    NEXUS_WAIT_STATUS=$?
+  fi
+  UI_PID=''; UI_HOME=''; UI_KIND=''
 }
 
 # ui_http METHOD URL [client flags...]; prints the client output.
@@ -63,13 +105,15 @@ ui_header() {
 test_ui_handshake_and_stop() {
   local failed=0 home status
   home="$(ui_home ui_handshake)" || { fail ui_handshake_and_stop; return; }
-  ui_start "$home" || failed=1
+  ui_start_foreground "$home" || failed=1
   [[ "$(head -n 1 -- "$home/ui-output")" == "nexus ui: http://127.0.0.1:$UI_PORT/t/$UI_TOKEN/" ]] || failed=1
+  jq -e '.mode == "foreground"' -- "$home/.nexus/ui-run.json" >/dev/null || { printf '  Run File mode is not foreground\n' >&2; failed=1; }
   [[ "$(wc -l <"$home/ui-output")" -eq 1 ]] || { printf '  extra output before requests:\n' >&2; cat -- "$home/ui-output" >&2; failed=1; }
   ui_stop; status="$NEXUS_WAIT_STATUS"
   [[ "$status" -eq 0 ]] || { printf '  SIGTERM exit status: %s\n' "$status" >&2; failed=1; }
   ! pgrep -f -- "$home/.nexus/web" >/dev/null || { printf '  server process left behind\n' >&2; failed=1; }
   [[ "$(ui_status "$(ui_http GET "$UI_URL")")" == 0 ]] || { printf '  port still answers after stop\n' >&2; failed=1; }
+  [[ ! -e "$home/.nexus/ui-run.json" ]] || { printf '  Run File survived SIGTERM\n' >&2; failed=1; }
   if (( failed == 0 )); then pass ui_handshake_and_stop; else fail ui_handshake_and_stop; fi
 }
 
@@ -139,7 +183,7 @@ test_ui_loopback_guard() {
 }
 
 test_ui_cli_usage_and_port() {
-  local failed=0 home output status
+  local failed=0 home other output status
   home="$(ui_home ui_usage)" || { fail ui_cli_usage_and_port; return; }
   output="$(run_nexus "$home" ui --bogus 2>&1)"; status=$?
   [[ "$status" -eq 2 && "$output" == *'Usage: nexus'* ]] || { printf '  --bogus: %s %s\n' "$status" "$output" >&2; failed=1; }
@@ -150,12 +194,16 @@ test_ui_cli_usage_and_port() {
   output="$(run_nexus "$home" ui extra 2>&1)"; status=$?
   [[ "$status" -eq 2 ]] || failed=1
   output="$(run_nexus "$home" help 2>&1)"
-  [[ "$output" =~ (^|$'\n')ui\ +Serve\ the\ local\ web\ page:\ ui\ \[--port\ N\]\ \[--no-open\],\ ui\ --status,\ ui\ --stop\.($|$'\n') ]] || { printf '  help lacks the ui line\n' >&2; failed=1; }
+  [[ "$output" =~ (^|$'\n')ui\ +Serve\ the\ local\ web\ page:\ ui\ \[--port\ N\]\ \[--no-open\]\ \[--foreground\],\ ui\ --status,\ ui\ --stop\.($|$'\n') ]] || { printf '  help lacks the ui line\n' >&2; failed=1; }
 
-  # --port N binds that port; a second server on the same port fails with 1.
+  # --port N binds that port; a server on the same port fails with 1, before
+  # anything detaches. The second home records no run, so this is the bind
+  # failure and not the one-run refusal.
   ui_start "$home" || failed=1
-  output="$(run_nexus "$home" ui --port "$UI_PORT" --no-open 2>&1)"; status=$?
-  [[ "$status" -eq 1 && "$output" == *"$UI_PORT"* ]] || { printf '  bind failure: %s %s\n' "$status" "$output" >&2; failed=1; }
+  other="$(ui_home ui_usage_taken_port)" || failed=1
+  output="$(run_nexus "$other" ui --port "$UI_PORT" --no-open 2>&1)"; status=$?
+  [[ "$status" -eq 1 && "$output" == *"cannot bind 127.0.0.1:$UI_PORT"* ]] || { printf '  bind failure: %s %s\n' "$status" "$output" >&2; failed=1; }
+  [[ ! -e "$other/.nexus/ui-run.json" ]] || { printf '  a failed bind wrote a Run File\n' >&2; failed=1; }
   ui_stop
 
   # A missing web directory is a refusal before any listener opens.
@@ -549,18 +597,24 @@ CASE_TESTS+=(
 # Ticket #43: POST api/shutdown stops the run over the loopback. It is the
 # one endpoint with no CLI command behind it, so it answers no envelope.
 
-# Wait for the server ui_start started to end on its own and record its exit
-# status in NEXUS_WAIT_STATUS. Unlike ui_stop it signals nothing.
+# Wait for the run to end on its own; signal nothing. A Foreground Run is a
+# child of this shell, so its exit status lands in NEXUS_WAIT_STATUS; a
+# Detached Run is not, so only its disappearance is observable.
 ui_reap() {
   local i
   NEXUS_WAIT_STATUS=''
   [[ -n "${UI_PID:-}" ]] || return 0
-  for i in {1..250}; do
-    kill -0 "$UI_PID" 2>/dev/null || break
-    sleep .02
-  done
-  wait "$UI_PID" 2>/dev/null; NEXUS_WAIT_STATUS=$?
-  UI_PID=''
+  if [[ "$UI_KIND" == foreground ]]; then
+    wait "$UI_PID" 2>/dev/null; NEXUS_WAIT_STATUS=$?
+  else
+    for i in {1..250}; do
+      kill -0 "$UI_PID" 2>/dev/null || break
+      sleep .02
+    done
+    kill -0 "$UI_PID" 2>/dev/null && { printf '  the run is still alive\n' >&2; return 1; }
+  fi
+  UI_PID=''; UI_HOME=''; UI_KIND=''
+  return 0
 }
 
 ui_shutdown_request() {
@@ -570,7 +624,8 @@ ui_shutdown_request() {
 test_ui_shutdown_stops_the_run() {
   local failed=0 home response status
   home="$(ui_home ui_shutdown)" || { fail ui_shutdown_stops_the_run; return; }
-  ui_start "$home" || failed=1
+  # A Foreground Run, so the exit status of the stopped run is observable.
+  ui_start_foreground "$home" || failed=1
 
   response="$(ui_shutdown_request "$UI_URL")"
   [[ "$(ui_status "$response")" == 200 ]] || { printf '  shutdown status: %s\n' "$(ui_status "$response")" >&2; failed=1; }
@@ -626,7 +681,7 @@ test_ui_shutdown_while_a_child_runs() {
   home="$(ui_home ui_shutdown_child)" || { fail ui_shutdown_while_a_child_runs; return; }
   write_skill "$home/.agents/skills" alpha
   write_lock "$home/.nexus/skill-lock.json" alpha
-  UI_FAULT=ui_slow_child ui_start "$home" || failed=1
+  UI_FAULT=ui_slow_child ui_start_foreground "$home" || failed=1
   ui_http POST "${UI_URL}api/update" -H 'Content-Type: application/json' -d '{"name":"alpha"}' >/dev/null 2>&1 &
   local request=$!
   for i in {1..200}; do [[ -e "$home/child-started" ]] && break; sleep .02; done
@@ -669,7 +724,7 @@ test_ui_run_file_records_the_run() {
   mode="$(stat -c '%a' -- "$run" 2>/dev/null)"
   [[ "$mode" == 600 ]] || { printf '  Run File mode: %s\n' "$mode" >&2; failed=1; }
   jq -e --arg token "$UI_TOKEN" --argjson port "$UI_PORT" --argjson pid "$UI_PID" '
-    .pid == $pid and .port == $port and .token == $token and .mode == "foreground"
+    .pid == $pid and .port == $port and .token == $token and .mode == "detached"
   ' -- "$run" >/dev/null || { printf '  Run File: %s\n' "$(cat -- "$run")" >&2; failed=1; }
   ui_stop
   [[ ! -e "$run" ]] || { printf '  Run File survived the run\n' >&2; failed=1; }
@@ -710,8 +765,7 @@ test_ui_stop_ends_the_recorded_run() {
   [[ "$status" -eq 0 && "$output" == 'nexus ui: stopped' ]] || { printf '  stop: %s %s\n' "$status" "$output" >&2; failed=1; }
   [[ ! -e "$run" ]] || { printf '  Run File survived --stop\n' >&2; failed=1; }
   [[ "$(ui_status "$(ui_http GET "$UI_URL")")" == 0 ]] || { printf '  port still answers after --stop\n' >&2; failed=1; }
-  ui_reap; status="$NEXUS_WAIT_STATUS"
-  [[ "$status" -eq 0 ]] || { printf '  exit status after --stop: %s\n' "$status" >&2; failed=1; }
+  ui_reap || failed=1
   ! pgrep -f -- "$home/.nexus/web" >/dev/null || { printf '  server process left behind\n' >&2; failed=1; }
 
   # Stopping twice is not an error, and the second stop changes nothing.
@@ -743,4 +797,99 @@ CASE_TESTS+=(
   test_ui_status_reports_the_recorded_run
   test_ui_stop_ends_the_recorded_run
   test_ui_mode_usage
+)
+
+# Ticket #45: `nexus ui` detaches by default and returns the prompt;
+# --foreground keeps today's behavior; one run at a time.
+
+test_ui_detached_run_frees_the_terminal() {
+  local failed=0 home sid shell_sid
+  home="$(ui_home ui_detached)" || { fail ui_detached_run_frees_the_terminal; return; }
+  # ui_start runs the command to completion: it printed the handshake line
+  # and returned 0.
+  ui_start "$home" || failed=1
+  [[ "$(ui_status "$(ui_http GET "$UI_URL")")" == 200 ]] || { printf '  the port does not answer after the command returned\n' >&2; failed=1; }
+  jq -e '.mode == "detached"' -- "$(ui_run_file_path "$home")" >/dev/null || { printf '  Run File mode is not detached\n' >&2; failed=1; }
+  # The run holds no terminal: it is in a session of its own, so the one
+  # that started it closing cannot reach it.
+  sid="$(ps -o sid= -p "$UI_PID" 2>/dev/null | tr -d ' ')"
+  shell_sid="$(ps -o sid= -p $$ 2>/dev/null | tr -d ' ')"
+  [[ -n "$sid" && -n "$shell_sid" && "$sid" != "$shell_sid" ]] || { printf '  session ids: run %s, shell %s\n' "$sid" "$shell_sid" >&2; failed=1; }
+  ui_stop
+  [[ "$(ui_status "$(ui_http GET "$UI_URL")")" == 0 ]] || { printf '  port still answers after --stop\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass ui_detached_run_frees_the_terminal; else fail ui_detached_run_frees_the_terminal; fi
+}
+
+test_ui_detached_run_logs_diagnostics() {
+  local failed=0 home log i
+  home="$(ui_home ui_detached_log)" || { fail ui_detached_run_logs_diagnostics; return; }
+  log="$home/.nexus/ui.log"
+  ui_start "$home" || failed=1
+  [[ -f "$log" ]] || { printf '  no log for a Detached Run\n' >&2; failed=1; }
+  [[ "$(stat -c '%a' -- "$log" 2>/dev/null)" == 600 ]] || { printf '  log mode: %s\n' "$(stat -c '%a' -- "$log" 2>/dev/null)" >&2; failed=1; }
+  # A refusal line reaches the log instead of the terminal the run no
+  # longer has.
+  ui_http GET "http://127.0.0.1:$UI_PORT/" >/dev/null
+  for i in {1..200}; do grep -Fq 'refused' -- "$log" && break; sleep .02; done
+  grep -Fq 'nexus ui: refused GET /: 403 token' -- "$log" || { printf '  log:\n%s\n' "$(cat -- "$log")" >&2; failed=1; }
+  # The handshake line stayed on standard output.
+  [[ "$(cat -- "$home/ui-output")" == "nexus ui: $UI_URL" ]] || { printf '  command output:\n%s\n' "$(cat -- "$home/ui-output")" >&2; failed=1; }
+  ui_stop
+
+  # The log is truncated at each start.
+  ui_start "$home" || failed=1
+  [[ ! -s "$log" ]] || { printf '  log not truncated at start:\n%s\n' "$(cat -- "$log")" >&2; failed=1; }
+  ui_stop
+  if (( failed == 0 )); then pass ui_detached_run_logs_diagnostics; else fail ui_detached_run_logs_diagnostics; fi
+}
+
+test_ui_one_run_at_a_time() {
+  local failed=0 home run saved output status
+  home="$(ui_home ui_one_run)" || { fail ui_one_run_at_a_time; return; }
+  run="$(ui_run_file_path "$home")"
+  saved="$home/stale-run.json"
+  ui_start "$home" || failed=1
+
+  # A second start meets the live run, is refused with 1, and prints its URL.
+  output="$(run_nexus "$home" ui --no-open 2>&1)"; status=$?
+  [[ "$status" -eq 1 && "$output" == *"$UI_URL"* ]] || { printf '  second start: %s %s\n' "$status" "$output" >&2; failed=1; }
+  [[ "$(ui_status "$(ui_http GET "$UI_URL")")" == 200 ]] || { printf '  the refusal disturbed the live run\n' >&2; failed=1; }
+  jq -e --arg token "$UI_TOKEN" '.token == $token' -- "$run" >/dev/null || { printf '  the refusal replaced the Run File\n' >&2; failed=1; }
+
+  # A Run File whose port no longer answers is stale: the next start removes
+  # it and runs normally.
+  cp -- "$run" "$saved" || failed=1
+  ui_stop
+  cp -- "$saved" "$run" || failed=1
+  ui_start "$home" || { printf '  a stale Run File blocked a start\n' >&2; failed=1; }
+  jq -e --arg token "$UI_TOKEN" '.token == $token' -- "$run" >/dev/null || { printf '  the stale Run File survived a start\n' >&2; failed=1; }
+  ui_stop
+  if (( failed == 0 )); then pass ui_one_run_at_a_time; else fail ui_one_run_at_a_time; fi
+}
+
+test_ui_foreground_run() {
+  local failed=0 home status
+  home="$(ui_home ui_foreground)" || { fail ui_foreground_run; return; }
+  ui_start_foreground "$home" || failed=1
+  jq -e '.mode == "foreground"' -- "$(ui_run_file_path "$home")" >/dev/null || { printf '  Run File mode is not foreground\n' >&2; failed=1; }
+  [[ "$(ui_status "$(ui_http GET "$UI_URL")")" == 200 ]] || failed=1
+  # It holds the terminal it was started in until it is stopped there.
+  kill -0 "$UI_PID" 2>/dev/null || { printf '  the Foreground Run is already gone\n' >&2; failed=1; }
+
+  # Ctrl-C ends it with exit 0 and leaves no process and no Run File behind.
+  kill -INT "$UI_PID" 2>/dev/null || :
+  wait "$UI_PID" 2>/dev/null; status=$?
+  UI_PID=''; UI_HOME=''; UI_KIND=''
+  [[ "$status" -eq 0 ]] || { printf '  Ctrl-C exit status: %s\n' "$status" >&2; failed=1; }
+  [[ ! -e "$(ui_run_file_path "$home")" ]] || { printf '  Run File survived Ctrl-C\n' >&2; failed=1; }
+  ! pgrep -f -- "$home/.nexus/web" >/dev/null || { printf '  server process left behind\n' >&2; failed=1; }
+  [[ "$(ui_status "$(ui_http GET "$UI_URL")")" == 0 ]] || { printf '  port still answers after Ctrl-C\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass ui_foreground_run; else fail ui_foreground_run; fi
+}
+
+CASE_TESTS+=(
+  test_ui_detached_run_frees_the_terminal
+  test_ui_detached_run_logs_diagnostics
+  test_ui_one_run_at_a_time
+  test_ui_foreground_run
 )
