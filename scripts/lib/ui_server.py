@@ -10,6 +10,14 @@ it answers no envelope. HTTP errors exist only for the loopback guard (403),
 an unknown path (404), a missing JSON content type (415), and a concurrent
 mutation (409). The server never reads or writes GLOBAL.md, the Nexus Lock,
 or any skill root.
+
+The one file this program owns is the Run File in the Nexus home: the record
+of the one live run, holding its pid, its port, its Run Token, and its mode
+at owner-only permissions (ADR 0006). `--status` and `--stop` read it and
+then confirm the run over the loopback, never by pid: a recorded pid can be
+reused by an unrelated process, but a port that answers the recorded Run
+Token cannot be anything but this server. Where the probe fails, the run is
+gone and the stale Run File is removed.
 """
 import argparse
 import http.server
@@ -22,6 +30,9 @@ import signal
 import subprocess
 import sys
 import threading
+import time
+import urllib.error
+import urllib.request
 
 STATIC = {
     "index.html": "text/html; charset=utf-8",
@@ -106,6 +117,110 @@ def kill_child(child):
         os.killpg(child.pid, signal.SIGKILL)
     except OSError:
         pass
+
+
+# --- the Run File ----------------------------------------------------------
+
+# How long a loopback probe of the recorded run may take, and how long
+# `--stop` waits for the run it asked to stop to clear its Run File.
+PROBE_TIMEOUT = 5.0
+STOP_TIMEOUT = 10.0
+
+RUN_FIELDS = (("pid", int), ("port", int), ("token", str), ("mode", str))
+
+
+def write_run_file(path, run):
+    """Record the run at owner-only permissions: the Run File holds the Run
+    Token, so no other account on the machine may read it."""
+    handle = os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w")
+    with handle:
+        json.dump(run, handle)
+        handle.write("\n")
+    os.chmod(path, 0o600)
+
+
+def read_run_file(path):
+    """The recorded run, or None when there is no Run File that names one."""
+    try:
+        with open(path, "r") as handle:
+            run = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(run, dict):
+        return None
+    for name, kind in RUN_FIELDS:
+        if not isinstance(run.get(name), kind) or isinstance(run.get(name), bool):
+            return None
+    return run
+
+
+def remove_run_file(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def run_url(run):
+    return "http://127.0.0.1:%d/t/%s/" % (run["port"], run["token"])
+
+
+def loopback_request(url, data=None, headers=()):
+    """One request to the recorded run. False for any failure at all: an
+    unreachable port, a refusal, or a foreign listener that is not us."""
+    request = urllib.request.Request(url, data=data,
+                                     method="POST" if data is not None else "GET")
+    for name, value in headers:
+        request.add_header(name, value)
+    try:
+        with urllib.request.urlopen(request, timeout=PROBE_TIMEOUT) as response:
+            response.read()
+            return response.status == 200
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
+def run_answers(run):
+    """True when the recorded port answers the recorded Run Token. This, and
+    never a recorded pid, is what proves a run is alive."""
+    return loopback_request(run_url(run))
+
+
+def status_mode(path):
+    """Print the live URL of the recorded run, or `not running`. A Run File
+    whose port does not answer is stale: remove it and say so. Exit 0 either
+    way, because this is a question, not an assertion."""
+    run = read_run_file(path)
+    if run is None:
+        sys.stdout.write("nexus ui: not running\n")
+        return 0
+    if not run_answers(run):
+        remove_run_file(path)
+        sys.stdout.write("nexus ui: not running\n")
+        return 0
+    sys.stdout.write("nexus ui: %s\n" % run_url(run))
+    return 0
+
+
+def stop_mode(path):
+    """End the recorded run with the same POST api/shutdown the page sends,
+    then wait for it to clear its own Run File. Exit 0 either way."""
+    run = read_run_file(path)
+    if run is None:
+        sys.stdout.write("nexus ui: not running\n")
+        return 0
+    stopped = loopback_request(run_url(run) + "api/shutdown", b"{}",
+                               [("Content-Type", "application/json")])
+    if not stopped:
+        remove_run_file(path)
+        sys.stdout.write("nexus ui: not running\n")
+        return 0
+    deadline = time.monotonic() + STOP_TIMEOUT
+    while os.path.exists(path) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    remove_run_file(path)
+    sys.stdout.write("nexus ui: stopped\n")
+    return 0
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -321,11 +436,18 @@ def main(argv):
     global STATE
     parser = argparse.ArgumentParser(prog="nexus ui")
     parser.add_argument("--port", type=int, default=0)
-    parser.add_argument("--cli", required=True)
-    parser.add_argument("--web", required=True)
+    parser.add_argument("--cli")
+    parser.add_argument("--web")
     parser.add_argument("--timeout", type=float, default=300)
     parser.add_argument("--no-open", action="store_true")
+    parser.add_argument("--run-file", required=True)
+    parser.add_argument("--status", action="store_true")
+    parser.add_argument("--stop", action="store_true")
     args = parser.parse_args(argv[1:])
+    if args.status:
+        return status_mode(args.run_file)
+    if args.stop:
+        return stop_mode(args.run_file)
     STATE = State(args)
 
     try:
@@ -337,6 +459,14 @@ def main(argv):
     server.daemon_threads = True
     STATE.port = server.server_address[1]
     url = "http://127.0.0.1:%d/t/%s/" % (STATE.port, STATE.token)
+    try:
+        write_run_file(args.run_file, {"pid": os.getpid(), "port": STATE.port,
+                                       "token": STATE.token, "mode": "foreground"})
+    except OSError as error:
+        sys.stderr.write("nexus: error: cannot write the Run File %s: %s\n"
+                         % (args.run_file, error.strerror or error))
+        server.server_close()
+        return 1
 
     stop = STATE.stop
 
@@ -366,6 +496,7 @@ def main(argv):
         kill_child(child)
     server.shutdown()
     server.server_close()
+    remove_run_file(args.run_file)
     return 0
 
 

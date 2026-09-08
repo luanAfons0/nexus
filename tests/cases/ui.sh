@@ -150,7 +150,7 @@ test_ui_cli_usage_and_port() {
   output="$(run_nexus "$home" ui extra 2>&1)"; status=$?
   [[ "$status" -eq 2 ]] || failed=1
   output="$(run_nexus "$home" help 2>&1)"
-  [[ "$output" =~ (^|$'\n')ui\ +Serve\ the\ local\ web\ page:\ ui\ \[--port\ N\]\ \[--no-open\]\.($|$'\n') ]] || { printf '  help lacks the ui line\n' >&2; failed=1; }
+  [[ "$output" =~ (^|$'\n')ui\ +Serve\ the\ local\ web\ page:\ ui\ \[--port\ N\]\ \[--no-open\],\ ui\ --status,\ ui\ --stop\.($|$'\n') ]] || { printf '  help lacks the ui line\n' >&2; failed=1; }
 
   # --port N binds that port; a second server on the same port fails with 1.
   ui_start "$home" || failed=1
@@ -650,4 +650,97 @@ CASE_TESTS+=(
   test_ui_shutdown_stops_the_run
   test_ui_shutdown_guard
   test_ui_shutdown_while_a_child_runs
+)
+
+# Ticket #44: the Run File records the one live run, and --status and --stop
+# read it and then confirm the run over the loopback, never by pid.
+
+ui_run_file_path() {
+  printf '%s\n' "$1/.nexus/ui-run.json"
+}
+
+test_ui_run_file_records_the_run() {
+  local failed=0 home run mode
+  home="$(ui_home ui_run_file)" || { fail ui_run_file_records_the_run; return; }
+  run="$(ui_run_file_path "$home")"
+  [[ ! -e "$run" ]] || { printf '  a Run File exists before any run\n' >&2; failed=1; }
+  ui_start "$home" || failed=1
+  [[ -f "$run" ]] || { printf '  no Run File while the run lives\n' >&2; failed=1; }
+  mode="$(stat -c '%a' -- "$run" 2>/dev/null)"
+  [[ "$mode" == 600 ]] || { printf '  Run File mode: %s\n' "$mode" >&2; failed=1; }
+  jq -e --arg token "$UI_TOKEN" --argjson port "$UI_PORT" --argjson pid "$UI_PID" '
+    .pid == $pid and .port == $port and .token == $token and .mode == "foreground"
+  ' -- "$run" >/dev/null || { printf '  Run File: %s\n' "$(cat -- "$run")" >&2; failed=1; }
+  ui_stop
+  [[ ! -e "$run" ]] || { printf '  Run File survived the run\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass ui_run_file_records_the_run; else fail ui_run_file_records_the_run; fi
+}
+
+test_ui_status_reports_the_recorded_run() {
+  local failed=0 home run output status
+  home="$(ui_home ui_status_mode)" || { fail ui_status_reports_the_recorded_run; return; }
+  run="$(ui_run_file_path "$home")"
+
+  # A question, not an assertion: exit 0 with no run recorded at all.
+  output="$(run_nexus "$home" ui --status 2>&1)"; status=$?
+  [[ "$status" -eq 0 && "$output" == 'nexus ui: not running' ]] || { printf '  no Run File: %s %s\n' "$status" "$output" >&2; failed=1; }
+
+  ui_start "$home" || failed=1
+  output="$(run_nexus "$home" ui --status 2>&1)"; status=$?
+  [[ "$status" -eq 0 && "$output" == "nexus ui: $UI_URL" ]] || { printf '  live run: %s %s\n' "$status" "$output" >&2; failed=1; }
+  [[ -f "$run" ]] || { printf '  --status removed a live Run File\n' >&2; failed=1; }
+
+  # A Run File whose port no longer answers is stale: --status corrects it.
+  cp -- "$run" "$home/stale-run.json" || failed=1
+  ui_stop
+  cp -- "$home/stale-run.json" "$run" || failed=1
+  output="$(run_nexus "$home" ui --status 2>&1)"; status=$?
+  [[ "$status" -eq 0 && "$output" == 'nexus ui: not running' ]] || { printf '  stale Run File: %s %s\n' "$status" "$output" >&2; failed=1; }
+  [[ ! -e "$run" ]] || { printf '  stale Run File survived --status\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass ui_status_reports_the_recorded_run; else fail ui_status_reports_the_recorded_run; fi
+}
+
+test_ui_stop_ends_the_recorded_run() {
+  local failed=0 home run output status before after
+  home="$(ui_home ui_stop_mode)" || { fail ui_stop_ends_the_recorded_run; return; }
+  run="$(ui_run_file_path "$home")"
+  ui_start "$home" || failed=1
+
+  output="$(run_nexus "$home" ui --stop 2>&1)"; status=$?
+  [[ "$status" -eq 0 && "$output" == 'nexus ui: stopped' ]] || { printf '  stop: %s %s\n' "$status" "$output" >&2; failed=1; }
+  [[ ! -e "$run" ]] || { printf '  Run File survived --stop\n' >&2; failed=1; }
+  [[ "$(ui_status "$(ui_http GET "$UI_URL")")" == 0 ]] || { printf '  port still answers after --stop\n' >&2; failed=1; }
+  ui_reap; status="$NEXUS_WAIT_STATUS"
+  [[ "$status" -eq 0 ]] || { printf '  exit status after --stop: %s\n' "$status" >&2; failed=1; }
+  ! pgrep -f -- "$home/.nexus/web" >/dev/null || { printf '  server process left behind\n' >&2; failed=1; }
+
+  # Stopping twice is not an error, and the second stop changes nothing.
+  before="$(snapshot_tree "$home/.nexus")"
+  output="$(run_nexus "$home" ui --stop 2>&1)"; status=$?
+  after="$(snapshot_tree "$home/.nexus")"
+  [[ "$status" -eq 0 && "$output" == 'nexus ui: not running' ]] || { printf '  second stop: %s %s\n' "$status" "$output" >&2; failed=1; }
+  [[ "$before" == "$after" ]] || { printf '  a second --stop changed the Nexus home\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass ui_stop_ends_the_recorded_run; else fail ui_stop_ends_the_recorded_run; fi
+}
+
+test_ui_mode_usage() {
+  local failed=0 home output status args
+  home="$(ui_home ui_mode_usage)" || { fail ui_mode_usage; return; }
+  # --status and --stop are whole modes: any other flag beside one is a
+  # usage fault, and so is asking both questions at once.
+  for args in '--status --port 0' '--port 0 --status' '--status --no-open' \
+              '--stop --no-open' '--stop --port 8765' '--status --stop' '--stop --status'; do
+    # shellcheck disable=SC2086
+    output="$(run_nexus "$home" ui $args 2>&1)"; status=$?
+    [[ "$status" -eq 2 && "$output" == *'Usage: nexus'* ]] || { printf '  ui %s: %s %s\n' "$args" "$status" "$output" >&2; failed=1; }
+  done
+  [[ ! -e "$(ui_run_file_path "$home")" ]] || { printf '  a usage fault wrote a Run File\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass ui_mode_usage; else fail ui_mode_usage; fi
+}
+
+CASE_TESTS+=(
+  test_ui_run_file_records_the_run
+  test_ui_status_reports_the_recorded_run
+  test_ui_stop_ends_the_recorded_run
+  test_ui_mode_usage
 )

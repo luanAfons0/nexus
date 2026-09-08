@@ -412,15 +412,35 @@ and a reader who can open it already has your filesystem.
 ```bash
 ~/.nexus/scripts/nexus ui
 ~/.nexus/scripts/nexus ui --port 8765 --no-open
+~/.nexus/scripts/nexus ui --status
+~/.nexus/scripts/nexus ui --stop
 ```
 
 The server runs in the foreground until Ctrl-C or SIGTERM stops it; on exit
-it kills any CLI child still running. There is no detached mode, no pid
-file, and no `stop` command: the terminal that shows the URL is the one
-place the server lives. The default port is ephemeral, chosen by the
-system; `--port N` binds a fixed port. Exit codes: 0 on a clean stop, 1 when
-the port cannot be bound, when `python3` is missing, or when the `web`
-directory in the Nexus home is absent, and 2 on usage.
+it kills any CLI child still running. The default port is ephemeral, chosen
+by the system; `--port N` binds a fixed port. Exit codes: 0 on a clean stop,
+1 when the port cannot be bound, when `python3` is missing, or when the
+`web` directory in the Nexus home is absent, and 2 on usage.
+
+Every run records itself in the Run File `~/.nexus/ui-run.json`, which holds
+the run's pid, its port, its Run Token, and its mode. It is created at
+owner-only permissions, because it holds the Run Token, and the run removes
+it when it ends: on Ctrl-C, on SIGTERM, and after a shutdown request.
+
+`nexus ui --status` prints the live URL of the recorded run, in the same
+shape as the handshake line, and `nexus ui --stop` ends that run. Both are
+whole modes and take no other flag; combining one with `--port`, `--no-open`,
+or the other is a usage fault and exits 2. Both are questions rather than
+assertions: they exit 0 whether or not a run exists, and print `nexus ui:
+not running` when there is none.
+
+Both confirm the run over the loopback and never by pid. A recorded pid can
+be reused by an unrelated process, but a port that answers the recorded Run
+Token cannot be anything but the Nexus server, so `--status` probes the
+recorded URL and `--stop` sends the same `POST api/shutdown` the page sends.
+Where the probe fails the run is gone: Nexus removes the stale Run File and
+reports `not running`. No Nexus command signals a pid it has not confirmed,
+so there is no stale-pid hazard to reason about.
 
 The first line on standard output is the handshake line, exactly:
 
