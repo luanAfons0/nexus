@@ -545,3 +545,109 @@ CASE_TESTS+=(
   test_ui_save_conflict_keeps_file
   test_ui_save_refuses_bad_requests
 )
+
+# Ticket #43: POST api/shutdown stops the run over the loopback. It is the
+# one endpoint with no CLI command behind it, so it answers no envelope.
+
+# Wait for the server ui_start started to end on its own and record its exit
+# status in NEXUS_WAIT_STATUS. Unlike ui_stop it signals nothing.
+ui_reap() {
+  local i
+  NEXUS_WAIT_STATUS=''
+  [[ -n "${UI_PID:-}" ]] || return 0
+  for i in {1..250}; do
+    kill -0 "$UI_PID" 2>/dev/null || break
+    sleep .02
+  done
+  wait "$UI_PID" 2>/dev/null; NEXUS_WAIT_STATUS=$?
+  UI_PID=''
+}
+
+ui_shutdown_request() {
+  ui_http POST "${1}api/shutdown" -H 'Content-Type: application/json' -d '{}'
+}
+
+test_ui_shutdown_stops_the_run() {
+  local failed=0 home response status
+  home="$(ui_home ui_shutdown)" || { fail ui_shutdown_stops_the_run; return; }
+  ui_start "$home" || failed=1
+
+  response="$(ui_shutdown_request "$UI_URL")"
+  [[ "$(ui_status "$response")" == 200 ]] || { printf '  shutdown status: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  [[ "$(ui_header "$response" content-type)" == 'application/json; charset=utf-8' ]] || failed=1
+  # The whole 200 reached the caller before the listener closed, and it is
+  # not the {command, exit, stdout, stderr} envelope: no command ran.
+  jq -e '.stopping == true and ([has("command"), has("exit"), has("stdout"), has("stderr")] | any | not)' \
+    <<<"$(ui_body "$response")" >/dev/null || { printf '  shutdown body: %s\n' "$(ui_body "$response")" >&2; failed=1; }
+
+  ui_reap; status="$NEXUS_WAIT_STATUS"
+  [[ "$status" -eq 0 ]] || { printf '  exit status after a shutdown: %s\n' "$status" >&2; failed=1; }
+  ! pgrep -f -- "$home/.nexus/web" >/dev/null || { printf '  server process left behind\n' >&2; failed=1; }
+  [[ "$(ui_status "$(ui_http GET "$UI_URL")")" == 0 ]] || { printf '  port still answers after the shutdown\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass ui_shutdown_stops_the_run; else fail ui_shutdown_stops_the_run; fi
+}
+
+test_ui_shutdown_guard() {
+  local failed=0 home response bare
+  home="$(ui_home ui_shutdown_guard)" || { fail ui_shutdown_guard; return; }
+  ui_start "$home" || failed=1
+  bare="http://127.0.0.1:$UI_PORT"
+
+  # The same four checks in the same order as every other request.
+  response="$(ui_http POST "$bare/api/shutdown" -H 'Content-Type: application/json' -d '{}')"
+  [[ "$(ui_status "$response")" == 403 && "$(ui_body "$response")" == token ]] || { printf '  no token: %s\n' "$response" >&2; failed=1; }
+  response="$(ui_http POST "$bare/t/00000000000000000000000000000000/api/shutdown" -H 'Content-Type: application/json' -d '{}')"
+  [[ "$(ui_status "$response")" == 403 && "$(ui_body "$response")" == token ]] || failed=1
+  response="$(ui_http POST "${UI_URL}api/shutdown" -H 'Content-Type: application/json' -H "Host: example.com:$UI_PORT" -d '{}')"
+  [[ "$(ui_status "$response")" == 403 && "$(ui_body "$response")" == host ]] || { printf '  wrong Host: %s\n' "$response" >&2; failed=1; }
+  response="$(ui_http POST "${UI_URL}api/shutdown" -H 'Content-Type: application/json' -H 'Origin: http://evil.example' -d '{}')"
+  [[ "$(ui_status "$response")" == 403 && "$(ui_body "$response")" == origin ]] || { printf '  foreign Origin: %s\n' "$response" >&2; failed=1; }
+
+  # A mutating request still needs a JSON content type.
+  response="$(ui_http POST "${UI_URL}api/shutdown" -H 'Content-Type: text/plain' -d '{}')"
+  [[ "$(ui_status "$response")" == 415 && "$(ui_body "$response")" == json ]] || { printf '  text/plain: %s\n' "$response" >&2; failed=1; }
+  response="$(ui_http POST "${UI_URL}api/shutdown" -d '{}')"
+  [[ "$(ui_status "$response")" == 415 ]] || { printf '  no content type: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+
+  # One method and one path; any other pair is 404, as everywhere else.
+  response="$(ui_http GET "${UI_URL}api/shutdown")"
+  [[ "$(ui_status "$response")" == 404 ]] || { printf '  GET shutdown: %s\n' "$(ui_status "$response")" >&2; failed=1; }
+  response="$(ui_http PUT "${UI_URL}api/shutdown" -H 'Content-Type: application/json' -d '{}')"
+  [[ "$(ui_status "$response")" == 404 ]] || failed=1
+
+  # Every refusal left the run alive.
+  [[ "$(ui_status "$(ui_http GET "$UI_URL")")" == 200 ]] || { printf '  a refused shutdown stopped the run\n' >&2; failed=1; }
+  ui_stop
+  if (( failed == 0 )); then pass ui_shutdown_guard; else fail ui_shutdown_guard; fi
+}
+
+test_ui_shutdown_while_a_child_runs() {
+  local failed=0 home i response status
+  home="$(ui_home ui_shutdown_child)" || { fail ui_shutdown_while_a_child_runs; return; }
+  write_skill "$home/.agents/skills" alpha
+  write_lock "$home/.nexus/skill-lock.json" alpha
+  UI_FAULT=ui_slow_child ui_start "$home" || failed=1
+  ui_http POST "${UI_URL}api/update" -H 'Content-Type: application/json' -d '{"name":"alpha"}' >/dev/null 2>&1 &
+  local request=$!
+  for i in {1..200}; do [[ -e "$home/child-started" ]] && break; sleep .02; done
+  [[ -e "$home/child-started" ]] || { printf '  slow child never started\n' >&2; failed=1; }
+  pgrep -f -- "$REPO_ROOT/tests/faults.sh update alpha" >/dev/null || { printf '  child not visible before the shutdown\n' >&2; failed=1; }
+
+  # The slow child holds the mutation lock; the shutdown never takes it.
+  response="$(ui_shutdown_request "$UI_URL")"
+  [[ "$(ui_status "$response")" == 200 ]] || { printf '  shutdown during a mutation: %s\n' "$response" >&2; failed=1; }
+  jq -e '.stopping == true' <<<"$(ui_body "$response")" >/dev/null || failed=1
+
+  ui_reap; status="$NEXUS_WAIT_STATUS"
+  [[ "$status" -eq 0 ]] || { printf '  exit status with a child: %s\n' "$status" >&2; failed=1; }
+  wait "$request" 2>/dev/null || :
+  for i in {1..100}; do pgrep -f -- "$REPO_ROOT/tests/faults.sh update alpha" >/dev/null || break; sleep .02; done
+  ! pgrep -f -- "$REPO_ROOT/tests/faults.sh update alpha" >/dev/null || { printf '  CLI child survived the shutdown\n' >&2; failed=1; }
+  if (( failed == 0 )); then pass ui_shutdown_while_a_child_runs; else fail ui_shutdown_while_a_child_runs; fi
+}
+
+CASE_TESTS+=(
+  test_ui_shutdown_stops_the_run
+  test_ui_shutdown_guard
+  test_ui_shutdown_while_a_child_runs
+)
