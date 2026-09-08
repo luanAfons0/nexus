@@ -558,6 +558,20 @@ the page becomes a calm stopped state: a grey `stopped` badge, one sentence
 saying you stopped it, and `nexus ui` as the way back. The sub-nav and the
 `Stop server` button go inert, because the run they act on is gone.
 
+The badge keeps checking. It reads `GET api/run` again every five seconds, so
+a tab left open in the background says whether the run is still alive: green
+while the port answers, red as soon as it does not. One failed check is not
+final, so a transient failure corrects itself. The check runs no CLI child and
+never shows in Last command, and it stops for good once you stop the run from
+the page, because a Run Token dies with its run.
+
+The tab title carries the same state, because a narrow tab shows the title and
+not the header: `Nexus` while the run is alive, `Nexus — not running` when it
+is unreachable, and `Nexus — stopped` after you stop it. The page also carries
+a favicon of the Nexus mark, inline in the HTML as a `data:` URI, so no file
+joins the static allowlist. This is how you watch a background run without
+typing `nexus ui --status`.
+
 A run that ends without being asked to still shows the red `Connection lost.`
 banner. That distinction is the point: one state for a choice, one for a
 surprise.

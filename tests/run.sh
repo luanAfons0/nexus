@@ -1293,7 +1293,8 @@ test_readme_documentation() {
               'nexus ui --status' 'nexus ui --stop' '~/.nexus/ui-run.json' \
               '--foreground' '~/.nexus/ui.log' 'One run at a time' \
               'GET api/run' 'Stop server' 'Connection lost.' \
-              'grouped by kind' 'All kinds'; do
+              'grouped by kind' 'All kinds' \
+              'every five seconds' 'Nexus — not running' 'favicon'; do
     assert_contains README.md "$term" || failed=1
   done
   assert_contains README.md 'Setup preflight checks `jq`, `python3`, and the' || failed=1
