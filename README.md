@@ -412,6 +412,12 @@ not widen the network surface: it is created at owner-only permissions, it
 lives in the Nexus home and is never served by the page, it dies with the run,
 and a reader who can open it already has your filesystem.
 
+`docs/adr/0007-the-tray-is-a-windows-client-of-the-nexus-cli.md` adds the
+Tray, the Windows notification-area client of the CLI, and states what it may
+never do: it owns no state, it reads no Nexus file, and every action it takes
+is a `nexus ui` call. ADR 0005 is unchanged by it — the Tray opens no socket
+of its own, so it adds no network surface. See [The Tray](#the-tray).
+
 ### Start and stop
 
 ```bash
@@ -420,6 +426,7 @@ and a reader who can open it already has your filesystem.
 ~/.nexus/scripts/nexus ui --foreground
 ~/.nexus/scripts/nexus ui --status
 ~/.nexus/scripts/nexus ui --stop
+~/.nexus/scripts/nexus ui --open
 ```
 
 `nexus ui` binds the port, prints the handshake line, detaches, and returns
@@ -455,6 +462,18 @@ whole modes and take no other flag; combining one with `--port`, `--no-open`,
 or the other is a usage fault and exits 2. Both are questions rather than
 assertions: they exit 0 whether or not a run exists, and print `nexus ui:
 not running` when there is none.
+
+`nexus ui --open` is the idempotent "show me the Web UI", and it is the
+answer to a lost URL. Where the recorded run answers, it opens your browser
+at that run and starts nothing; where no run is recorded, or the recorded one
+does not answer, it removes any stale Run File, starts a Detached Run, and
+opens your browser at the new one. Either way it prints the same handshake
+line and exits 0, so a shortcut or a script needs no branch and reads no exit
+code for meaning it does not carry. It never starts a second run while one is
+live. `--open` is a whole mode too: combining it with `--port`, `--no-open`,
+`--foreground`, `--status`, or `--stop` exits 2. Its exit codes are a start's:
+0 on success, 1 when `python3` is missing, when `~/.nexus/web` is absent, or
+when the port cannot be bound.
 
 Both confirm the run over the loopback and never by pid. A recorded pid can
 be reused by an unrelated process, but a port that answers the recorded Run
@@ -714,6 +733,118 @@ carries exit 124 and a standard error line that names the timeout. The
 environment variable `NEXUS_UI_TIMEOUT` (seconds) overrides the limit,
 which the tests use with a short value.
 
+## The Tray
+
+The Tray is an icon in the Windows notification area that says whether a Web
+UI run is live and holds the controls for one: Open, Copy URL, Start, Stop,
+Open log, and Start at logon. It is the desktop door onto the Web UI, so the
+URL you did not write down is never lost and starting or stopping a run costs
+neither a terminal nor an agent session.
+
+It is a client of the CLI and nothing more. It owns no state, it never reads
+the Run File and never touches `GLOBAL.md`, the Nexus lock, or a skill root,
+and every action it takes is one `nexus ui` call through `wsl.exe`. It opens
+no listener: ADR 0005 is unchanged, and the one loopback connection the Tray
+causes is your browser's. The decision and the boundary are in
+`docs/adr/0007-the-tray-is-a-windows-client-of-the-nexus-cli.md`.
+
+It exists on Windows because WSLg hosts no notification area, so it is the
+one part of Nexus that is host-specific. Everything of it lives in `windows/`.
+
+### Install and uninstall
+
+Run this once, from Windows, in PowerShell:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+  \\wsl.localhost\<Distro>\<home>\.nexus\windows\install-tray.ps1
+```
+
+It works out the distribution and the Nexus home from the path it runs from,
+so nothing is hardcoded and no configuration file is written; the values
+reach the Tray as the arguments of the shortcut that starts it. It writes
+exactly two places outside the Nexus home:
+
+- the **Tray Home**, `%LOCALAPPDATA%\Nexus\Tray`, which holds a copy of the
+  Tray, the opener behind the Start Menu shortcut, and the one shim that
+  starts either of them with no window;
+- your own shortcut folders, which get a Startup shortcut that starts the
+  Tray at logon, and a Start Menu shortcut, `Nexus Web UI`, that opens the
+  Web UI through `nexus ui --open` with no Tray in the picture at all.
+
+The Tray runs from the Tray Home rather than from the Nexus home over
+`\\wsl.localhost\`, because a Tray that lived in the Nexus home would boot
+the distribution at every logon merely to read its own source.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+  \\wsl.localhost\<Distro>\<home>\.nexus\windows\uninstall-tray.ps1
+```
+
+The uninstaller removes exactly those three paths, names each one it removed
+or did not find, and stops a running Tray. It never reaches into the Nexus
+home, `~/.custom-skills`, or an agent home, and it leaves a live run running.
+
+On Windows 11 a new notification-area icon starts hidden. Click the chevron
+(`^`) beside the clock and drag the Nexus icon onto the taskbar to keep it
+there. There is no reliable scripted way to promote an icon, so this is
+written down rather than automated.
+
+### What it shows
+
+The Tray asks `nexus ui --status` every five seconds - never `--open`, so
+watching the state can never start a run - and shows the answer:
+
+| `nexus ui --status` | Icon | Tooltip |
+| --- | --- | --- |
+| `nexus ui: <url>` | green | `Nexus - running (port N)` |
+| `nexus ui: not running` | grey | `Nexus - stopped` |
+| the call fails | amber | `Nexus - WSL not available` |
+
+Amber is its own state because "cannot ask" and "not running" are different
+answers. Before each poll the Tray asks Windows whether the distribution is
+already running, and asks Nexus nothing while it is not: it shows the state,
+it does not create it.
+
+A balloon appears only when a run ends without being asked to. A stop you
+asked for is your own choice and is never reported back to you as an event.
+
+### The menu
+
+- **Open Nexus UI** (also a double-click) runs `nexus ui --open` and hands
+  the URL it prints to your default browser. It opens the live run when there
+  is one and starts one when there is not, so one gesture always ends with
+  the page in front of you. The Tray hands the URL over itself because the
+  opener inside the distribution has no Windows desktop to open a page on;
+  the Start Menu shortcut does the same, which is why it goes through
+  `nexus-open.ps1` rather than straight at `wsl.exe`.
+- **Copy URL** puts the live run's URL, Run Token and all, on the clipboard.
+  That is the one place the token reaches on the Windows side; it is written
+  to no file there.
+- **Start** runs `nexus ui --no-open`. It is offered when no run is live, and
+  starting from the amber state boots the distribution first.
+- **Stop** runs `nexus ui --stop`, the same request the page's `Stop server`
+  button sends, so the three doors cannot disagree about what stopping means.
+  It is offered only when a run is live.
+- **Open log** opens `~/.nexus/ui.log`, where a detached run's diagnostics go.
+- **Start at logon** writes or removes the Startup shortcut.
+- **Quit** removes the icon at once and leaves a live run alive: closing the
+  control surface never closes the Web UI behind your back.
+
+The Tray starts nothing at logon. It shows the state, so logging in costs no
+distribution boot, no listener, and no memory. A second launch adds no second
+icon, and no console window appears at logon or on any action.
+
+### What is not tested
+
+The Tray has no automated coverage. It is Windows PowerShell and the suite is
+bash in the distribution, so `tests/run.sh` asserts only that the Windows files
+ship. `windows/CHECKLIST.md` is the manual walk-through that stands in for
+it: install, every state, every menu item, the balloon, one instance, logon,
+the Start Menu shortcut, and uninstall. Walk it on the host after any change
+under `windows/`. The one part of this that the suite does cover is
+`nexus ui --open`.
+
 ## Troubleshooting
 
 - **Already initialized:** setup is intentionally disabled; use `/nexus-link`,
@@ -748,6 +879,12 @@ which the tests use with a short value.
   URL from the handshake line; a bookmark from an earlier run is stale.
 - **The browser did not open:** the printed URL is the fallback. Copy it
   from the handshake line; set `$BROWSER` to change the opener.
+- **The tray icon is amber:** the distribution is not running, so Nexus
+  cannot be asked anything. `Start` boots it and starts a run; nothing else
+  in the menu speaks for a distribution that is down.
+- **No tray icon after the install:** on Windows 11 a new notification-area
+  icon starts hidden. Click the chevron (`^`) beside the clock and drag the
+  Nexus icon onto the taskbar.
 - **"Not saved. GLOBAL.md changed on disk":** the file changed after the
   editor read it. Your text is kept in the "Your unsaved version" panel;
   copy it, apply it to the reloaded file, and save again.

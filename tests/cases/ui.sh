@@ -194,7 +194,7 @@ test_ui_cli_usage_and_port() {
   output="$(run_nexus "$home" ui extra 2>&1)"; status=$?
   [[ "$status" -eq 2 ]] || failed=1
   output="$(run_nexus "$home" help 2>&1)"
-  [[ "$output" =~ (^|$'\n')ui\ +Serve\ the\ local\ web\ page:\ ui\ \[--port\ N\]\ \[--no-open\]\ \[--foreground\],\ ui\ --status,\ ui\ --stop\.($|$'\n') ]] || { printf '  help lacks the ui line\n' >&2; failed=1; }
+  [[ "$output" =~ (^|$'\n')ui\ +Serve\ the\ local\ web\ page:\ ui\ \[--port\ N\]\ \[--no-open\]\ \[--foreground\],\ ui\ --status,\ ui\ --stop,\ ui\ --open\.($|$'\n') ]] || { printf '  help lacks the ui line\n' >&2; failed=1; }
 
   # --port N binds that port; a server on the same port fails with 1, before
   # anything detaches. The second home records no run, so this is the bind
@@ -934,4 +934,140 @@ test_ui_api_run_reports_the_run() {
 
 CASE_TESTS+=(
   test_ui_api_run_reports_the_run
+)
+
+# Ticket #60: `nexus ui --open` opens the recorded run, or starts one and
+# opens that. The browser is asserted at the seam the server already has: it
+# tries $BROWSER before anything else, so a recorder script there says which
+# URL was handed over, and no case needs a browser.
+
+# Run `nexus ui --open` with the recorder on $BROWSER. The output lands in
+# UI_OPEN_OUTPUT and the URLs the browser was handed in $home/browser-urls,
+# truncated at each call.
+ui_open() {
+  local home="$1"; shift
+  local hook="$home/browser-hook"
+  cat >"$hook" <<'HOOK'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >>"$(dirname -- "$0")/browser-urls"
+HOOK
+  chmod +x -- "$hook" || return 125
+  : >"$home/browser-urls" || return 125
+  UI_OPEN_OUTPUT="$(HOME="$home" NEXUS_HOME="$home/.nexus" BROWSER="$hook" \
+    "$REPO_ROOT/scripts/nexus" ui --open "$@" 2>&1)"
+}
+
+# The first URL the recorder was handed. A Detached Run opens the browser in
+# the child, after the command has returned, so this waits for it.
+ui_opened_url() {
+  local home="$1" i
+  for i in {1..250}; do
+    [[ -s "$home/browser-urls" ]] && break
+    sleep .02
+  done
+  head -n 1 -- "$home/browser-urls" 2>/dev/null
+}
+
+# The run `--open` left behind is no child of this shell, so its bookkeeping
+# comes from the Run File, exactly as ui_start's does.
+ui_adopt_run() {
+  local home="$1"
+  UI_HOME="$home"; UI_KIND=detached
+  UI_PID="$(jq -r '.pid' -- "$home/.nexus/ui-run.json" 2>/dev/null)"
+  [[ "$UI_PID" =~ ^[0-9]+$ ]] || { printf '  no pid in the Run File\n' >&2; return 1; }
+}
+
+test_ui_open_starts_a_run_and_opens_it() {
+  local failed=0 home status
+  home="$(ui_home ui_open_start)" || { fail ui_open_starts_a_run_and_opens_it; return; }
+  ui_open "$home"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '  exit %s; output:\n%s\n' "$status" "$UI_OPEN_OUTPUT" >&2; failed=1; }
+  ui_handshake "$UI_OPEN_OUTPUT" || { printf '  no handshake line:\n%s\n' "$UI_OPEN_OUTPUT" >&2; failed=1; }
+  [[ "$UI_OPEN_OUTPUT" == "nexus ui: $UI_URL" ]] || { printf '  extra output:\n%s\n' "$UI_OPEN_OUTPUT" >&2; failed=1; }
+  [[ "$(ui_status "$(ui_http GET "$UI_URL")")" == 200 ]] || { printf '  the started run does not answer\n' >&2; failed=1; }
+  # The browser was handed exactly the URL that was printed.
+  [[ "$(ui_opened_url "$home")" == "$UI_URL" ]] || { printf '  browser got: %s\n' "$(ui_opened_url "$home")" >&2; failed=1; }
+  ui_adopt_run "$home" || failed=1
+  jq -e '.mode == "detached"' -- "$(ui_run_file_path "$home")" >/dev/null || { printf '  --open did not start a Detached Run\n' >&2; failed=1; }
+  ui_stop
+  if (( failed == 0 )); then pass ui_open_starts_a_run_and_opens_it; else fail ui_open_starts_a_run_and_opens_it; fi
+}
+
+test_ui_open_reuses_the_live_run() {
+  local failed=0 home status pid token servers
+  home="$(ui_home ui_open_live)" || { fail ui_open_reuses_the_live_run; return; }
+  ui_start "$home" || failed=1
+  pid="$UI_PID"; token="$UI_TOKEN"
+
+  ui_open "$home"; status=$?
+  [[ "$status" -eq 0 && "$UI_OPEN_OUTPUT" == "nexus ui: $UI_URL" ]] || { printf '  live run: %s\n%s\n' "$status" "$UI_OPEN_OUTPUT" >&2; failed=1; }
+  # No second run: the Run File still names the first one, pid and all.
+  jq -e --argjson pid "$pid" --arg token "$token" '.pid == $pid and .token == $token' \
+    -- "$(ui_run_file_path "$home")" >/dev/null || { printf '  Run File: %s\n' "$(cat -- "$(ui_run_file_path "$home")")" >&2; failed=1; }
+  servers="$(pgrep -c -f -- "$home/.nexus/web" 2>/dev/null || printf 0)"
+  [[ "$servers" -eq 1 ]] || { printf '  server processes after --open: %s\n' "$servers" >&2; failed=1; }
+  [[ "$(ui_opened_url "$home")" == "$UI_URL" ]] || { printf '  browser got: %s\n' "$(ui_opened_url "$home")" >&2; failed=1; }
+  [[ "$(ui_status "$(ui_http GET "$UI_URL")")" == 200 ]] || { printf '  --open disturbed the live run\n' >&2; failed=1; }
+  ui_stop
+  if (( failed == 0 )); then pass ui_open_reuses_the_live_run; else fail ui_open_reuses_the_live_run; fi
+}
+
+test_ui_open_clears_a_stale_run_file() {
+  local failed=0 home run saved status stale
+  home="$(ui_home ui_open_stale)" || { fail ui_open_clears_a_stale_run_file; return; }
+  run="$(ui_run_file_path "$home")"
+  saved="$home/stale-run.json"
+  ui_start "$home" || failed=1
+  cp -- "$run" "$saved" || failed=1
+  stale="$UI_TOKEN"
+  ui_stop
+  cp -- "$saved" "$run" || failed=1
+
+  # A run that died with the machine does not block the next open.
+  ui_open "$home"; status=$?
+  [[ "$status" -eq 0 ]] || { printf '  stale Run File: exit %s\n%s\n' "$status" "$UI_OPEN_OUTPUT" >&2; failed=1; }
+  ui_handshake "$UI_OPEN_OUTPUT" || { printf '  no handshake line:\n%s\n' "$UI_OPEN_OUTPUT" >&2; failed=1; }
+  [[ "$UI_TOKEN" != "$stale" ]] || { printf '  --open reused the stale Run Token\n' >&2; failed=1; }
+  jq -e --arg token "$UI_TOKEN" '.token == $token' -- "$run" >/dev/null || { printf '  the stale Run File survived --open\n' >&2; failed=1; }
+  [[ "$(ui_opened_url "$home")" == "$UI_URL" ]] || { printf '  browser got: %s\n' "$(ui_opened_url "$home")" >&2; failed=1; }
+  ui_adopt_run "$home" || failed=1
+  ui_stop
+  if (( failed == 0 )); then pass ui_open_clears_a_stale_run_file; else fail ui_open_clears_a_stale_run_file; fi
+}
+
+test_ui_open_usage_and_missing_web() {
+  local failed=0 home output status args before after
+  home="$(ui_home ui_open_usage)" || { fail ui_open_usage_and_missing_web; return; }
+  before="$(snapshot_tree "$home/.nexus")"
+  # --open is a whole mode, exactly as --status and --stop are: any other
+  # flag beside it, or a second mode, is a usage fault that changes nothing.
+  for args in '--open --port 0' '--port 0 --open' '--open --no-open' '--no-open --open' \
+              '--open --foreground' '--foreground --open' '--open --status' '--status --open' \
+              '--open --stop' '--stop --open'; do
+    # shellcheck disable=SC2086
+    output="$(run_nexus "$home" ui $args 2>&1)"; status=$?
+    [[ "$status" -eq 2 && "$output" == *'Usage: nexus'* ]] || { printf '  ui %s: %s %s\n' "$args" "$status" "$output" >&2; failed=1; }
+  done
+  after="$(snapshot_tree "$home/.nexus")"
+  [[ "$before" == "$after" ]] || { printf '  a usage fault changed the Nexus home\n' >&2; failed=1; }
+  [[ ! -e "$(ui_run_file_path "$home")" ]] || { printf '  a usage fault wrote a Run File\n' >&2; failed=1; }
+
+  output="$(run_nexus "$home" help 2>&1)"
+  [[ "$output" == *'ui --open'* ]] || { printf '  help lacks ui --open\n' >&2; failed=1; }
+
+  # A missing web directory is a refusal before any listener opens, and
+  # before any browser is asked to show anything.
+  rm -rf -- "$home/.nexus/web"
+  ui_open "$home"; status=$?
+  [[ "$status" -eq 1 && "$UI_OPEN_OUTPUT" == *'web directory'* ]] || { printf '  missing web: %s %s\n' "$status" "$UI_OPEN_OUTPUT" >&2; failed=1; }
+  [[ ! -e "$(ui_run_file_path "$home")" ]] || { printf '  a failed --open wrote a Run File\n' >&2; failed=1; }
+  [[ ! -s "$home/browser-urls" ]] || { printf '  a failed --open opened %s\n' "$(cat -- "$home/browser-urls")" >&2; failed=1; }
+  if (( failed == 0 )); then pass ui_open_usage_and_missing_web; else fail ui_open_usage_and_missing_web; fi
+}
+
+CASE_TESTS+=(
+  test_ui_open_starts_a_run_and_opens_it
+  test_ui_open_reuses_the_live_run
+  test_ui_open_clears_a_stale_run_file
+  test_ui_open_usage_and_missing_web
 )

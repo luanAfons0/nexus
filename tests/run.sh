@@ -1294,7 +1294,11 @@ test_readme_documentation() {
               '--foreground' '~/.nexus/ui.log' 'One run at a time' \
               'GET api/run' 'Stop server' 'Connection lost.' \
               'grouped by kind' 'All kinds' \
-              'every five seconds' 'Nexus — not running' 'favicon'; do
+              'every five seconds' 'Nexus — not running' 'favicon' \
+              '## The Tray' '0007-the-tray-is-a-windows-client-of-the-nexus-cli.md' \
+              'install-tray.ps1' 'uninstall-tray.ps1' 'windows/CHECKLIST.md' \
+              '%LOCALAPPDATA%\Nexus\Tray' 'nexus ui --open' \
+              'no automated coverage' 'starts hidden' 'Start at logon'; do
     assert_contains README.md "$term" || failed=1
   done
   assert_contains README.md 'Setup preflight checks `jq`, `python3`, and the' || failed=1
@@ -1304,8 +1308,58 @@ test_readme_documentation() {
   if (( failed == 0 )); then pass readme_documentation; else fail readme_documentation; fi
 }
 
+# The decision records and the Ubiquitous Language ship with the code, and a
+# term that is not in CONTEXT.md is a term the next reader has to invent.
+test_domain_documents() {
+  local failed=0 adr term
+  for adr in 0005-nexus-opens-one-loopback-listener-only-in-nexus-ui \
+             0006-a-web-ui-run-is-recorded-in-a-run-file-and-can-be-stopped \
+             0007-the-tray-is-a-windows-client-of-the-nexus-cli; do
+    assert_file "docs/adr/$adr.md" || failed=1
+  done
+  assert_contains docs/adr/0007-the-tray-is-a-windows-client-of-the-nexus-cli.md 'Accepted' || failed=1
+  assert_contains README.md '0007-the-tray-is-a-windows-client-of-the-nexus-cli.md' || failed=1
+  for term in '**Tray**' '**Tray Home**' '**Web UI**' '**Run File**' '**Run Token**' '**Detached Run**'; do
+    assert_contains CONTEXT.md "$term" || failed=1
+  done
+  if (( failed == 0 )); then pass domain_documents; else fail domain_documents; fi
+}
+
+# The Tray is Windows PowerShell and this suite is bash in the distro, so
+# the Tray has no automated coverage (ADR 0007). What the suite can say is
+# that the Windows files ship, that they are confined to one directory, and
+# that the boundary the Tray must not cross is not crossed in their text.
+test_windows_tray_files() {
+  local failed=0 file owned
+  for file in windows/nexus-tray.ps1 windows/nexus-open.ps1 windows/nexus-hidden.vbs \
+              windows/install-tray.ps1 windows/uninstall-tray.ps1 windows/CHECKLIST.md; do
+    assert_file "$file" || failed=1
+  done
+  # The install writes exactly two places outside the Nexus home, and the
+  # uninstall removes exactly those.
+  assert_contains windows/install-tray.ps1 'LOCALAPPDATA' || failed=1
+  assert_contains windows/uninstall-tray.ps1 'LOCALAPPDATA' || failed=1
+  # The checklist stands in for the coverage the Tray cannot have.
+  assert_contains windows/CHECKLIST.md 'no automated coverage' || failed=1
+  for owned in ui-run.json GLOBAL.md skill-lock.json; do
+    if grep -rFq -- "$owned" "$REPO_ROOT/windows"; then
+      printf '  the Tray names a Nexus file it must not read: %s\n' "$owned" >&2
+      failed=1
+    fi
+  done
+  # The icons are drawn at runtime, so no binary asset enters the tree.
+  if find "$REPO_ROOT/windows" -type f \( -name '*.ico' -o -name '*.exe' \
+      -o -name '*.dll' -o -name '*.png' \) -print -quit | grep -q .; then
+    printf '  a binary asset entered windows/\n' >&2
+    failed=1
+  fi
+  if (( failed == 0 )); then pass windows_tray_files; else fail windows_tray_files; fi
+}
+
 test_metadata
 test_readme_documentation
+test_domain_documents
+test_windows_tray_files
 test_source_hygiene
 test_shell_syntax
 test_bootstrap

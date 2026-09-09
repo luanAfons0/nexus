@@ -13,11 +13,16 @@ or any skill root.
 
 The one file this program owns is the Run File in the Nexus home: the record
 of the one live run, holding its pid, its port, its Run Token, and its mode
-at owner-only permissions (ADR 0006). `--status` and `--stop` read it and
-then confirm the run over the loopback, never by pid: a recorded pid can be
-reused by an unrelated process, but a port that answers the recorded Run
-Token cannot be anything but this server. Where the probe fails, the run is
-gone and the stale Run File is removed.
+at owner-only permissions (ADR 0006). `--status`, `--stop`, and `--open`
+read it and then confirm the run over the loopback, never by pid: a recorded
+pid can be reused by an unrelated process, but a port that answers the
+recorded Run Token cannot be anything but this server. Where the probe
+fails, the run is gone and the stale Run File is removed.
+
+`--open` is the one of the three that can end in a run: it opens the browser
+at the recorded run when that run answers, and otherwise falls through into
+an ordinary start and opens the browser at that. Either way one handshake
+line reaches standard output, so a caller has one shape to read.
 
 A run detaches by default. The socket is bound first, so a port that cannot
 be bound still exits 1 with its own message before anything detaches; only
@@ -263,6 +268,24 @@ def stop_mode(path):
         time.sleep(0.02)
     remove_run_file(path)
     sys.stdout.write("nexus ui: stopped\n")
+    return 0
+
+
+def open_mode(path):
+    """Show the Web UI. Returns 0 once the recorded run has been opened, or
+    None when there is no run to open and the caller must start one. A
+    recorded run that does not answer is stale: remove it here, so the start
+    path that follows meets a Nexus home with no run in it."""
+    run = read_run_file(path)
+    if run is None:
+        return None
+    if not run_answers(run):
+        remove_run_file(path)
+        return None
+    url = run_url(run)
+    open_browser(url)
+    sys.stdout.write("nexus ui: %s\n" % url)
+    sys.stdout.flush()
     return 0
 
 
@@ -542,11 +565,19 @@ def main(argv):
     parser.add_argument("--log-file")
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--stop", action="store_true")
+    parser.add_argument("--open", action="store_true")
     args = parser.parse_args(argv[1:])
     if args.status:
         return status_mode(args.run_file)
     if args.stop:
         return stop_mode(args.run_file)
+    if args.open:
+        # A live run wins and nothing is started. Otherwise this falls
+        # through into the ordinary start below, which opens the browser at
+        # the run it makes.
+        opened = open_mode(args.run_file)
+        if opened is not None:
+            return opened
     if not args.foreground and not args.log_file:
         sys.stderr.write("nexus: error: a Detached Run needs --log-file\n")
         return 1
