@@ -30,11 +30,6 @@ button:disabled { cursor: not-allowed; }
   display: grid; place-items: center;
 }
 .brand .mark span { width: 8px; height: 8px; background: #1f2328; border-radius: 2px; display: block; }
-.url {
-  font-size: 12px; color: #656d76; padding: 4px 10px; border: 1px solid #d0d7de;
-  border-radius: 6px; background: #f6f8fa;
-}
-.hdr-run { display: flex; align-items: center; gap: 12px; }
 .subnav {
   position: sticky; top: 0; z-index: 10;
   display: flex; gap: 4px; padding: 0 32px; background: #fff; border-bottom: 1px solid #d0d7de;
@@ -106,8 +101,6 @@ h2 { font-size: 20px; font-weight: 600; margin: 0; }
 .badge.foreign i { background: #9a6700; }
 .badge.absent, .badge.nohome { color: #656d76; border-color: #d0d7de; background: #f6f8fa; }
 .badge.absent i, .badge.nohome i { background: #8c959f; }
-.badge.unreachable { color: #cf222e; border-color: #ff8182; background: #ffebe9; }
-.badge.unreachable i { background: #cf222e; }
 .exit { padding: 1px 8px; border-radius: 12px; font-weight: 600; font-size: 12px; }
 .exit.ok { background: #dafbe1; color: #1a7f37; }
 .exit.bad { background: #ffebe9; color: #cf222e; }
@@ -206,17 +199,6 @@ dialog.modal::backdrop { background: rgba(31,35,40,.5); }
 .modal-body .input { height: 36px; width: 100%; }
 .modal-body .strong { color: #1f2328; font-weight: 600; }
 .modal-ft { padding: 12px 20px; border-top: 1px solid #d0d7de; display: flex; justify-content: flex-end; gap: 8px; }
-
-/* Stopped state: what the page becomes after the user stops the run */
-.stopped { padding: 72px 0; display: flex; justify-content: center; }
-.stopped-card {
-  width: 560px; padding: 32px; display: flex; flex-direction: column;
-  gap: 16px; align-items: flex-start;
-}
-.stopped-cmd {
-  width: 100%; font-size: 13px; padding: 12px 16px; border: 1px solid #d0d7de;
-  border-radius: 6px; background: #f6f8fa;
-}
 
 /* Toasts */
 .toasts { position: fixed; right: 32px; bottom: 32px; display: flex; flex-direction: column; gap: 8px; z-index: 20; }

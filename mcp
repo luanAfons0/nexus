@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""Nexus as a FirstMate Plugin Server.
+
+FirstMate runs this file over stdio and exposes its tools to the Nexus page at
+one address, so Nexus no longer owns a listener, a token, a Run File or a tray
+of its own. The shebang decides the language; there is no manifest.
+
+Every tool is one subprocess run of the Nexus CLI, exactly as the Web UI server
+was: this program never reads or writes GLOBAL.md, the Nexus Lock, or a skill
+root. Each answer is the same envelope the page already knows,
+{command, exit, stdout, stderr} plus `json` when stdout parses.
+
+A non-zero exit is not a tool error. `nexus remove` refusing a name is a
+refusal the page must show, so it comes back as an ordinary result carrying
+the envelope, and the page reads the exit code as it always did.
+
+One mutation runs at a time; reads are never locked. That is the Web UI
+server's rule, kept because the CLI's own safety depends on it.
+
+MCP over stdio is one JSON-RPC message per line.
+"""
+import json
+import os
+import subprocess
+import sys
+import threading
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+CLI = os.path.join(HERE, "scripts", "nexus")
+
+PROTOCOL_VERSION = "2025-06-18"
+SERVER_INFO = {"name": "nexus", "version": "1.0.0"}
+
+METHOD_NOT_FOUND = -32601
+INVALID_PARAMS = -32602
+INTERNAL_ERROR = -32603
+# The range JSON-RPC leaves to the application. One change at a time was the
+# Web UI server's 409; it keeps a code of its own so the page can tell "wait
+# for the other command" from "you asked for something that is not there".
+BUSY = -32000
+
+# How long one CLI child may run. An install reaches the network, so this is
+# generous; the Web UI server used the same number.
+TIMEOUT = float(os.environ.get("NEXUS_MCP_TIMEOUT", "300"))
+
+# One at a time for anything that changes the Agent Context. Reads never take
+# it, so a slow update cannot stop the page from listing skills.
+MUTATION = threading.Lock()
+# stdout carries one message per line, and several threads may answer at once.
+SPEAKING = threading.Lock()
+
+TEXT = {"type": "string"}
+
+
+def read_tool(argv):
+    """A tool that reads. It takes no arguments and takes no lock."""
+    return {"tail": list(argv), "mutates": False, "keys": ()}
+
+
+def write_tool(build, keys):
+    """A tool that changes something. `build` turns the arguments into the CLI
+    tail; `keys` are the argument names, each of which must be a string."""
+    return {"build": build, "mutates": True, "keys": keys}
+
+
+TOOLS = {
+    "list_skills": {
+        "description": "Every Skill of all three kinds: installed, custom and control.",
+        "properties": {},
+        "required": [],
+        "call": read_tool(["list", "--json"]),
+    },
+    "show_global_instructions": {
+        "description": (
+            "The Global Instructions: their owner, whether the file is there, "
+            "its sha256, and its content."
+        ),
+        "properties": {},
+        "required": [],
+        "call": read_tool(["global", "show", "--json"]),
+    },
+    "update_skill": {
+        "description": "Update one Installed Skill from its upstream source, then link.",
+        "properties": {"name": {**TEXT, "description": "The Skill Name."}},
+        "required": ["name"],
+        "call": write_tool(lambda args: ["update", args["name"]], ("name",)),
+    },
+    "remove_skill": {
+        "description": "Remove one Installed Skill from the Nexus Lock, then link.",
+        "properties": {"name": {**TEXT, "description": "The Skill Name."}},
+        "required": ["name"],
+        "call": write_tool(lambda args: ["remove", args["name"]], ("name",)),
+    },
+    "edit_global_instructions": {
+        "description": (
+            "Replace the Global Instructions whole. `ifMatch` is the sha256 the "
+            "editor started from, so a change made elsewhere is refused rather "
+            "than overwritten."
+        ),
+        "properties": {
+            "content": {**TEXT, "description": "The whole new file."},
+            "ifMatch": {**TEXT, "description": "The sha256 this edit started from."},
+        },
+        "required": ["content", "ifMatch"],
+        "call": write_tool(
+            lambda args: ["global", "edit", "--if-match", args["ifMatch"]],
+            ("content", "ifMatch"),
+        ),
+    },
+}
+
+
+def run_cli(tail, stdin_text=None):
+    """Run the CLI once and return the envelope. Never raises for a CLI
+    failure: exit 1 is a refusal the page must show."""
+    argv = [CLI] + tail
+    stdin = subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL
+    child = subprocess.Popen(argv, stdin=stdin, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, start_new_session=True)
+    try:
+        out, err = child.communicate(
+            input=stdin_text.encode() if stdin_text is not None else None,
+            timeout=TIMEOUT)
+        code = child.returncode
+    except subprocess.TimeoutExpired:
+        child.kill()
+        out, err = child.communicate()
+        code = 124
+        err = err + ("nexus: command killed after %s seconds (timeout)\n"
+                     % TIMEOUT).encode()
+    envelope = {"command": argv, "exit": code,
+                "stdout": out.decode("utf-8", "replace"),
+                "stderr": err.decode("utf-8", "replace")}
+    if code == 0:
+        try:
+            envelope["json"] = json.loads(envelope["stdout"])
+        except ValueError:
+            pass
+    return envelope
+
+
+def call_tool(name, arguments):
+    """One tool call, as an MCP result. Raises Refusal for a call that is not
+    one this server offers."""
+    tool = TOOLS.get(name)
+    if tool is None:
+        raise Refusal("no such tool: %s" % name)
+    call = tool["call"]
+    for key in call["keys"]:
+        if not isinstance(arguments.get(key), str):
+            raise Refusal("%s needs %s as a string" % (name, key))
+
+    if not call["mutates"]:
+        return envelope_result(run_cli(call["tail"]))
+
+    # The CLI's own name checks are the only validation: the Skill Name is one
+    # argv element and never reaches a shell.
+    if not MUTATION.acquire(blocking=False):
+        raise Refusal("another change is already running", BUSY)
+    try:
+        tail = call["build"](arguments)
+        stdin_text = arguments["content"] if "content" in call["keys"] else None
+        return envelope_result(run_cli(tail, stdin_text))
+    finally:
+        MUTATION.release()
+
+
+def envelope_result(envelope):
+    """The envelope as an MCP result. isError stays false whatever the exit
+    code, because a CLI refusal is an answer the page shows, not a fault of
+    the tool."""
+    return {
+        "content": [{"type": "text", "text": json.dumps(envelope)}],
+        "structuredContent": envelope,
+    }
+
+
+class Refusal(Exception):
+    """Something the caller asked for that this server will not do now."""
+
+    def __init__(self, message, code=INVALID_PARAMS):
+        super().__init__(message)
+        self.code = code
+
+
+def tool_listing():
+    return [{"name": name,
+             "description": tool["description"],
+             "inputSchema": {"type": "object",
+                             "properties": tool["properties"],
+                             "required": tool["required"]}}
+            for name, tool in TOOLS.items()]
+
+
+def say(message):
+    with SPEAKING:
+        sys.stdout.write(json.dumps(message) + "\n")
+        sys.stdout.flush()
+
+
+def answer(request_id, result):
+    say({"jsonrpc": "2.0", "id": request_id, "result": result})
+
+
+def refuse(request_id, code, message):
+    say({"jsonrpc": "2.0", "id": request_id,
+         "error": {"code": code, "message": message}})
+
+
+def handle(request):
+    """One request. Runs on its own thread, so a slow CLI child never stops
+    this server from answering anything else. The thread is not a daemon, so
+    closing stdin ends this server only once every call in flight has been
+    answered."""
+    request_id = request.get("id")
+    method = request.get("method")
+    params = request.get("params") or {}
+    try:
+        if method == "initialize":
+            answer(request_id, {"protocolVersion": PROTOCOL_VERSION,
+                                "capabilities": {"tools": {}},
+                                "serverInfo": SERVER_INFO})
+        elif method == "ping":
+            answer(request_id, {})
+        elif method == "tools/list":
+            answer(request_id, {"tools": tool_listing()})
+        elif method == "tools/call":
+            arguments = params.get("arguments") or {}
+            if not isinstance(arguments, dict):
+                raise Refusal("arguments must be an object")
+            answer(request_id, call_tool(params.get("name"), arguments))
+        else:
+            refuse(request_id, METHOD_NOT_FOUND, "no such method: %s" % method)
+    except Refusal as refusal:
+        refuse(request_id, refusal.code, str(refusal))
+    except Exception as fault:  # noqa: BLE001 - the page must see what broke
+        refuse(request_id, INTERNAL_ERROR, "%s: %s" % (type(fault).__name__, fault))
+
+
+def main():
+    sys.stderr.write("nexus: the Plugin Server is up\n")
+    sys.stderr.flush()
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            request = json.loads(line)
+        except ValueError:
+            sys.stderr.write("nexus: a line on stdin was not JSON\n")
+            sys.stderr.flush()
+            continue
+        # A notification has no id and no answer. notifications/initialized is
+        # the only one MCP sends here.
+        if request.get("id") is None:
+            continue
+        threading.Thread(target=handle, args=(request,)).start()
+
+
+main()
