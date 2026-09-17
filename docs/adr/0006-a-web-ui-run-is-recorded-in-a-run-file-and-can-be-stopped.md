@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted
+Accepted, then superseded
+
+Superseded by ADR 0008. There is no run to record: the Host owns the
+lifetime, and the Run File is gone.
 
 Revises ADR 0005 in part.
 
