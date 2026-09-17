@@ -155,7 +155,7 @@ test_global_help_lists_global() {
   local failed=0 home output
   home="$(new_home global_help)"
   output="$(run_nexus "$home" help)" || failed=1
-  [[ "$output" == *'Usage: nexus <bootstrap|setup|link|install|update|remove|new|list|global|ui|help>'* ]] || {
+  [[ "$output" == *'Usage: nexus <bootstrap|setup|link|install|update|remove|new|list|global|help>'* ]] || {
     printf '  usage line lacks global:\n%s\n' "$output" >&2; failed=1;
   }
   [[ "$output" == *$'\nglobal '* ]] || { printf '  no global subcommand line\n' >&2; failed=1; }

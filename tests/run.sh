@@ -1226,7 +1226,7 @@ test_setup_canonical_scan_failure_is_propagated() {
 test_metadata() {
   local failed=0
   local ignored
-  for ignored in skill-lock.json ui-run.json ui.log; do
+  for ignored in skill-lock.json; do
     assert_contains .gitignore "$ignored" || failed=1
     if git -C "$REPO_ROOT" check-ignore -q -- "$ignored"; then
       :
@@ -1246,7 +1246,7 @@ test_metadata() {
       nexus-help) command='/home/luanh/.nexus/scripts/nexus' ;;
       nexus-update) command='/home/luanh/.nexus/scripts/nexus update' ;;
       nexus-remove) command='/home/luanh/.nexus/scripts/nexus remove' ;;
-      nexus) command='/home/luanh/.nexus/scripts/nexus ui' ;;
+      nexus) command='/home/luanh/.firstmate/runtime.json' ;;
     esac
     assert_file "skills/$name/SKILL.md" || failed=1
     [[ ! -e "$REPO_ROOT/skills/$name/claude-command.md" ]] || { printf '  unexpected adapter file: %s\n' "$name" >&2; failed=1; }
@@ -1260,8 +1260,15 @@ test_metadata() {
           failed=1
         fi
       done
-      assert_contains "skills/$name/SKILL.md" 'nexus ui --stop' || failed=1
-      assert_contains "skills/$name/SKILL.md" 'Stop server' || failed=1
+      assert_contains "skills/$name/SKILL.md" '/p/nexus/' || failed=1
+      assert_contains "skills/$name/SKILL.md" 'systemctl --user start firstmate' || failed=1
+      # The launcher starts nothing: the Host serves the page already.
+      for wrapper in 'nexus ui' 'Stop server'; do
+        if grep -Fq -- "$wrapper" "$REPO_ROOT/skills/$name/SKILL.md"; then
+          printf '  nexus launcher still speaks of a run it does not own: %s\n' "$wrapper" >&2
+          failed=1
+        fi
+      done
     fi
     if [[ "$name" == nexus-install ]]; then
       assert_contains "skills/$name/SKILL.md" '--skill "skill-a" --skill "skill-b"' || failed=1
@@ -1284,27 +1291,34 @@ test_readme_documentation() {
   for term in '~/.agents/skills' 'skill-lock.json' '.claude-backup' '.codex-backup' '/nexus-setup' '$nexus-setup' 'npx skills' 'python3' 'recovery' 'another agent' \
               '~/.custom-skills' '/nexus-new' '$nexus-new' '.workspaces' \
               '/nexus-update' '$nexus-update' '/nexus-remove' '$nexus-remove' '/nexus-help' '$nexus-help' 'nexus list' \
-              '`/nexus`' '`$nexus`' 'nexus ui' 'http.server' 'Save changes' \
+              '`/nexus`' '`$nexus`' 'Save changes' \
               '## Global instructions' '~/.custom-skills/GLOBAL.md' '0003-global-instructions-are-a-managed-link-into-the-custom-root.md' \
               '0004-nexus-writes-only-global-md-in-the-custom-root.md' \
-              '## Web UI' '0005-nexus-opens-one-loopback-listener-only-in-nexus-ui.md' \
-              '0006-a-web-ui-run-is-recorded-in-a-run-file-and-can-be-stopped.md' 'Run File' \
-              '#/skills' '#/global' 'POST api/shutdown' \
-              'nexus ui --status' 'nexus ui --stop' '~/.nexus/ui-run.json' \
-              '--foreground' '~/.nexus/ui.log' 'One run at a time' \
-              'GET api/run' 'Stop server' 'Connection lost.' \
-              'grouped by kind' 'All kinds' \
-              'every five seconds' 'Nexus — not running' 'favicon' \
-              '## The Tray' '0007-the-tray-is-a-windows-client-of-the-nexus-cli.md' \
-              'install-tray.ps1' 'uninstall-tray.ps1' 'windows/CHECKLIST.md' \
-              '%LOCALAPPDATA%\Nexus\Tray' 'nexus ui --open' \
-              'no automated coverage' 'starts hidden' 'Start at logon'; do
+              '## The page' '0008-nexus-is-a-firstmate-plugin.md' \
+              '0005-nexus-opens-one-loopback-listener-only-in-nexus-ui.md' \
+              '0006-a-web-ui-run-is-recorded-in-a-run-file-and-can-be-stopped.md' \
+              '0007-the-tray-is-a-windows-client-of-the-nexus-cli.md' \
+              '#/skills' '#/global' \
+              '/p/nexus/' '~/.firstmate/runtime.json' 'systemctl --user status firstmate' \
+              'journalctl --user -u firstmate' 'Plugin Server' 'Plugin Page' \
+              'list_skills' 'show_global_instructions' 'update_skill' 'remove_skill' \
+              'edit_global_instructions' 'Connection lost.' \
+              'grouped by kind' 'All kinds'; do
     assert_contains README.md "$term" || failed=1
   done
   assert_contains README.md 'Setup preflight checks `jq`, `python3`, and the' || failed=1
   assert_contains README.md 'it does not check Git, npm, npx, or NVM' || failed=1
   assert_contains README.md 'directly available `npx`; if it is unavailable, NVM is the fallback' || failed=1
   assert_contains README.md 'retries once and then removes the temporary transaction, leaves' || failed=1
+  # The listener, the Run File and the Tray left with ADR 0008. The README
+  # may name them only where it says they are gone.
+  local gone
+  for gone in 'nexus ui' 'http.server' 'ui-run.json' 'POST api/' 'GET api/'; do
+    if grep -Fq -- "$gone" "$REPO_ROOT/README.md"; then
+      printf '  the README still documents something Nexus no longer owns: %s\n' "$gone" >&2
+      failed=1
+    fi
+  done
   if (( failed == 0 )); then pass readme_documentation; else fail readme_documentation; fi
 }
 
@@ -1312,54 +1326,30 @@ test_readme_documentation() {
 # term that is not in CONTEXT.md is a term the next reader has to invent.
 test_domain_documents() {
   local failed=0 adr term
+  # The three superseded records stay in the tree: they are why Nexus once
+  # owned a listener, a Run File and a Tray.
+  for adr in 0005-nexus-opens-one-loopback-listener-only-in-nexus-ui \
+             0006-a-web-ui-run-is-recorded-in-a-run-file-and-can-be-stopped \
+             0007-the-tray-is-a-windows-client-of-the-nexus-cli \
+             0008-nexus-is-a-firstmate-plugin; do
+    assert_file "docs/adr/$adr.md" || failed=1
+  done
+  assert_contains docs/adr/0008-nexus-is-a-firstmate-plugin.md 'Accepted' || failed=1
+  assert_contains README.md '0008-nexus-is-a-firstmate-plugin.md' || failed=1
   for adr in 0005-nexus-opens-one-loopback-listener-only-in-nexus-ui \
              0006-a-web-ui-run-is-recorded-in-a-run-file-and-can-be-stopped \
              0007-the-tray-is-a-windows-client-of-the-nexus-cli; do
-    assert_file "docs/adr/$adr.md" || failed=1
+    assert_contains "docs/adr/$adr.md" 'Superseded by ADR 0008' || failed=1
   done
-  assert_contains docs/adr/0007-the-tray-is-a-windows-client-of-the-nexus-cli.md 'Accepted' || failed=1
-  assert_contains README.md '0007-the-tray-is-a-windows-client-of-the-nexus-cli.md' || failed=1
-  for term in '**Tray**' '**Tray Home**' '**Web UI**' '**Run File**' '**Run Token**' '**Detached Run**'; do
+  for term in '**Host**' '**Plugin**' '**Plugin Page**' '**Plugin Server**' '**Envelope**'; do
     assert_contains CONTEXT.md "$term" || failed=1
   done
   if (( failed == 0 )); then pass domain_documents; else fail domain_documents; fi
 }
 
-# The Tray is Windows PowerShell and this suite is bash in the distro, so
-# the Tray has no automated coverage (ADR 0007). What the suite can say is
-# that the Windows files ship, that they are confined to one directory, and
-# that the boundary the Tray must not cross is not crossed in their text.
-test_windows_tray_files() {
-  local failed=0 file owned
-  for file in windows/nexus-tray.ps1 windows/nexus-open.ps1 windows/nexus-hidden.vbs \
-              windows/install-tray.ps1 windows/uninstall-tray.ps1 windows/CHECKLIST.md; do
-    assert_file "$file" || failed=1
-  done
-  # The install writes exactly two places outside the Nexus home, and the
-  # uninstall removes exactly those.
-  assert_contains windows/install-tray.ps1 'LOCALAPPDATA' || failed=1
-  assert_contains windows/uninstall-tray.ps1 'LOCALAPPDATA' || failed=1
-  # The checklist stands in for the coverage the Tray cannot have.
-  assert_contains windows/CHECKLIST.md 'no automated coverage' || failed=1
-  for owned in ui-run.json GLOBAL.md skill-lock.json; do
-    if grep -rFq -- "$owned" "$REPO_ROOT/windows"; then
-      printf '  the Tray names a Nexus file it must not read: %s\n' "$owned" >&2
-      failed=1
-    fi
-  done
-  # The icons are drawn at runtime, so no binary asset enters the tree.
-  if find "$REPO_ROOT/windows" -type f \( -name '*.ico' -o -name '*.exe' \
-      -o -name '*.dll' -o -name '*.png' \) -print -quit | grep -q .; then
-    printf '  a binary asset entered windows/\n' >&2
-    failed=1
-  fi
-  if (( failed == 0 )); then pass windows_tray_files; else fail windows_tray_files; fi
-}
-
 test_metadata
 test_readme_documentation
 test_domain_documents
-test_windows_tray_files
 test_source_hygiene
 test_shell_syntax
 test_bootstrap

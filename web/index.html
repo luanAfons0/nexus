@@ -10,11 +10,6 @@
 <body>
 <header class="hdr">
   <div class="brand"><span class="mark"><span></span></span><span>Nexus</span></div>
-  <div class="hdr-run">
-    <code class="url" id="base-url"></code>
-    <span class="badge absent" id="run-badge" hidden><i></i><span id="run-badge-text"></span></span>
-    <button class="btn sm" type="button" id="stop-server" disabled>Stop server</button>
-  </div>
 </header>
 <nav class="subnav" id="subnav">
   <button type="button" class="on" data-route="skills" aria-current="page">Skills</button>
@@ -53,15 +48,6 @@
     <div id="last-command-body" class="card empty">No command has run yet.</div>
   </section>
 
-  <section class="stopped" id="stopped" hidden>
-    <div class="card stopped-card">
-      <span class="badge absent"><i></i>stopped</span>
-      <h2>Server stopped.</h2>
-      <div class="muted">You stopped it from this page. The Run Token died with the run, so this URL answers nothing now. Nothing on disk changed.</div>
-      <div class="stopped-cmd mono">$ nexus ui</div>
-      <div class="hint">Start a new run for a new URL, or close this tab.</div>
-    </div>
-  </section>
 </main>
 <div id="toasts" class="toasts"></div>
 <script src="vendor/marked.min.js"></script>

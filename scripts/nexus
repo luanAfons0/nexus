@@ -15,7 +15,6 @@ _nexus_source_libraries() {
   source "$SCRIPT_DIR/lib/remove.sh"
   source "$SCRIPT_DIR/lib/list.sh"
   source "$SCRIPT_DIR/lib/global.sh"
-  source "$SCRIPT_DIR/lib/ui.sh"
   NEXUS_SCRIPTS_DIR="$SCRIPT_DIR"
 }
 _nexus_source_libraries
@@ -49,8 +48,6 @@ main() {
       link_all false ;;
     global)
       global_command "${@:2}" ;;
-    ui)
-      ui_command "${@:2}" ;;
     help|-h|--help)
       [[ "$#" -eq 1 ]] || { usage >&2; return 2; }
       help_text ;;

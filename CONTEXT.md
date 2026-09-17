@@ -180,54 +180,34 @@ A retained temporary or recovery path left behind by an interrupted Setup.
 Nexus names it and asks the user to review before retrying.
 _Avoid_: garbage, temp files
 
-### Web UI
+### FirstMate
 
-**Web UI**:
-The local page served by `nexus ui`, the one process in which Nexus opens a
-network listener, bound to `127.0.0.1` only (ADR 0005). It shows the skills of
-all three kinds and edits the Global Instructions. Every read and every
-mutation on the page is a subprocess call to the Nexus CLI; the server never
-touches a file itself.
-_Avoid_: dashboard, web app, admin page, GUI
+**Host**:
+The FirstMate process that runs Nexus and serves its page. It owns the port,
+the token and the lifetime, so Nexus opens no listener of its own and records
+no run (ADR 0008). Its own glossary defines it; Nexus borrows the word.
+_Avoid_: server, orchestrator, daemon, runtime
 
-**Run Token**:
-The random secret in the URL path of the Web UI (`/t/<token>/`). It is 32 hex
-characters from a cryptographic source, generated once per `nexus ui` run,
-printed once in the handshake line, and lives as long as that server run. A
-request without it is refused before any CLI child runs.
-_Avoid_: session token, API key, auth token, password
+**Plugin**:
+What Nexus is to the Host: a directory holding a Plugin Page and a Plugin
+Server. Nothing else is asked of it, and nothing in it is copied or moved.
+_Avoid_: extension, addon, integration, app
 
-**Run File**:
-The file in the Nexus home that records the one live Web UI run: its pid, its
-port, its Run Token, and whether it is detached. `nexus ui` writes it at
-owner-only permissions, `nexus ui --status` and `nexus ui --stop` read it, and
-the run removes it when it ends. A Run File whose port no longer answers is
-stale: any command that finds one removes it (ADR 0006).
-_Avoid_: pid file, lock file, state file, session file
+**Plugin Page**:
+The page Nexus ships in `web/`. The Host serves it byte for byte at
+`/p/nexus/` and never reaches inside it. It shows the Skills of all three
+kinds and edits the Global Instructions. It builds no address and holds no
+secret: the Host admits it with a cookie set on the first navigation.
+_Avoid_: Web UI, dashboard, web app, admin page, GUI
 
-**Detached Run**:
-A Web UI run that no longer holds the terminal that started it. It is the
-default of `nexus ui`, it is recorded in the Run File, and it ends on
-`nexus ui --stop` or on `Stop server` in the page. Its opposite is a
-**Foreground Run**, which `--foreground` selects and which ends on Ctrl-C or
-SIGTERM.
-_Avoid_: daemon, background job, service
+**Plugin Server**:
+The executable `mcp` in the Nexus home. The Host runs it over stdio and
+speaks MCP to it, and its tools are everything the page can do. Every tool is
+one subprocess call to the Nexus CLI, so the server touches no file itself.
+_Avoid_: backend, API, ui server, adapter
 
-### Tray
-
-**Tray**:
-The Windows notification-area client of the Nexus CLI. It shows whether a Web
-UI run is live and holds the actions that open, start, and stop one. It owns
-no state: it never reads the Run File and never touches the Global
-Instructions, the Nexus Lock, or a Native Skill Root, and every action it
-takes is a `nexus ui` call through `wsl.exe` (ADR 0007). It exists on Windows
-because WSLg hosts no notification area.
-_Avoid_: daemon, service, supervisor, agent, systray app, background process
-
-**Tray Home**:
-`%LOCALAPPDATA%\Nexus\Tray`, the directory on the Windows filesystem that the
-Tray runs from. It holds a copy of the Tray and its launch shim and nothing
-else. The Windows installer writes it and the uninstaller removes it. The
-Tray runs from here rather than from the Nexus home over `\\wsl.localhost\`,
-which would boot the distribution at every logon.
-_Avoid_: install directory, tray folder, Windows Nexus home, app data
+**Envelope**:
+What every tool answers: the argv the CLI ran, its exit code, its standard
+output and its standard error, plus the parsed output when it is JSON. A
+non-zero exit is an answer the page shows, never a transport failure.
+_Avoid_: response, payload, result object

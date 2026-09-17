@@ -1,13 +1,21 @@
-/* Nexus Web UI. Vanilla JavaScript, no build step, no network fetch beyond
-   the same-origin API under the Run Token. Every action is a CLI subprocess
-   on the server; the page shows the exact command and output. */
+/* The Nexus Plugin Page. Vanilla JavaScript, no build step, no network fetch
+   beyond one same-origin address. Every action is a tool call on the Nexus
+   Plugin Server, which runs it as a CLI subprocess; the page shows the exact
+   command and output. */
 'use strict';
 
 // --- shell -----------------------------------------------------------------
 
-// Base URL with the Run Token: everything before and including "/t/TOKEN/".
-const BASE = location.pathname.replace(/^(\/t\/[0-9a-f]{32}\/).*$/, '$1');
-const API = location.origin + BASE + 'api/';
+// The one address this page talks to: its own Plugin's tools, relative to
+// /p/nexus/. FirstMate admits the page with a cookie it set on the first
+// navigation, so nothing here carries a token and no address is built by hand.
+const RPC = 'rpc';
+
+// The tool behind each button that changes something.
+const TOOL_FOR = { update: 'update_skill', remove: 'remove_skill' };
+
+// The Plugin Server's own JSON-RPC code for "one change at a time".
+const BUSY = -32000;
 
 function el(tag, attrs, children) {
   const node = document.createElement(tag);
@@ -41,13 +49,6 @@ const ROUTES = ['skills', 'global'];
 const DEFAULT_ROUTE = 'skills';
 
 const routeState = { current: null, restoring: false };
-// The run this page is served from; see "the run" below. Declared here
-// because the router refuses to leave the stopped state.
-const runState = { pid: null, mode: null, stopped: false, poll: null };
-
-// How often the header re-reads the run. The check runs no CLI child, so a
-// tab left open costs one loopback request every few seconds.
-const RUN_POLL_MS = 5000;
 
 function routeFromHash() {
   const name = location.hash.replace(/^#\/?/, '');
@@ -68,9 +69,6 @@ function confirmLeaveEditor() {
 
 function renderRoute(route) {
   routeState.current = route;
-  // The stopped state replaces both routed sections; nothing brings them
-  // back, because the run they read from is gone.
-  if (runState.stopped) return;
   for (const name of ROUTES) {
     document.getElementById(name).hidden = name !== route;
   }
@@ -95,10 +93,6 @@ function onHashChange() {
   }
   const next = routeFromHash();
   if (next === routeState.current) return;
-  if (runState.stopped) {
-    renderRoute(next);
-    return;
-  }
   if (routeState.current === 'global' && !confirmLeaveEditor()) {
     routeState.restoring = true;
     location.hash = routeHash('global');
@@ -108,7 +102,6 @@ function onHashChange() {
 }
 
 function initShell() {
-  document.getElementById('base-url').textContent = location.origin + BASE;
   const route = routeFromHash();
   // An absent, empty, or unknown hash resolves to Skills, and the URL says
   // so without adding a history entry.
@@ -125,145 +118,33 @@ function initShell() {
 
 initShell();
 
-// --- the run ---------------------------------------------------------------
-
-// GET api/run and POST api/shutdown are the two endpoints with no CLI
-// command behind them: they are the server's own state. They answer no
-// {command, exit, stdout, stderr} envelope, so they never go through api()
-// and never appear in Last command.
-async function serverState(name, options) {
-  const { method = 'GET', body } = options || {};
-  const init = { method, headers: {}, cache: 'no-store' };
-  if (body !== undefined) {
-    init.headers['Content-Type'] = 'application/json';
-    init.body = JSON.stringify(body);
-  }
-  const response = await fetch(API + name, init);
-  if (!response.ok) {
-    const error = new Error('HTTP ' + response.status);
-    error.status = response.status;
-    throw error;
-  }
-  return response.json();
-}
-
-// The tab title carries the same state as the badge, because a narrow tab
-// shows the title and not the header.
-function setRunBadge(kind, text, title) {
-  const badge = document.getElementById('run-badge');
-  badge.className = 'badge ' + kind;
-  badge.hidden = false;
-  document.getElementById('run-badge-text').textContent = text;
-  document.title = title;
-}
-
-// Read the run again. The badge is only as true as its last check, so a tab
-// left open in the background keeps checking: green while the port answers,
-// red as soon as it does not. One failed check is not final — the poll goes
-// on, so a transient failure corrects itself.
-async function loadRun() {
-  if (runState.stopped) return;
-  let run;
-  try {
-    run = await serverState('run');
-  } catch (error) {
-    setRunBadge('unreachable', 'unreachable', 'Nexus \u2014 not running');
-    document.getElementById('stop-server').disabled = true;
-    return;
-  }
-  runState.pid = run.pid;
-  runState.mode = run.mode;
-  setRunBadge('linked', 'running \u00b7 '
-    + (run.mode === 'detached' ? 'detached' : 'this terminal')
-    + ' \u00b7 pid ' + run.pid, 'Nexus');
-  document.getElementById('stop-server').disabled = false;
-}
-
-function stopPollingRun() {
-  if (runState.poll === null) return;
-  clearInterval(runState.poll);
-  runState.poll = null;
-}
-
-// A run the user chose to end must not look like a failure, so the page
-// becomes a calm stopped state rather than the red connectionLost() banner,
-// which is kept for a run that ended without being asked to.
-function renderStopped() {
-  runState.stopped = true;
-  // A Run Token dies with its run, so nothing brings this page back and
-  // there is nothing left to check.
-  stopPollingRun();
-  setRunBadge('absent', 'stopped', 'Nexus \u2014 stopped');
-  document.getElementById('stop-server').disabled = true;
-  for (const button of document.querySelectorAll('#subnav button[data-route]')) {
-    button.disabled = true;
-  }
-  for (const id of ['banners', 'skills', 'global', 'last-command']) {
-    document.getElementById(id).hidden = true;
-  }
-  document.getElementById('stopped').hidden = false;
-}
-
-function openStopDialog() {
-  const confirmButton = el('button', { class: 'btn dng', type: 'button', text: 'Stop server' });
-  const dialog = el('dialog', { class: 'modal' }, [
-    el('div', { class: 'modal-hd', text: 'Stop the Nexus server' }),
-    el('div', { class: 'modal-body' }, [
-      el('div', { text: 'This stops the server that serves this page. It runs no CLI command and changes nothing on disk.' }),
-      el('div', { class: 'hint' }, [
-        'The Run Token dies with the run, so this URL stops answering. Unsaved editor text is lost. Start a new run with ',
-        el('code', { text: 'nexus ui' }), '.',
-      ]),
-    ]),
-    el('div', { class: 'modal-ft' }, [
-      el('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: () => dialog.close() }),
-      confirmButton,
-    ]),
-  ]);
-  confirmButton.addEventListener('click', async () => {
-    confirmButton.disabled = true;
-    try {
-      await serverState('shutdown', { method: 'POST', body: {} });
-    } catch (error) {
-      dialog.close();
-      banner('stop', 'err', [
-        el('strong', { text: 'Not stopped.' }),
-        ' The server refused the request' + (error.status ? ': HTTP ' + error.status : '') + '.',
-      ]);
-      return;
-    }
-    dialog.close();
-    renderStopped();
-  });
-  dialog.addEventListener('close', () => dialog.remove());
-  document.body.append(dialog);
-  dialog.showModal();
-}
-
-document.getElementById('stop-server').addEventListener('click', () => {
-  if (runState.stopped) return;
-  openStopDialog();
-});
-
-loadRun();
-runState.poll = setInterval(loadRun, RUN_POLL_MS);
-
 // --- api client, banners, toasts, Last command panel ----------------------
 
-// Every call returns the envelope {command, exit, stdout, stderr, json?}
-// and shows it in the Last command panel. An HTTP error (403, 404, 409,
-// 415) throws an Error with .status and .text; a failed fetch shows the
-// connection-lost banner and rethrows.
-async function api(name, options) {
-  const { method = 'GET', body } = options || {};
-  const init = { method, headers: {}, cache: 'no-store' };
-  if (body !== undefined) {
-    init.headers['Content-Type'] = 'application/json';
-    init.body = JSON.stringify(body);
-  }
+// One tool call on the Nexus Plugin Server. Every call returns the envelope
+// {command, exit, stdout, stderr, json?} and shows it in the Last command
+// panel.
+//
+// Two kinds of refusal reach here and both throw an Error. The Host refuses
+// a request that is not this page's with a status and no envelope, which
+// gives .status; the Plugin Server refuses a call it will not run with a
+// JSON-RPC error, which gives .code. A failed fetch shows the connection-lost
+// banner and rethrows.
+let callNumber = 0;
+
+async function callTool(name, args) {
   let response;
   try {
-    response = await fetch(API + name, init);
+    response = await fetch(RPC, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: ++callNumber,
+        method: 'tools/call',
+        params: { name, arguments: args || {} },
+      }),
+    });
   } catch (error) {
     connectionLost();
     throw error;
@@ -274,7 +155,14 @@ async function api(name, options) {
     error.text = await response.text();
     throw error;
   }
-  const envelope = await response.json();
+  const answer = await response.json();
+  if (answer.error) {
+    const error = new Error(answer.error.message);
+    error.code = answer.error.code;
+    error.text = answer.error.message;
+    throw error;
+  }
+  const envelope = answer.result.structuredContent;
   showLastCommand(envelope);
   return envelope;
 }
@@ -289,6 +177,13 @@ function banner(id, kind, children) {
   return node;
 }
 
+// A refusal in one sentence, whether it came from the Host or from the Nexus
+// Plugin Server.
+function refusalText(error) {
+  if (error.status) return 'The Host answered HTTP ' + error.status + ' (' + (error.text || '').trim() + ').';
+  return 'The Plugin Server refused it: ' + (error.text || error.message) + '.';
+}
+
 function clearBanner(id) {
   const old = document.querySelector('#banners [data-id="' + id + '"]');
   if (old) old.remove();
@@ -296,8 +191,8 @@ function clearBanner(id) {
 
 function connectionLost() {
   banner('connection', 'err', [
-    el('strong', { text: 'Connection lost.' }), ' Rerun ',
-    el('code', { text: 'nexus ui' }), ', then ', el('code', { text: 'nexus list' }), ' to check.',
+    el('strong', { text: 'Connection lost.' }), ' The FirstMate Host is not answering. Check it with ',
+    el('code', { text: 'systemctl --user status firstmate' }), '.',
   ]);
 }
 
@@ -459,7 +354,7 @@ function showLockBanner(envelope) {
 async function loadSkills() {
   let envelope;
   try {
-    envelope = await api('list');
+    envelope = await callTool('list_skills');
   } catch (error) {
     return;
   }
@@ -687,7 +582,7 @@ async function loadGlobal() {
   if (!editor.textarea) buildEditor();
   let envelope;
   try {
-    envelope = await api('global');
+    envelope = await callTool('show_global_instructions');
   } catch (error) {
     return null;
   }
@@ -780,12 +675,12 @@ async function saveGlobal() {
   setSaving(true);
   let envelope;
   try {
-    envelope = await api('global', { method: 'PUT', body: { content, ifMatch } });
+    envelope = await callTool('edit_global_instructions', { content, ifMatch });
   } catch (error) {
     setSaving(false);
-    if (error.status) {
+    if (error.status || error.code) {
       banner('global-save-error', 'err', [
-        el('strong', { text: 'Not saved.' }), ' The server answered HTTP ' + error.status + ' (' + error.text + ').',
+        el('strong', { text: 'Not saved.' }), ' ' + refusalText(error),
       ]);
     }
     return;
@@ -884,7 +779,7 @@ async function runMutation(action, name) {
   showRowSpinner(name, action);
   clearBanner('mutation');
   try {
-    const envelope = await api(action, { method: 'POST', body: { name } });
+    const envelope = await callTool(TOOL_FOR[action], { name });
     if (envelope.exit !== 0) {
       banner('mutation', 'err', [
         el('strong', { text: 'nexus ' + action + ' ' + name + ' failed (exit ' + envelope.exit + ').' }),
@@ -894,10 +789,10 @@ async function runMutation(action, name) {
       toast([action === 'update' ? 'Updated ' : 'Removed ', el('code', { text: name }), '.']);
     }
   } catch (error) {
-    if (error.status === 409) {
+    if (error.code === BUSY) {
       banner('mutation', 'warn', [el('strong', { text: 'Another command is still running.' }), ' Wait for it, then try again.']);
-    } else if (error.status) {
-      banner('mutation', 'err', [el('strong', { text: 'Request refused: HTTP ' + error.status + ' ' + (error.text || '') })]);
+    } else if (error.status || error.code) {
+      banner('mutation', 'err', [el('strong', { text: 'Request refused. ' + refusalText(error) })]);
     }
   } finally {
     mutationState.running = null;

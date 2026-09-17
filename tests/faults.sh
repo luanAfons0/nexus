@@ -11,7 +11,6 @@ fault_setup() {
     canonical_promote|canonical_restore|canonical_cleanup|canonical_late_collision) fault_save canonical_move ;;
     canonical_cleanup) fault_save cleanup_canonical_temp ;;
     final_cleanup) fault_save cleanup_discovered_lock_snapshots ;;
-    ui_slow_child|ui_timeout_child) fault_save ui_cli_path ;;
   esac
   case "${NEXUS_FAULT:-}" in
     stage|promote|restore) stage_move() { [[ "$NEXUS_FAULT" == stage || "$NEXUS_FAULT" == promote && "$1" == *'/.nexus-tmp.'* || "$NEXUS_FAULT" == restore && ( "$1" == *'/.nexus-tmp.'* || "$1" == */original ) ]] && { [[ "$NEXUS_FAULT" == stage ]] && error 'test seam: staged link creation failed' || error 'test seam: staged move failed'; return 1; }; __fault_orig_stage_move "$@"; } ;;
@@ -66,26 +65,6 @@ fault_setup() {
       fi
       __fault_orig_cleanup_discovered_lock_snapshots "$@"
     }
-  fi
-  # Web UI: the server runs the CLI as a child that does not source this
-  # file. The fault points the server at a wrapper in the fake HOME that
-  # re-sources the CLI and this file, so the same fault name reaches the
-  # child. In the child, update and remove wait for a release file (slow)
-  # or sleep past the test timeout (timeout).
-  if [[ "${NEXUS_FAULT:-}" == ui_slow_child || "${NEXUS_FAULT:-}" == ui_timeout_child ]]; then
-    ui_cli_path() { printf '%s\n' "$HOME/fault-cli"; }
-    if [[ ! -x "$HOME/fault-cli" ]]; then
-      printf '%s\n' '#!/usr/bin/env bash' \
-        "exec bash -c 'source \"\$1\"; nexus_init; source \"\$2\"; fault_setup; main \"\${@:3}\"' bash '$NEXUS_SCRIPTS_DIR/nexus' '${BASH_SOURCE[0]}' \"\$@\"" \
-        >"$HOME/fault-cli"
-      chmod 755 "$HOME/fault-cli"
-    fi
-    if [[ "${NEXUS_FAULT:-}" == ui_slow_child ]]; then
-      update_skill() { : >"$HOME/child-started"; while [[ ! -e "$HOME/child-release" ]]; do sleep .02; done; printf 'slow child finished\n'; }
-    else
-      update_skill() { : >"$HOME/child-started"; sleep 60; printf 'never printed\n'; }
-    fi
-    remove_skill() { update_skill "$@"; }
   fi
   if [[ "${NEXUS_FAULT:-}" == term_pre_cleanup_fail || "${NEXUS_FAULT:-}" == term_post_cleanup_fail ]]; then
     rm() {

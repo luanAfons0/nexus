@@ -49,7 +49,7 @@ Native invocation forms are:
 | Update one skill | `/nexus-update` | `$nexus-update` |
 | Remove one skill | `/nexus-remove` | `$nexus-remove` |
 | Show skills or command help | `/nexus-help` | `$nexus-help` |
-| Open the Web UI: list, update, remove, edit global instructions | `/nexus` | `$nexus` |
+| Open the page: list, update, remove, edit global instructions | `/nexus` | `$nexus` |
 
 The equivalent CLI is `~/.nexus/scripts/nexus {setup,link,install,update,remove,new,list,global,ui,help}`.
 
@@ -339,7 +339,7 @@ custom and control rows, and still exits 0. An invalid lock reports the
 validation error and exits 1.
 
 `nexus list --json` prints the same state as one JSON object for scripts and
-the Web UI. `skills` is an array sorted by name; each row has
+the page. `skills` is an array sorted by name; each row has
 `name`, `kind`, `source`, `hash` (the full `skillFolderHash`, not the
 eight-character prefix), and `updatedAt`, with null for the last three on
 custom and control rows. `globalInstructions` has the same shape as `global
@@ -365,235 +365,108 @@ read-only command, and reports the result. It never runs a mutating command.
 
 ## The nexus launcher skill
 
-`/nexus` in Claude and `$nexus` in Codex start the Web UI: the skill runs
-`nexus ui`, prints the handshake line with the URL, and ends. The run
-detaches itself and the command returns, so the run outlives the agent
-session that started it and the skill needs no `nohup`, no log file, and no
-`disown`. The printed URL is the contract. The server tries to open a
-browser on its own, but from an agent sandbox it often cannot, so open the
-URL by hand. To end the run, press `Stop server` in the page header or run
-`nexus ui --stop`. The skill never runs install, setup, link, update,
-remove, or global itself; the page does those through the same CLI, so the
-same refusals apply. The former chat menu is gone.
+`/nexus` in Claude and `$nexus` in Codex print the address of the page and
+end. The skill starts nothing: the FirstMate Host serves the page and runs
+the Nexus Plugin Server, so there is no run for an agent session to own and
+no handshake line to wait for. It reads the port and the token out of
+`~/.firstmate/runtime.json` and prints one URL. Where the Host is not
+running, it says so and names the command that starts it.
 
-## Web UI
+The printed URL is the contract. Nothing here opens a browser: from an agent
+sandbox that usually fails, so open the URL by hand or use FirstMate's Tray.
+The skill never runs install, setup, link, update, remove, or global itself;
+the page does those through the same CLI, so the same refusals apply.
 
-`nexus ui` serves a local page, the Web UI, from Python's `http.server`.
-It is the one command in which Nexus opens a network listener, and that
-listener is bound to `127.0.0.1` only. The run detaches by default and ends
-on `nexus ui --stop` or on `Stop server` in the page; `--foreground` keeps it
-in the terminal, where Ctrl-C or SIGTERM stops it. The page shows every skill
-of all three kinds in one
-table and edits the global instructions in a GitHub-style editor with Edit
-and Preview tabs, line numbers, soft wrap, and Cancel and "Save changes"
-buttons ("Save", not "Commit", so the word is not confused with publish or
-Git). The preview renderer is vendored in `~/.nexus`; the page makes no
-network fetch.
+## The page
+
+Nexus ships a page in `web/` and an executable `mcp` beside it, and the
+FirstMate Host does the rest: it runs `mcp` as the Nexus Plugin Server, serves
+`web/` byte for byte at `http://127.0.0.1:4747/p/nexus/`, and admits the
+browser with a cookie it sets on the first navigation. Nexus opens no
+listener, mints no token, and records no run.
+
+The page shows every skill of all three kinds in one table and edits the
+global instructions in a GitHub-style editor with Edit and Preview tabs, line
+numbers, soft wrap, and Cancel and "Save changes" buttons ("Save", not
+"Commit", so the word is not confused with publish or Git). The preview
+renderer is vendored in `~/.nexus`; the page makes no network fetch.
 
 The contract is recorded in
-`docs/adr/0005-nexus-opens-one-loopback-listener-only-in-nexus-ui.md`:
+`docs/adr/0008-nexus-is-a-firstmate-plugin.md`:
 
-- One listener, only in `nexus ui`, on `127.0.0.1` only.
-- The server never touches `GLOBAL.md`, the Nexus lock, or any skill root.
-  Every read and every mutation is a subprocess call to the CLI: `list
-  --json`, `global show --json`, `global edit --if-match`, `update`, and
-  `remove`. ADR 0004 is unchanged: the CLI is still the one writer of
-  `GLOBAL.md`.
-- Every request passes a loopback guard: loopback peer, exact `Host`,
-  matching `Origin` when present, and a per-run Run Token in the URL path.
-  Mutating requests need a JSON content type.
+- Nexus is a directory holding a `web/` folder and an executable `mcp`, and
+  asks nothing else of anyone.
+- The Plugin Server never touches `GLOBAL.md`, the Nexus Lock, or any skill
+  root. Every tool is a subprocess call to the CLI: `list --json`, `global
+  show --json`, `global edit --if-match`, `update`, and `remove`. ADR 0004 is
+  unchanged: the CLI is still the one writer of `GLOBAL.md`.
+- The Host defends the address. It binds `127.0.0.1` only, checks the `Host`
+  header and the `Origin` and `Sec-Fetch-Site` of every request, requires the
+  token it minted at its own startup, and lets a Plugin Page reach only its
+  own Plugin.
 
+ADR 0008 supersedes
+`docs/adr/0005-nexus-opens-one-loopback-listener-only-in-nexus-ui.md`,
 `docs/adr/0006-a-web-ui-run-is-recorded-in-a-run-file-and-can-be-stopped.md`
-revises exactly one clause of ADR 0005 — "There is no detached mode, no pid
-file, and no `stop` command" — and leaves every other clause standing. A run
-records itself in a Run File in the Nexus home, holding its pid, its port, its
-Run Token, and its mode, and removes the file when it ends. The Run File does
-not widen the network surface: it is created at owner-only permissions, it
-lives in the Nexus home and is never served by the page, it dies with the run,
-and a reader who can open it already has your filesystem.
+and `docs/adr/0007-the-tray-is-a-windows-client-of-the-nexus-cli.md`. All
+three are kept as a record of why Nexus once owned a listener, a Run File and
+a Tray, and each one names what replaced it.
 
-`docs/adr/0007-the-tray-is-a-windows-client-of-the-nexus-cli.md` adds the
-Tray, the Windows notification-area client of the CLI, and states what it may
-never do: it owns no state, it reads no Nexus file, and every action it takes
-is a `nexus ui` call. ADR 0005 is unchanged by it — the Tray opens no socket
-of its own, so it adds no network surface. See [The Tray](#the-tray).
+### Open it
 
-### Start and stop
+`/nexus` (`$nexus` in Codex) prints the address. So does FirstMate's own Tray,
+which opens its Index Page, from which every Plugin is one click away.
 
-```bash
-~/.nexus/scripts/nexus ui
-~/.nexus/scripts/nexus ui --port 8765 --no-open
-~/.nexus/scripts/nexus ui --foreground
-~/.nexus/scripts/nexus ui --status
-~/.nexus/scripts/nexus ui --stop
-~/.nexus/scripts/nexus ui --open
+The Host has to be running:
+
+```sh
+systemctl --user status firstmate
 ```
 
-`nexus ui` binds the port, prints the handshake line, detaches, and returns
-your prompt, so starting the Web UI does not cost you a terminal. The
-detached run ends on `nexus ui --stop` or on `Stop server` in the page.
-`nexus ui --foreground` keeps the run in the terminal, where Ctrl-C or
-SIGTERM stops it. Either way, on exit the run kills any CLI child still
-running. The default port is ephemeral, chosen by the system; `--port N`
-binds a fixed port. Exit codes: 0 on a clean stop, 1 when the port cannot be
-bound, when a run is already live, when `python3` is missing, or when the
-`web` directory in the Nexus home is absent, and 2 on usage.
+The address never changes, so it can be bookmarked. The token is in
+`~/.firstmate/runtime.json`, readable by you alone, and it reaches the browser
+once: the Host answers the first navigation with a cookie and sends the
+browser to the clean address, which is why the page's relative paths are
+undisturbed.
 
-Detaching happens after the bind, so a port that cannot be bound still exits
-1 with its own message before anything detaches. A detached run has no
-terminal for its diagnostics, so they go to the log `~/.nexus/ui.log`,
-truncated at each start and owner-only, because a refusal line carries the
-path it refused and so the Run Token. The handshake line still reaches
-standard output.
+### Tools and envelope
 
-One run at a time. `nexus ui` refuses to start while the Run File names a run
-whose port still answers, prints that run's URL, and exits 1. Where the
-recorded run does not answer, the Run File is stale: Nexus removes it and
-starts normally.
+The page reaches its own tools with one relative `POST` to `rpc`, whose body
+is an MCP JSON-RPC request. Five tools stand where the HTTP API stood, and
+each one is a CLI command:
 
-Every run records itself in the Run File `~/.nexus/ui-run.json`, which holds
-the run's pid, its port, its Run Token, and its mode. It is created at
-owner-only permissions, because it holds the Run Token, and the run removes
-it when it ends: on Ctrl-C, on SIGTERM, and after a shutdown request.
-
-`nexus ui --status` prints the live URL of the recorded run, in the same
-shape as the handshake line, and `nexus ui --stop` ends that run. Both are
-whole modes and take no other flag; combining one with `--port`, `--no-open`,
-or the other is a usage fault and exits 2. Both are questions rather than
-assertions: they exit 0 whether or not a run exists, and print `nexus ui:
-not running` when there is none.
-
-`nexus ui --open` is the idempotent "show me the Web UI", and it is the
-answer to a lost URL. Where the recorded run answers, it opens your browser
-at that run and starts nothing; where no run is recorded, or the recorded one
-does not answer, it removes any stale Run File, starts a Detached Run, and
-opens your browser at the new one. Either way it prints the same handshake
-line and exits 0, so a shortcut or a script needs no branch and reads no exit
-code for meaning it does not carry. It never starts a second run while one is
-live. `--open` is a whole mode too: combining it with `--port`, `--no-open`,
-`--foreground`, `--status`, or `--stop` exits 2. Its exit codes are a start's:
-0 on success, 1 when `python3` is missing, when `~/.nexus/web` is absent, or
-when the port cannot be bound.
-
-Both confirm the run over the loopback and never by pid. A recorded pid can
-be reused by an unrelated process, but a port that answers the recorded Run
-Token cannot be anything but the Nexus server, so `--status` probes the
-recorded URL and `--stop` sends the same `POST api/shutdown` the page sends.
-Where the probe fails the run is gone: Nexus removes the stale Run File and
-reports `not running`. No Nexus command signals a pid it has not confirmed,
-so there is no stale-pid hazard to reason about.
-
-The first line on standard output is the handshake line, exactly:
-
-```
-nexus ui: http://127.0.0.1:PORT/t/TOKEN/
-```
-
-`TOKEN` is the Run Token: 32 hex characters from a cryptographic source,
-new on every run, valid only while that run lives. After the handshake line
-the server tries to open the browser with `$BROWSER`, then `xdg-open`,
-`wslview`, and `explorer.exe`, in that order; every failure is silent, so
-the printed URL is always the fallback. `--no-open` skips the attempt.
-
-### Loopback guard
-
-The listener binds `127.0.0.1` only. Every request passes four checks, in
-this order, and the first failure answers 403 with one reason word as the
-body (`peer`, `host`, `origin`, `token`) before any CLI child runs:
-
-1. The peer address is loopback.
-2. `Host` is exactly `127.0.0.1:PORT` or `localhost:PORT`.
-3. When `Origin` is present, it equals `http://` plus that `Host`.
-4. The path starts with `/t/TOKEN/`.
-
-The `Host` check stops DNS rebinding, the `Origin` check stops a page on
-another site from calling the endpoints, and the Run Token makes a guessed
-port useless on its own. Mutating requests also need a JSON content type,
-and the server answers no CORS preflight.
-
-### Static files
-
-The page is served from the `web` directory in the Nexus home, from an
-allowlist of four files: `index.html`, `app.css`, `app.js`, and
-`vendor/marked.min.js`. Any other path is 404, with no directory listing.
-Every response carries `Cache-Control: no-store`; static files also carry
-`Content-Security-Policy: default-src 'self'`, so no script, style, or
-fetch leaves the page origin. The page is one HTML file, one CSS file, and
-one JavaScript file with no build step and no framework.
-
-### Endpoints and envelope
-
-Every endpoint lives under `/t/TOKEN/api/` and is one CLI command:
-
-| Endpoint | Command |
+| Tool | Command |
 | --- | --- |
-| `GET api/list` | `nexus list --json` |
-| `GET api/global` | `nexus global show --json` |
-| `PUT api/global` with `{content, ifMatch}` | `nexus global edit --if-match <ifMatch>`, `content` on standard input |
-| `POST api/update` with `{name}` | `nexus update <name>` |
-| `POST api/remove` with `{name}` | `nexus remove <name>` |
-| `GET api/run` | none: it reports the run |
-| `POST api/shutdown` | none: it stops the run |
+| `list_skills` | `nexus list --json` |
+| `show_global_instructions` | `nexus global show --json` |
+| `update_skill` with `{name}` | `nexus update <name>` |
+| `remove_skill` with `{name}` | `nexus remove <name>` |
+| `edit_global_instructions` with `{content, ifMatch}` | `nexus global edit --if-match <ifMatch>`, `content` on standard input |
 
-Every answer is HTTP 200 with one JSON object: `command` (the argv the
-server ran), `exit`, `stdout`, and `stderr`, plus `json` with the parsed
-standard output when `exit` is 0 and the output parses. A CLI refusal is
-`exit` 1 in the body with the CLI's own message, not an HTTP error, so the
-page shows exactly what the command line shows. HTTP errors exist only for
-the loopback guard (403), an unknown path or method (404), a mutating
-request without `Content-Type: application/json` (415), a body that is not
-a JSON object (400), and a second mutating request while one runs (409).
+Every answer carries one JSON object: `command` (the argv the server ran),
+`exit`, `stdout`, and `stderr`, plus `json` with the parsed standard output
+when `exit` is 0 and the output parses. A CLI refusal is `exit` 1 in the
+envelope with the CLI's own message, not an error, so the page shows exactly
+what the command line shows.
 
-`POST api/shutdown` is the one endpoint with no CLI command behind it: it
-stops the run. Because no command ran, it answers no envelope — there is no
-`command` to report and no exit code to show, and inventing one would break
-the one promise the envelope makes. It answers `200 {"stopping": true}`,
-written and flushed before the listener closes, so the caller reads a result
-rather than a dropped connection, and the page never shows it in Last
-command. It passes the same loopback guard in the same order and, being a
-mutating request, needs `Content-Type: application/json`. It does not take
-the mutation lock, because a stop must work while a slow CLI child runs; the
-stop then follows the path SIGTERM already takes and kills that child.
-`GET api/shutdown` is 404, as any other unknown method-and-path pair is.
+A call the Plugin Server will not run answers a JSON-RPC error instead of an
+envelope: `-32602` for a tool that is not there or an argument that is not a
+string, and `-32000` for a second change while one runs. One change runs at a
+time; reads are never locked, so a slow update cannot stop the page from
+listing skills.
 
-`GET api/run` is the read counterpart and the only other endpoint with no CLI
-command behind it. It answers the run's pid, port, and mode — the same fields
-the Run File records — and so answers no envelope either, and the page does
-not show it in Last command.
+The Host answers its own refusals with a status and no envelope: 403 for a
+request that is not this page's, 404 for an unknown Plugin, and 503 when the
+Plugin Server is Stopped.
 
-### The run in the header
+Any of it can be driven from a terminal:
 
-The header carries the run this page is served from: a badge with its state,
-its mode, and its pid, next to a `Stop server` button. The badge is green
-while the run is alive (`running · detached · pid 48213`, or
-`running · this terminal · pid 48213` for a foreground run), and red when the
-run cannot be reached. It reads `GET api/run`.
-
-`Stop server` asks first. The dialog names what stopping costs — the Run Token
-dies with the run, so this URL stops answering, and unsaved editor text is
-lost — and says plainly that it runs no CLI command and changes nothing on
-disk. Cancel changes nothing. Confirm sends `POST api/shutdown`, and on 200
-the page becomes a calm stopped state: a grey `stopped` badge, one sentence
-saying you stopped it, and `nexus ui` as the way back. The sub-nav and the
-`Stop server` button go inert, because the run they act on is gone.
-
-The badge keeps checking. It reads `GET api/run` again every five seconds, so
-a tab left open in the background says whether the run is still alive: green
-while the port answers, red as soon as it does not. One failed check is not
-final, so a transient failure corrects itself. The check runs no CLI child and
-never shows in Last command, and it stops for good once you stop the run from
-the page, because a Run Token dies with its run.
-
-The tab title carries the same state, because a narrow tab shows the title and
-not the header: `Nexus` while the run is alive, `Nexus — not running` when it
-is unreachable, and `Nexus — stopped` after you stop it. The page also carries
-a favicon of the Nexus mark, inline in the HTML as a `data:` URI, so no file
-joins the static allowlist. This is how you watch a background run without
-typing `nexus ui --status`.
-
-A run that ends without being asked to still shows the red `Connection lost.`
-banner. That distinction is the point: one state for a choice, one for a
-surprise.
+```sh
+token=$(python3 -c "import json;print(json.load(open('$HOME/.firstmate/runtime.json'))['token'])")
+curl -X POST -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_skills","arguments":{}}}' \
+  "http://127.0.0.1:4747/p/nexus/rpc?token=$token"
+```
 
 ### Pages and routes
 
@@ -640,13 +513,13 @@ The Last command panel at the bottom of the page shows the exact command
 of the last call, an exit pill, a local timestamp, and standard output
 followed by standard error in red, as preformatted text. It persists until
 the next command. When a call cannot reach the server at all, a red banner
-says `Connection lost. Rerun nexus ui, then nexus list to check.` and the
-page does not retry on its own.
+says `Connection lost. The FirstMate Host is not answering. Check it with
+systemctl --user status firstmate.` and the page does not retry on its own.
 
 ### Editor
 
 The Global Instructions section reads `nexus global show --json` through
-`GET api/global`. The header shows the owner path and one badge per
+`show_global_instructions`. The header shows the owner path and one badge per
 instruction path with its state word: `linked` (green), `foreign` (amber),
 `absent` and `no home` (grey). A `foreign` badge adds one line under the
 header with the exact fix, `mv <path> ~/.custom-skills/GLOBAL.md`, then
@@ -684,9 +557,10 @@ content security policy blocks one. To update the renderer by hand:
 
 ### Save and conflicts
 
-"Save changes" and Ctrl+S send the whole editor content to `PUT api/global`
-with the sha256 the page read at open, and the server runs `nexus global
-edit --if-match <sha256>` with the content on standard input. When the file
+"Save changes" and Ctrl+S send the whole editor content to
+`edit_global_instructions` with the sha256 the page read at open, and the
+Plugin Server runs `nexus global edit --if-match <sha256>` with the content
+on standard input. When the file
 was absent, the page sends the sha256 of the empty string, so the first
 save creates the file and runs link; the link output, including any
 foreign entry notice, shows in the Last command panel. On exit 0 a toast
@@ -710,8 +584,8 @@ JSON object with `content` and `ifMatch` strings is refused with 400.
 ### Update and remove
 
 Update and Remove on an installed skill row run `nexus update <name>` and
-`nexus remove <name>` through `POST api/update` and `POST api/remove`
-with the body `{"name": "<name>"}`. The name is one argv element and never
+`nexus remove <name>` through `update_skill` and `remove_skill` with the
+argument `{"name": "<name>"}`. The name is one argv element and never
 goes through a shell; the CLI's own name checks are the only validation,
 so a refused name comes back as the CLI's exit code and message in the
 envelope. Custom and control rows have no button.
@@ -732,118 +606,6 @@ seconds is killed together with its process group; the envelope then
 carries exit 124 and a standard error line that names the timeout. The
 environment variable `NEXUS_UI_TIMEOUT` (seconds) overrides the limit,
 which the tests use with a short value.
-
-## The Tray
-
-The Tray is an icon in the Windows notification area that says whether a Web
-UI run is live and holds the controls for one: Open, Copy URL, Start, Stop,
-Open log, and Start at logon. It is the desktop door onto the Web UI, so the
-URL you did not write down is never lost and starting or stopping a run costs
-neither a terminal nor an agent session.
-
-It is a client of the CLI and nothing more. It owns no state, it never reads
-the Run File and never touches `GLOBAL.md`, the Nexus lock, or a skill root,
-and every action it takes is one `nexus ui` call through `wsl.exe`. It opens
-no listener: ADR 0005 is unchanged, and the one loopback connection the Tray
-causes is your browser's. The decision and the boundary are in
-`docs/adr/0007-the-tray-is-a-windows-client-of-the-nexus-cli.md`.
-
-It exists on Windows because WSLg hosts no notification area, so it is the
-one part of Nexus that is host-specific. Everything of it lives in `windows/`.
-
-### Install and uninstall
-
-Run this once, from Windows, in PowerShell:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
-  \\wsl.localhost\<Distro>\<home>\.nexus\windows\install-tray.ps1
-```
-
-It works out the distribution and the Nexus home from the path it runs from,
-so nothing is hardcoded and no configuration file is written; the values
-reach the Tray as the arguments of the shortcut that starts it. It writes
-exactly two places outside the Nexus home:
-
-- the **Tray Home**, `%LOCALAPPDATA%\Nexus\Tray`, which holds a copy of the
-  Tray, the opener behind the Start Menu shortcut, and the one shim that
-  starts either of them with no window;
-- your own shortcut folders, which get a Startup shortcut that starts the
-  Tray at logon, and a Start Menu shortcut, `Nexus Web UI`, that opens the
-  Web UI through `nexus ui --open` with no Tray in the picture at all.
-
-The Tray runs from the Tray Home rather than from the Nexus home over
-`\\wsl.localhost\`, because a Tray that lived in the Nexus home would boot
-the distribution at every logon merely to read its own source.
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
-  \\wsl.localhost\<Distro>\<home>\.nexus\windows\uninstall-tray.ps1
-```
-
-The uninstaller removes exactly those three paths, names each one it removed
-or did not find, and stops a running Tray. It never reaches into the Nexus
-home, `~/.custom-skills`, or an agent home, and it leaves a live run running.
-
-On Windows 11 a new notification-area icon starts hidden. Click the chevron
-(`^`) beside the clock and drag the Nexus icon onto the taskbar to keep it
-there. There is no reliable scripted way to promote an icon, so this is
-written down rather than automated.
-
-### What it shows
-
-The Tray asks `nexus ui --status` every five seconds - never `--open`, so
-watching the state can never start a run - and shows the answer:
-
-| `nexus ui --status` | Icon | Tooltip |
-| --- | --- | --- |
-| `nexus ui: <url>` | green | `Nexus - running (port N)` |
-| `nexus ui: not running` | grey | `Nexus - stopped` |
-| the call fails | amber | `Nexus - WSL not available` |
-
-Amber is its own state because "cannot ask" and "not running" are different
-answers. Before each poll the Tray asks Windows whether the distribution is
-already running, and asks Nexus nothing while it is not: it shows the state,
-it does not create it.
-
-A balloon appears only when a run ends without being asked to. A stop you
-asked for is your own choice and is never reported back to you as an event.
-
-### The menu
-
-- **Open Nexus UI** (also a double-click) runs `nexus ui --open` and hands
-  the URL it prints to your default browser. It opens the live run when there
-  is one and starts one when there is not, so one gesture always ends with
-  the page in front of you. The Tray hands the URL over itself because the
-  opener inside the distribution has no Windows desktop to open a page on;
-  the Start Menu shortcut does the same, which is why it goes through
-  `nexus-open.ps1` rather than straight at `wsl.exe`.
-- **Copy URL** puts the live run's URL, Run Token and all, on the clipboard.
-  That is the one place the token reaches on the Windows side; it is written
-  to no file there.
-- **Start** runs `nexus ui --no-open`. It is offered when no run is live, and
-  starting from the amber state boots the distribution first.
-- **Stop** runs `nexus ui --stop`, the same request the page's `Stop server`
-  button sends, so the three doors cannot disagree about what stopping means.
-  It is offered only when a run is live.
-- **Open log** opens `~/.nexus/ui.log`, where a detached run's diagnostics go.
-- **Start at logon** writes or removes the Startup shortcut.
-- **Quit** removes the icon at once and leaves a live run alive: closing the
-  control surface never closes the Web UI behind your back.
-
-The Tray starts nothing at logon. It shows the state, so logging in costs no
-distribution boot, no listener, and no memory. A second launch adds no second
-icon, and no console window appears at logon or on any action.
-
-### What is not tested
-
-The Tray has no automated coverage. It is Windows PowerShell and the suite is
-bash in the distribution, so `tests/run.sh` asserts only that the Windows files
-ship. `windows/CHECKLIST.md` is the manual walk-through that stands in for
-it: install, every state, every menu item, the balloon, one instance, logon,
-the Start Menu shortcut, and uninstall. Walk it on the host after any change
-under `windows/`. The one part of this that the suite does cover is
-`nexus ui --open`.
 
 ## Troubleshooting
 
@@ -868,28 +630,18 @@ under `windows/`. The one part of this that the suite does cover is
 - **Retained temporary/residue paths:** read the command's exact path and
   recovery message first. Keep a copy until the situation is understood, then
   correct the cause before rerunning.
-- **`nexus ui` exits 1 at start:** the port from `--port N` is in use, or
-  `python3` is missing, or `~/.nexus/web` is absent. Pick another port or
-  omit `--port` for an ephemeral one.
-- **The page says "Connection lost":** the server stopped or the terminal
-  that ran it closed. Rerun `nexus ui`, open the new URL (the Run Token
-  changed), and run `nexus list` to check the state.
-- **403 with `token`, `host`, or `origin`:** the URL lacks the current Run
-  Token, or the request did not come from the page itself. Use the exact
-  URL from the handshake line; a bookmark from an earlier run is stale.
-- **The browser did not open:** the printed URL is the fallback. Copy it
-  from the handshake line; set `$BROWSER` to change the opener.
-- **The tray icon is amber:** the distribution is not running, so Nexus
-  cannot be asked anything. `Start` boots it and starts a run; nothing else
-  in the menu speaks for a distribution that is down.
-- **No tray icon after the install:** on Windows 11 a new notification-area
-  icon starts hidden. Click the chevron (`^`) beside the clock and drag the
-  Nexus icon onto the taskbar.
-- **"Not saved. GLOBAL.md changed on disk":** the file changed after the
-  editor read it. Your text is kept in the "Your unsaved version" panel;
-  copy it, apply it to the reloaded file, and save again.
-- **Another command is still running (409):** one upstream command at a
-  time. Wait for the Last command panel to show its result, then retry.
+- **The page does not open:** the Host is not running. Check it with
+  `systemctl --user status firstmate`, and read it with `journalctl --user -u
+  firstmate`. The Plugin Server's own output is in the same journal.
+- **The Index Page shows nexus as Stopped:** the Host could not run `mcp`, or
+  it exited. `journalctl --user -u firstmate` names the reason. Check that
+  `~/.nexus/mcp` is executable and that `python3` is there.
+- **The page says "Connection lost":** the Host stopped. Start it with
+  `systemctl --user start firstmate` and reload; the address does not change.
+- **403 with `token`, `host`, or `origin`:** the request did not carry the
+  Host's token or did not come from the page itself. Open the address from
+  `/nexus` or from the Tray; the token changes at every Host start, so a
+  bookmark that carries one is stale. A bookmark of the plain address is not.
 
 ## Adding another agent
 

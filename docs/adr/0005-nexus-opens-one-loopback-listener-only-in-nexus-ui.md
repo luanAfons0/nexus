@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted
+Accepted, then superseded
+
+Superseded by ADR 0008. Nexus opens no listener: the FirstMate Host binds
+the loopback address and serves the page.
 
 Superseded in part by ADR 0006.
 

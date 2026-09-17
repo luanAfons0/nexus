@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted
+Accepted, then superseded
+
+Superseded by ADR 0008. FirstMate's Tray opens its Index Page, and Nexus
+ships no Windows part.
 
 ADR 0005 and ADR 0006 stand unchanged.
 
