@@ -34,7 +34,7 @@
 
 - [ ] **Step 1: Write the failing metadata test**
 
-Create `tests/run.sh` with strict mode, a temporary root, cleanup, counters, `assert_file`, and `assert_contains`. Its first test must require `skill-lock.json` in `.gitignore`, all six model-facing files, matching `name:` fields, and an instruction to run `/home/luanh/.nexus/scripts/nexus`.
+Create `tests/run.sh` with strict mode, a temporary root, cleanup, counters, `assert_file`, and `assert_contains`. Its first test must require `skill-lock.json` in `.gitignore`, all six model-facing files, matching `name:` fields, and an instruction to run `~/.nexus/scripts/nexus`.
 
 ```bash
 #!/usr/bin/env bash

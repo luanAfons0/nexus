@@ -1239,14 +1239,14 @@ test_metadata() {
   local name command wrapper
   for name in nexus-setup nexus-link nexus-install nexus-new nexus-help nexus-update nexus-remove nexus; do
     case "$name" in
-      nexus-setup) command='/home/luanh/.nexus/scripts/nexus setup' ;;
-      nexus-link) command='/home/luanh/.nexus/scripts/nexus link' ;;
-      nexus-install) command='/home/luanh/.nexus/scripts/nexus install' ;;
-      nexus-new) command='/home/luanh/.nexus/scripts/nexus new' ;;
-      nexus-help) command='/home/luanh/.nexus/scripts/nexus' ;;
-      nexus-update) command='/home/luanh/.nexus/scripts/nexus update' ;;
-      nexus-remove) command='/home/luanh/.nexus/scripts/nexus remove' ;;
-      nexus) command='/home/luanh/.firstmate/runtime.json' ;;
+      nexus-setup) command='~/.nexus/scripts/nexus setup' ;;
+      nexus-link) command='~/.nexus/scripts/nexus link' ;;
+      nexus-install) command='~/.nexus/scripts/nexus install' ;;
+      nexus-new) command='~/.nexus/scripts/nexus new' ;;
+      nexus-help) command='~/.nexus/scripts/nexus' ;;
+      nexus-update) command='~/.nexus/scripts/nexus update' ;;
+      nexus-remove) command='~/.nexus/scripts/nexus remove' ;;
+      nexus) command='FIRSTMATE_HOME' ;;
     esac
     assert_file "skills/$name/SKILL.md" || failed=1
     [[ ! -e "$REPO_ROOT/skills/$name/claude-command.md" ]] || { printf '  unexpected adapter file: %s\n' "$name" >&2; failed=1; }

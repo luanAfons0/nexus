@@ -15,11 +15,11 @@ First, ask the user one choice question with exactly two options:
 Then run exactly one of these commands, based on the answer:
 
 ```bash
-/home/luanh/.nexus/scripts/nexus list
+~/.nexus/scripts/nexus list
 ```
 
 ```bash
-/home/luanh/.nexus/scripts/nexus help
+~/.nexus/scripts/nexus help
 ```
 
 Report the output as a table (for `list`) or a list (for `help`). Do not run both commands, and do not run anything else.

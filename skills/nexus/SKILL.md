@@ -12,7 +12,7 @@ Nexus is a FirstMate Plugin: the FirstMate Host serves its page and runs its Plu
 Run one command and read its output:
 
 ```bash
-python3 -c "import json;r=json.load(open('/home/luanh/.firstmate/runtime.json'));print('http://127.0.0.1:%d/p/nexus/?token=%s' % (r['port'], r['token']))"
+python3 -c "import json,os;r=json.load(open(os.path.expanduser(os.environ.get('FIRSTMATE_HOME','~/.firstmate'))+'/runtime.json'));print('http://127.0.0.1:%d/p/nexus/?token=%s' % (r['port'], r['token']))"
 ```
 
 It prints one line, in this exact form:

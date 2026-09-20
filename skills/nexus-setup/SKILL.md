@@ -10,7 +10,7 @@ Only run this mutating command when the user asks you to perform setup. For info
 Run the Nexus setup command exactly once:
 
 ```bash
-/home/luanh/.nexus/scripts/nexus setup
+~/.nexus/scripts/nexus setup
 ```
 
 Report the command output clearly. Explain that complete copies of `~/.claude-backup` and `~/.codex-backup` must be created before any skill-link changes are made. Never bypass safety failures, validation failures, or collision checks; report them and stop.

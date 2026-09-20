@@ -12,7 +12,7 @@ Require a skill name before running anything. If the name is missing, ask for it
 ## 1. Reserve the directory
 
 ```bash
-/home/luanh/.nexus/scripts/nexus new "skill-name"
+~/.nexus/scripts/nexus new "skill-name"
 ```
 
 The command validates the name, refuses names that collide with an installed or control skill, creates one empty directory, and prints the created path and the workspace path. It writes no `SKILL.md`. Do not use `eval`. If the command fails, report the output and stop.
@@ -29,7 +29,7 @@ Two instructions override `skill-creator` defaults:
 ## 3. Reconcile the links
 
 ```bash
-/home/luanh/.nexus/scripts/nexus link
+~/.nexus/scripts/nexus link
 ```
 
 This links the new skill for Claude and for Codex. Report the command output clearly.
@@ -39,5 +39,5 @@ This links the new skill for Claude and for Codex. Report the command output cle
 The custom skill root is a Git repository, and Nexus does not use Git. Tell the user to commit the new skill themselves. After the user runs `git pull` for a change made elsewhere, the user runs this command to link the updated files:
 
 ```bash
-/home/luanh/.nexus/scripts/nexus link
+~/.nexus/scripts/nexus link
 ```

@@ -10,7 +10,7 @@ Only run this mutating command when the user asks you to reconcile or repair lin
 Run the Nexus link command exactly once:
 
 ```bash
-/home/luanh/.nexus/scripts/nexus link
+~/.nexus/scripts/nexus link
 ```
 
 Link reconciles the Native Skill Roots first, then the two Instruction Paths (`~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`): each becomes a relative Managed Link to the Global Instructions owned by `~/.custom-skills/GLOBAL.md`, so both agents read byte-identical instructions.

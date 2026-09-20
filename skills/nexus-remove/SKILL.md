@@ -12,7 +12,7 @@ Removal is irreversible for the installed copy: upstream deletes the skill conte
 Require exactly one skill name. If the name is missing, ask for it instead of guessing. With the confirmed name, run the command exactly once:
 
 ```bash
-/home/luanh/.nexus/scripts/nexus remove "skill-name"
+~/.nexus/scripts/nexus remove "skill-name"
 ```
 
 Replace the example value with the concrete user-provided skill name, passed as a separate argument. Report the command output clearly. Do not use `eval`.

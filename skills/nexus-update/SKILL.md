@@ -12,7 +12,7 @@ Require the skill name before running anything. Never guess the name and never s
 With an explicit name, run the update command exactly once, passing the name as a separate argument:
 
 ```bash
-/home/luanh/.nexus/scripts/nexus update "skill-name"
+~/.nexus/scripts/nexus update "skill-name"
 ```
 
 Replace `skill-name` with the concrete user-provided name. Do not use `eval`. Update one skill per invocation; run the command again for another name.
