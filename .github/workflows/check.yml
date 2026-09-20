@@ -1,0 +1,24 @@
+# The whole suite, run by a machine on every change.
+#
+# `bash tests/run.sh` is the one entry point, as AGENTS.md says. Every test
+# gets its own HOME under a temporary root and refuses to run outside it, so
+# nothing here reaches the runner's own files.
+#
+# It needs bash, git, python3, jq and coreutils, all of which ubuntu-latest
+# already carries. There is nothing to install and nothing to build.
+name: Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - run: bash tests/run.sh
