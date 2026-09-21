@@ -1,0 +1,65 @@
+name: Bug report
+description: Something Nexus does is wrong, or it refuses something it should allow.
+labels: ['bug', 'needs-triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Nexus writes inside your home directory, so please do not paste
+        anything private: a token, a path that names a customer, the content
+        of a skill you cannot share. The command and its output are usually
+        enough.
+
+        If this is a security problem, do not file it here. See
+        [SECURITY.md](https://github.com/luanAfons0/nexus/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What Nexus did, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: The command and its whole output
+      description: >
+        The exact command and everything it printed, including the error.
+        Nexus errors name the path they are about, and that path is usually
+        the answer.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: state
+    attributes:
+      label: What your Agent Context looks like
+      description: >
+        The output of `~/.nexus/scripts/nexus list`. It shows the Skills of
+        all three kinds and the state of the Global Instructions, and it
+        prints no secret.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions
+      description: >
+        The output of `bash --version | head -1; jq --version; python3 -V;
+        uname -sr`, and whether you are on WSL.
+      render: shell
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: suite
+    attributes:
+      label: The suite
+      options:
+        - label: I ran `bash tests/run.sh` and said above whether it passed.
+          required: false

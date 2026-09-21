@@ -18,6 +18,9 @@ The custom root also owns the global instructions, `~/.custom-skills/GLOBAL.md`,
 which link places at each agent's instruction path as a managed link.
 `CONTEXT.md` defines these terms.
 
+To change Nexus rather than use it, read [`CONTRIBUTING.md`](CONTRIBUTING.md)
+and the "Develop" section below.
+
 ## Requirements and first use
 
 Project scripts use Bash 5, GNU coreutils, `jq`, and Python 3 (`python3`). Git
@@ -25,6 +28,12 @@ is needed for Git-based sources and normal development; npm/npx is an upstream
 prerequisite for installation. Setup preflight checks `jq`, `python3`, and the
 required core utilities; it does not check Git, npm, npx, or NVM. Install first
 uses a directly available `npx`; if it is unavailable, NVM is the fallback.
+
+Nexus is installed by cloning it into its home directory:
+
+```bash
+git clone https://github.com/luanAfons0/nexus.git ~/.nexus
+```
 
 From a shell, bootstrap only the control skills with:
 
@@ -642,6 +651,50 @@ which the tests use with a short value.
   Host's token or did not come from the page itself. Open the address from
   `/nexus` or from the Tray; the token changes at every Host start, so a
   bookmark that carries one is stale. A bookmark of the plain address is not.
+
+## Develop
+
+Nexus is installed by cloning, but a clone you work in does not have to live
+at `~/.nexus`: the CLI finds its own files from the path of `scripts/nexus`,
+and the home directory it manages comes from `$HOME`.
+
+```bash
+git clone https://github.com/luanAfons0/nexus.git
+cd nexus
+bash tests/run.sh
+```
+
+`bash tests/run.sh` is the whole suite and its only entry point. Every test
+builds its own home directory under a temporary root and drives the CLI over
+its command line. The `Check` workflow runs that one command on
+`ubuntu-latest` for every pull request.
+
+To try a change by hand, never point it at your own agent context. Use the
+sandbox home:
+
+```bash
+scripts/dev-home bootstrap     # link the control skills, in the sandbox
+scripts/dev-home list          # what the sandbox home holds
+scripts/dev-home setup         # the real setup, against throwaway files
+scripts/dev-home --reset list  # start the sandbox home again from empty
+```
+
+`scripts/dev-home` runs `scripts/nexus` with `$HOME` pointed at
+`.scratch/home` inside the repository, which Git ignores, so the canonical
+root, the custom root, both native skill roots and both instruction paths all
+land there. It refuses to run if the sandbox would hold your real home, and it
+deletes only a directory it marked as its own. `NEXUS_DEV_HOME` moves the
+sandbox elsewhere.
+
+Changes to `web/` or `mcp` need a running FirstMate Host, which serves the
+page and runs the Plugin Server (ADR 0008). Register your clone as a Plugin
+from the FirstMate repository with
+`node src/cli.ts add nexus /absolute/path/to/your/clone`, then open
+`http://127.0.0.1:4747/p/nexus/`.
+
+[`CONTRIBUTING.md`](CONTRIBUTING.md) has the rest: where a new test goes, how
+the code is written, the commit and pull request conventions, and the safety
+properties a change may not weaken.
 
 ## Adding another agent
 

@@ -6,6 +6,12 @@ Instructions (`~/.custom-skills/GLOBAL.md`), which it links into each agent's
 Instruction Path. See `README.md` for behavior, safety contract, and recovery. Run `bash tests/run.sh` before a
 commit.
 
+Try a change with `scripts/dev-home <nexus arguments>`, which runs the CLI
+against a sandbox home under `.scratch/`. Never drive a half-finished change
+against the real Agent Context. `CONTRIBUTING.md` holds the rest: where a new
+test goes, how the code is written, Conventional Commits with the subject in
+the project's own words, and the safety properties a change may not weaken.
+
 ## Agent skills
 
 ### Issue tracker
