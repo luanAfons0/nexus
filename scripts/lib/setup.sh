@@ -108,15 +108,32 @@ backup_move() {
   [[ ! -e "$source" && ! -L "$source" ]]
 }
 
+# What makes a Canonical Root entry the same entry that was validated a moment
+# ago. An inode number alone does not: ext4 hands a freed inode straight back
+# to the next entry created in its place, so a Managed Link unlinked and
+# replaced by a Foreign Entry between the check and the move keeps its %d:%i,
+# and the move carries the replacement away. tmpfs never reuses an inode,
+# which is the only reason a tmpfs home never saw this. The entry's type, and
+# for a Managed Link the Owner it resolves to, are what make a replacement
+# visible. backup_transaction already identifies a tree this way.
+canonical_identity() {
+  local path="$1" identity
+  identity="$(stat -c '%d:%i:%F' -- "$path")" || return 1
+  if [[ -L "$path" ]]; then
+    identity="$identity:$(readlink -- "$path")" || return 1
+  fi
+  printf '%s\n' "$identity"
+}
+
 canonical_move() {
   local source="$1" destination="$2" expected="${3:-}" source_id destination_id
   if [[ -n "$expected" ]]; then
-    source_id="$(stat -c '%d:%i' -- "$source")" || return 1
+    source_id="$(canonical_identity "$source")" || return 1
     [[ "$source_id" == "$expected" ]] || return 1
   fi
   mv -Tn -- "$source" "$destination" || return 1
   if [[ -n "$expected" ]]; then
-    destination_id="$(stat -c '%d:%i' -- "$destination")" || destination_id=''
+    destination_id="$(canonical_identity "$destination")" || destination_id=''
     if [[ "$destination_id" != "$expected" ]]; then
       if [[ ! -e "$source" && ! -L "$source" ]]; then
         mv -Tn -- "$destination" "$source" || :
@@ -387,7 +404,7 @@ materialize_canonical_link() {
     error "managed canonical skill target lacks SKILL.md: $current; correct it, then run nexus link"
     return 1
   }
-  current_id="$(stat -c '%d:%i' -- "$current")" || {
+  current_id="$(canonical_identity "$current")" || {
     error "cannot identify managed canonical skill: $current"
     return 1
   }
