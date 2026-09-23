@@ -569,8 +569,8 @@ four-file static allowlist. Nothing is destroyed on a route change, because
 both sections stay in the page and are only toggled, so the Skills filter
 text, the editor content, the banners, and the "Your unsaved version" panel
 all survive it. Leaving `#/global` with unsaved edits asks first; refusing
-leaves the route unchanged. The Last command panel sits outside both routes
-and shows on both: it belongs to the run, not to a page.
+leaves the route unchanged. The Last command button floats outside both
+routes and shows on both: it belongs to the run, not to a page.
 
 ### Skills table and Last command
 
@@ -620,10 +620,13 @@ lock is absent, an info banner above the table shows the CLI's own line
 and points at `/nexus-setup`, and only custom and control skills are
 listed.
 
-The Last command panel at the bottom of the page shows the exact command
-of the last call, an exit pill, a local timestamp, and standard output
-followed by standard error in red, as preformatted text. It persists until
-the next command. When a call cannot reach the server at all, a red banner
+The Last command button floats at the bottom right of the page. Its dot is
+empty until a command runs, then green for exit 0 and red for any other
+exit. Pressing it opens a dialog with the exact command of the last call,
+an exit pill, a local timestamp, and standard output followed by standard
+error in red, as preformatted text. Escape, Close or a click outside the
+dialog closes it. It persists until the next command, and a banner that
+points at the output links straight to it. When a call cannot reach the server at all, a red banner
 says `Connection lost. The FirstMate Host is not answering. Check it with
 systemctl --user status firstmate.` and the page does not retry on its own.
 
@@ -674,7 +677,7 @@ Plugin Server runs `nexus global edit --if-match <sha256>` with the content
 on standard input. When the file
 was absent, the page sends the sha256 of the empty string, so the first
 save creates the file and runs link; the link output, including any
-foreign entry notice, shows in the Last command panel. On exit 0 a toast
+foreign entry notice, shows in the Last command dialog. On exit 0 a toast
 says `Saved. Commit in ~/.custom-skills.`, the page reads the file again,
 and the kept sha256 is updated. Nexus never runs Git; you commit the
 change yourself.
@@ -702,7 +705,7 @@ so a refused name comes back as the CLI's exit code and message in the
 envelope. Custom and control rows have no button.
 
 Update runs at once. The row shows a spinner and every other mutation
-button is disabled until the response; the Last command panel shows the
+button is disabled until the response; the Last command dialog holds the
 result; then the page refetches `list` and `global`. Remove first opens a
 dialog that names the command, explains that upstream deletes the skill
 under the canonical root and that Nexus then publishes the lock and links,
