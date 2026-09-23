@@ -14,6 +14,14 @@ A non-zero exit is not a tool error. `nexus remove` refusing a name is a
 refusal the page must show, so it comes back as an ordinary result carrying
 the envelope, and the page reads the exit code as it always did.
 
+`check_skills` is the one tool that breaks that habit, on purpose (ADR 0009).
+It exists for a caller on the Tool Bus that has to decide an Outcome from the
+answer, and a caller cannot read an exit code out of a successful result. So a
+run of `nexus check` that failed comes back as a JSON-RPC error carrying the
+sentence the CLI ended with, and a run that worked carries one plain sentence
+of counts in the text half of its result, where that caller quotes one line.
+The structured half of every result, that tool included, stays the envelope.
+
 One mutation runs at a time; reads are never locked. That is the Web UI
 server's rule, kept because the CLI's own safety depends on it.
 
@@ -52,9 +60,36 @@ SPEAKING = threading.Lock()
 TEXT = {"type": "string"}
 
 
-def read_tool(argv):
-    """A tool that reads. It takes no arguments and takes no lock."""
-    return {"tail": list(argv), "mutates": False, "keys": ()}
+def check_sentence(envelope):
+    """One plain sentence about a check that ran, for the text half of its
+    result. A caller on the Tool Bus shows one sentence of what a tool
+    answered, and "how many Installed Skills are Behind" is the whole question
+    the check exists to answer; from an envelope that sentence would be a
+    JSON document with the counts buried in it.
+
+    The structured half is untouched, so the page and every other caller still
+    read the whole document (ADR 0009). None here means the run said nothing
+    countable, and the envelope stays the text."""
+    document = envelope.get("json")
+    counts = document.get("counts") if isinstance(document, dict) else None
+    if not isinstance(counts, dict) or not isinstance(document.get("checkedAt"), str):
+        return None
+    current = counts.get("current", 0)
+    behind = counts.get("behind", 0)
+    unknown = counts.get("unknown", 0)
+    total = current + behind + unknown
+    return "%d Installed Skill%s: %d current, %d Behind, %d unknown. Checked %s." % (
+        total, "" if total == 1 else "s", current, behind, unknown, document["checkedAt"])
+
+
+def read_tool(argv, fails_loudly=False, says=None):
+    """A tool that reads. It takes no arguments and takes no lock.
+    `fails_loudly` turns a non-zero exit into a JSON-RPC error instead of an
+    ordinary result, for a tool a caller must be able to judge. `says` is the
+    sentence the text half of the result carries, for a caller that quotes one
+    line of what the tool answered."""
+    return {"tail": list(argv), "mutates": False, "keys": (),
+            "fails_loudly": fails_loudly, "says": says}
 
 
 def write_tool(build, keys):
@@ -69,6 +104,28 @@ TOOLS = {
         "properties": {},
         "required": [],
         "call": read_tool(["list", "--json"]),
+    },
+    "check_skills": {
+        "description": (
+            "Ask GitHub which Installed Skills are Behind. Every Skill comes "
+            "back as current, behind or unknown, with the moment the check "
+            "ran. It applies nothing."
+        ),
+        "properties": {},
+        "required": [],
+        # A failed check is a tool error, not an envelope: the Scheduler has to
+        # decide an Outcome, and an Outcome cannot be read out of a result.
+        "call": read_tool(["check", "--json"], fails_loudly=True,
+                          says=check_sentence),
+    },
+    "show_check_result": {
+        "description": (
+            "The last Check Result: what every Installed Skill was at the "
+            "moment one Check ran. It asks GitHub nothing and applies nothing."
+        ),
+        "properties": {},
+        "required": [],
+        "call": read_tool(["check", "--last", "--json"]),
     },
     "show_global_instructions": {
         "description": (
@@ -151,7 +208,10 @@ def call_tool(name, arguments):
             raise Refusal("%s needs %s as a string" % (name, key))
 
     if not call["mutates"]:
-        return envelope_result(run_cli(call["tail"]))
+        envelope = run_cli(call["tail"])
+        if call.get("fails_loudly") and envelope["exit"] != 0:
+            raise Refusal(failure_sentence(envelope), INTERNAL_ERROR)
+        return envelope_result(envelope, call.get("says"))
 
     # The CLI's own name checks are the only validation: the Skill Name is one
     # argv element and never reaches a shell.
@@ -165,12 +225,28 @@ def call_tool(name, arguments):
         MUTATION.release()
 
 
-def envelope_result(envelope):
+def failure_sentence(envelope):
+    """The last thing the CLI said on stderr, which is the sentence a person
+    can act on. A run that failed silently says so with its exit code."""
+    for line in reversed(envelope["stderr"].splitlines()):
+        line = line.strip()
+        if line:
+            return line
+    return "%s exited %s and said nothing" % (
+        " ".join(envelope["command"]), envelope["exit"])
+
+
+def envelope_result(envelope, says=None):
     """The envelope as an MCP result. isError stays false whatever the exit
     code, because a CLI refusal is an answer the page shows, not a fault of
-    the tool."""
+    the tool.
+
+    The structured half is always the envelope. The text half is the envelope
+    too, unless the tool has a sentence worth quoting, because a caller that
+    shows one line of an answer has nothing to show in a JSON document."""
+    text = says(envelope) if says is not None else None
     return {
-        "content": [{"type": "text", "text": json.dumps(envelope)}],
+        "content": [{"type": "text", "text": text if text else json.dumps(envelope)}],
         "structuredContent": envelope,
     }
 
