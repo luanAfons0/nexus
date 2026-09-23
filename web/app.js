@@ -241,10 +241,23 @@ const KINDS = ['installed', 'custom', 'control'];
 
 const skillsState = { rows: [], busy: false };
 
+// What the last Check said about each Installed Skill, by name, and the
+// moment it ran. The page reads the Check Result and never asks for a Check:
+// one that reached GitHub every time somebody opened the page would be a
+// check nobody asked for, and nothing here applies anything either way.
+// `trouble` is the one sentence to say when there is no result to read.
+const checkState = { states: new Map(), checkedAt: null, trouble: null };
+
 function localDate(iso) {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
   return date.toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' });
+}
+
+function localMoment(iso) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString();
 }
 
 function skillActions(row) {
@@ -262,6 +275,35 @@ function skillActions(row) {
   return el('span', { class: 'hint', text: 'Control Skill: never updated or removed' });
 }
 
+// The Upstream cell: what the last Check said about this row. The mark is a
+// word, so somebody who cannot tell the colours apart still reads Behind, and
+// `unknown` keeps its own word because it is never good news. A dash is "the
+// last Check does not say", which is what a Skill of another kind, a Skill
+// installed since the Check, and a Skill updated since it all are.
+function skillMark(row) {
+  if (row.kind !== 'installed') return el('span', { class: 'muted', text: '–' });
+  const state = checkState.states.get(row.name);
+  if (!state) return el('span', { class: 'muted', text: '–', title: 'The last check does not say.' });
+  if (state.state === 'behind') {
+    return el('span', {
+      class: 'upstream behind', text: 'Behind',
+      title: (state.committedAt ? 'Upstream moved on ' + localMoment(state.committedAt) + '. ' : '') +
+        'Update is yours to press.',
+    });
+  }
+  if (state.state === 'current') {
+    return el('span', {
+      class: 'upstream current', text: 'current',
+      title: 'Upstream has not touched this folder since this Skill was installed or last updated.',
+    });
+  }
+  // Any other word the Check gives, `unknown` above all, is shown as itself.
+  return el('span', {
+    class: 'upstream unknown', text: state.state,
+    title: state.reason || 'The check could not say.',
+  });
+}
+
 function skillRow(row) {
   const dash = el('span', { class: 'muted', text: '–' });
   return el('tr', { 'data-name': row.name }, [
@@ -269,6 +311,7 @@ function skillRow(row) {
     el('td', null, [row.source ? document.createTextNode(row.source) : dash.cloneNode(true)]),
     el('td', { class: 'mono muted', title: row.hash || null }, [row.hash ? document.createTextNode(row.hash.slice(0, 8)) : dash.cloneNode(true)]),
     el('td', { class: 'muted', title: row.updatedAt || null }, [row.updatedAt ? document.createTextNode(localDate(row.updatedAt)) : dash.cloneNode(true)]),
+    el('td', null, [skillMark(row)]),
     el('td', { class: 'right' }, [skillActions(row)]),
   ]);
 }
@@ -283,7 +326,7 @@ function skillCount(shown) {
 function skillGroup(kind, rows) {
   return el('tbody', { 'data-kind': kind }, [
     el('tr', { class: 'grp' }, [
-      el('td', { colspan: '5' }, [
+      el('td', { colspan: '6' }, [
         el('span', { class: 'kind ' + kind, text: kind }),
         el('span', { class: 'hint grp-count' }),
       ]),
@@ -303,15 +346,17 @@ function renderSkills(rows) {
     el('table', null, [
       el('thead', null, [el('tr', null, [
         el('th', { class: 'name', text: 'Name' }), el('th', { text: 'Source' }),
-        el('th', { text: 'Hash' }), el('th', { text: 'Updated' }), el('th', { class: 'right', text: 'Actions' }),
+        el('th', { text: 'Hash' }), el('th', { text: 'Updated' }), el('th', { text: 'Upstream' }),
+        el('th', { class: 'right', text: 'Actions' }),
       ])]),
       ...groups,
       el('tbody', { id: 'skills-none', hidden: '' }, [
-        el('tr', null, [el('td', { colspan: '5', class: 'muted', text: 'No skill matches these filters.' })]),
+        el('tr', null, [el('td', { colspan: '6', class: 'muted', text: 'No skill matches these filters.' })]),
       ]),
     ]),
   ]);
   applySkillsFilter();
+  renderCheckHeader();
 }
 
 // The two filters compose: the kind picks the group, the needle picks the
@@ -337,6 +382,87 @@ function applySkillsFilter() {
   const total = skillsState.rows.length;
   document.getElementById('skills-count').textContent =
     needle === '' && kind === 'all' ? skillCount(total) : shown + ' of ' + skillCount(total);
+}
+
+// The counts behind the header, taken from the rows the page is holding
+// rather than from the document's own `counts`, so a mark cleared here drops
+// out of the header with it.
+function markCounts() {
+  let behind = 0;
+  let unknown = 0;
+  for (const state of checkState.states.values()) {
+    if (state.state === 'behind') behind += 1;
+    else if (state.state !== 'current') unknown += 1;
+  }
+  return { behind, unknown };
+}
+
+// The CLI's own last sentence, without the prefix it writes for a terminal.
+function cliSentence(envelope) {
+  const lines = (envelope.stderr || '').split('\n').map((line) => line.trim()).filter((line) => line !== '');
+  const last = lines.length === 0 ? '' : lines[lines.length - 1];
+  return last.replace(/^nexus: (error: )?/, '') ||
+    commandLabel(envelope.command) + ' exited ' + envelope.exit;
+}
+
+// The header says when the Check last ran. An unmarked list is not a list of
+// Skills that are all current, it is a list nobody has checked, so the two
+// have to read differently. When the Check found nothing to report, the
+// header says only when it ran.
+function renderCheckHeader() {
+  const node = document.getElementById('skills-checked');
+  node.title = '';
+  if (checkState.checkedAt === null) {
+    const trouble = checkState.trouble;
+    if (trouble === null) {
+      replaceChildren(node, []);
+    } else if (trouble.absent) {
+      replaceChildren(node, [
+        'No check has run yet, so no row is marked: run ', el('code', { text: 'nexus check' }), '.',
+      ]);
+    } else {
+      // The CLI's own sentence, which says what to do and may already carry
+      // its full stop.
+      const said = trouble.sentence.charAt(0).toUpperCase() + trouble.sentence.slice(1);
+      replaceChildren(node, ['No row is marked. ' + said + (said.endsWith('.') ? '' : '.')]);
+    }
+    return;
+  }
+  const counts = markCounts();
+  const said = [];
+  if (counts.behind !== 0) said.push(counts.behind + ' Behind');
+  if (counts.unknown !== 0) said.push(counts.unknown + ' unknown');
+  node.title = checkState.checkedAt;
+  replaceChildren(node, ['Checked ' + localMoment(checkState.checkedAt) +
+    (said.length === 0 ? '' : ' · ' + said.join(', '))]);
+}
+
+// The Check Result as it stands, through `nexus check --last`, which asks
+// GitHub nothing. Whatever comes back the list keeps working: a result that
+// is not there or cannot be read leaves every row unmarked and says so once.
+async function loadCheck() {
+  checkState.states = new Map();
+  checkState.checkedAt = null;
+  checkState.trouble = null;
+  let envelope;
+  try {
+    envelope = await callTool('show_check_result');
+  } catch (error) {
+    checkState.trouble = { absent: false, sentence: refusalText(error) };
+    renderCheckHeader();
+    return;
+  }
+  if (envelope.exit !== 0 || !envelope.json) {
+    const sentence = cliSentence(envelope);
+    checkState.trouble = { absent: sentence.includes('no check has run yet'), sentence };
+  } else {
+    checkState.checkedAt = envelope.json.checkedAt;
+    for (const row of envelope.json.skills) checkState.states.set(row.name, row);
+  }
+  // The table is drawn from the lock, so it is redrawn only if there is one
+  // to redraw: a list that failed keeps its own message.
+  if (skillsState.rows.length !== 0) renderSkills(skillsState.rows);
+  renderCheckHeader();
 }
 
 function showLockBanner(envelope) {
@@ -370,9 +496,17 @@ async function loadSkills() {
   renderSkills(skillsState.rows);
 }
 
+// The list is drawn from the lock first and marked from the Check Result
+// second, so a check that is missing or unreadable never keeps the list from
+// showing.
+async function loadSkillsAndCheck() {
+  await loadSkills();
+  await loadCheck();
+}
+
 document.getElementById('skills-filter').addEventListener('input', applySkillsFilter);
 document.getElementById('skills-kind').addEventListener('change', applySkillsFilter);
-loadSkills();
+loadSkillsAndCheck();
 
 // --- global instructions editor -------------------------------------------
 
@@ -786,6 +920,10 @@ async function runMutation(action, name) {
         ' The exact output is in Last command.',
       ]);
     } else {
+      // The Check Result on disk was written before this command and still
+      // calls the Skill Behind. The mark goes now; the next Check writes what
+      // is true then. The page reads that file and never rewrites it.
+      checkState.states.delete(name);
       toast([action === 'update' ? 'Updated ' : 'Removed ', el('code', { text: name }), '.']);
     }
   } catch (error) {

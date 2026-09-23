@@ -1323,7 +1323,8 @@ test_readme_documentation() {
               '#/skills' '#/global' \
               '/p/nexus/' '~/.firstmate/runtime.json' 'systemctl --user status firstmate' \
               'journalctl --user -u firstmate' 'Plugin Server' 'Plugin Page' \
-              'list_skills' 'show_global_instructions' 'update_skill' 'remove_skill' \
+              'list_skills' 'check_skills' 'show_check_result' \
+              'show_global_instructions' 'update_skill' 'remove_skill' \
               'edit_global_instructions' 'Connection lost.' \
               'grouped by kind' 'All kinds'; do
     assert_contains README.md "$term" || failed=1

@@ -60,7 +60,7 @@ Native invocation forms are:
 | Show skills or command help | `/nexus-help` | `$nexus-help` |
 | Open the page: list, update, remove, edit global instructions | `/nexus` | `$nexus` |
 
-The equivalent CLI is `~/.nexus/scripts/nexus {setup,link,install,update,remove,new,list,global,ui,help}`.
+The equivalent CLI is `~/.nexus/scripts/nexus {setup,link,install,update,remove,new,list,check,global,help}`.
 
 ## Setup and recovery
 
@@ -283,8 +283,8 @@ canonical root for review.
 Private repositories work when the configured Git/npm credentials permit the
 underlying `npx skills` command to read them. Keep private credentials outside
 this repository. Development and test runs should use an isolated `HOME` and
-`NEXUS_HOME`; never use real agent roots for tests. `skill-lock.json` is
-gitignored and should not be committed.
+`NEXUS_HOME`; never use real agent roots for tests. `skill-lock.json` and
+`skill-check.json` are gitignored and should not be committed.
 
 ## Updating a skill
 
@@ -358,7 +358,7 @@ without the flag is unchanged.
 
 `nexus help` (also `-h` and `--help`) prints the usage line and one line per
 subcommand: `bootstrap`, `setup`, `link`, `install`, `update`, `remove`,
-`new`, `list`, `global`, `ui`, and `help`.
+`new`, `list`, `check`, `global`, and `help`.
 
 `nexus global show` prints the global instructions as-is to standard output,
 and nothing when `GLOBAL.md` is absent; both exit 0. `nexus global show
@@ -371,6 +371,63 @@ exits 2.
 
 The `nexus-help` skill asks which of these two you want, runs the matching
 read-only command, and reports the result. It never runs a mutating command.
+
+## Checking which skills are behind
+
+`nexus check` asks GitHub which installed skills upstream has moved on from,
+and changes nothing:
+
+```bash
+~/.nexus/scripts/nexus check
+~/.nexus/scripts/nexus check --json
+```
+
+A skill is **behind** when the folder it came from has a commit newer than the
+moment that skill was installed or last updated. For each installed skill in
+the Nexus lock, check asks `gh` for the last commit that touched that skill's
+folder in its repository and compares that commit's date with `updatedAt`.
+The lock's `skillFolderHash` cannot answer this: it is upstream's own hash,
+the algorithm is not Nexus's, and the lock records no commit, tag or version.
+
+Every skill comes back as one of three words. `current` is a folder upstream
+has not touched since; `behind` is one it has; `unknown` is a repository that
+could not be reached, a lock row with no date, and never good news. The table
+prints name, state, source, `updatedAt` and the upstream commit date, then one
+line per unknown skill saying why, then the counts and the moment the check
+ran. `--json` prints the same document.
+
+Check applies nothing: no skill, no link, and no line of the Nexus lock
+changes. Applying stays `nexus update <name>`, which you run yourself.
+
+The result is written to `~/.nexus/skill-check.json`, beside the lock and
+never inside it, with `checkedAt`, `counts`, and one row per skill carrying
+`state`, `source`, `folder`, `updatedAt`, `committedAt` and, for an unknown
+skill, `reason`. It is gitignored, because the lock is authoritative and
+versioned while a check result goes stale by itself.
+
+Check needs `gh` on the path and logged in. A missing `gh`, a `gh` that is not
+logged in, an absent lock and an invalid lock are each one sentence and exit 1;
+a repository that cannot be reached is not a failure of the check, it is one
+`unknown` row with the reason `gh` gave.
+
+### Reading the last result
+
+```bash
+~/.nexus/scripts/nexus check --last
+~/.nexus/scripts/nexus check --last --json
+```
+
+`--last` prints `~/.nexus/skill-check.json` as it stands and asks GitHub
+nothing, so it needs neither `gh` nor the lock. It is the road for a reader
+rather than an asker: the page marks its rows from it every time somebody
+opens it, and a page that reached GitHub on each load would be a check nobody
+asked for. The table and the `--json` document are the same ones `nexus
+check` prints.
+
+A result that is not there and a result that is not readable are each one
+sentence and exit 1: `no check has run yet: run nexus check to write
+<path>`, and `the check result is unreadable: run nexus check to write <path>
+again`. Neither says that anything is current.
 
 ## The nexus launcher skill
 
@@ -406,9 +463,10 @@ The contract is recorded in
 - Nexus is a directory holding a `web/` folder and an executable `mcp`, and
   asks nothing else of anyone.
 - The Plugin Server never touches `GLOBAL.md`, the Nexus Lock, or any skill
-  root. Every tool is a subprocess call to the CLI: `list --json`, `global
-  show --json`, `global edit --if-match`, `update`, and `remove`. ADR 0004 is
-  unchanged: the CLI is still the one writer of `GLOBAL.md`.
+  root. Every tool is a subprocess call to the CLI: `list --json`, `check
+  --json`, `check --last --json`, `global show --json`, `global edit
+  --if-match`, `update`, and `remove`. ADR 0004 is unchanged: the CLI is still
+  the one writer of `GLOBAL.md`.
 - The Host defends the address. It binds `127.0.0.1` only, checks the `Host`
   header and the `Origin` and `Sec-Fetch-Site` of every request, requires the
   token it minted at its own startup, and lets a Plugin Page reach only its
@@ -441,12 +499,14 @@ undisturbed.
 ### Tools and envelope
 
 The page reaches its own tools with one relative `POST` to `rpc`, whose body
-is an MCP JSON-RPC request. Five tools stand where the HTTP API stood, and
+is an MCP JSON-RPC request. Seven tools stand where the HTTP API stood, and
 each one is a CLI command:
 
 | Tool | Command |
 | --- | --- |
 | `list_skills` | `nexus list --json` |
+| `check_skills` | `nexus check --json` |
+| `show_check_result` | `nexus check --last --json` |
 | `show_global_instructions` | `nexus global show --json` |
 | `update_skill` with `{name}` | `nexus update <name>` |
 | `remove_skill` with `{name}` | `nexus remove <name>` |
@@ -458,9 +518,26 @@ when `exit` is 0 and the output parses. A CLI refusal is `exit` 1 in the
 envelope with the CLI's own message, not an error, so the page shows exactly
 what the command line shows.
 
+That object is the structured half of every answer, `check_skills` included,
+and the text half repeats it — except for `check_skills`, whose text half is
+one plain sentence:
+
+```
+37 Installed Skills: 28 current, 9 Behind, 0 unknown. Checked 2026-09-23T01:42:19Z.
+```
+
+A caller on the Tool Bus shows one sentence of what a tool answered, and how
+many installed skills are behind is the whole question the check exists to
+answer. The document is untouched: the page and every other caller read it
+from the structured half as before.
+
 A call the Plugin Server will not run answers a JSON-RPC error instead of an
 envelope: `-32602` for a tool that is not there or an argument that is not a
-string, and `-32000` for a second change while one runs. One change runs at a
+string, and `-32000` for a second change while one runs. `check_skills` is the
+one tool that also answers `-32603` for a run that failed, carrying the
+sentence the CLI ended with: it is there for a caller on the Tool Bus that has
+to decide an outcome, and an outcome cannot be read out of a successful result
+(ADR 0009). One change runs at a
 time; reads are never locked, so a slow update cannot stop the page from
 listing skills.
 
@@ -504,7 +581,32 @@ so an absent lock shows only the custom and control groups. Kind is the
 group rather than a column, because it decides what a row can do. Inside a
 group the rows keep CLI order, and each row is name, source, the
 eight-character hash prefix with the full hash on hover, the update date as
-a local date with the ISO timestamp on hover, and actions.
+a local date with the ISO timestamp on hover, the upstream mark, and actions.
+
+### Behind rows
+
+The Upstream column is the last check as the page read it, through
+`show_check_result`. An installed row reads `Behind`, `current`, or
+`unknown`; a custom or control row, and an installed row the check does not
+cover, read `–`. The mark is the word, never the colour alone: `Behind` is
+the one in amber and bold, `unknown` keeps its own word and a broken edge so
+it is never read as `current`, and hovering a mark says when upstream moved,
+or why the check could not say. The column survives every narrow screen,
+because it is what says whether Update is worth pressing.
+
+Next to the skill count, the header says when the check last ran, as a local
+moment with the ISO timestamp on hover, and adds `· N Behind, N unknown`
+when there is anything to add. Before any check has run it says `No check has
+run yet, so no row is marked: run nexus check.`, and a result that cannot be
+read says `No row is marked.` and then the CLI's own sentence. In both cases
+the list works and no row is marked; an unmarked list is a list nobody has
+checked, not a list that is all current.
+
+The page reads the check's result and never runs a check: nothing on it
+reaches GitHub, and Update stays the button a person presses. When an update
+or a remove succeeds, that skill's mark and its share of the header count go
+at once, because the result on disk was written before the command ran. The
+next check writes what is true then.
 
 Two filters sit above the table and compose, so you can ask for one name
 inside one kind. The kind filter picks `All kinds`, `Installed`, `Custom`,
@@ -639,6 +741,9 @@ which the tests use with a short value.
 - **Retained temporary/residue paths:** read the command's exact path and
   recovery message first. Keep a copy until the situation is understood, then
   correct the cause before rerunning.
+- **Check says `unknown` for every skill:** `gh` cannot reach GitHub. Run `gh
+  auth status`, then `gh auth login`. Nothing was changed; the rows carry the
+  reason `gh` gave.
 - **The page does not open:** the Host is not running. Check it with
   `systemctl --user status firstmate`, and read it with `journalctl --user -u
   firstmate`. The Plugin Server's own output is in the same journal.
@@ -712,4 +817,5 @@ ownership change, not merely another symlink.
 Bootstrap only exposes Nexus control entries. Setup is explicit and is **not**
 run by bootstrap. Setup backs up before link changes, never silently
 overwrites backups, and reports recovery paths. Install requires explicit
-source and skill names and does not `eval` arguments.
+source and skill names and does not `eval` arguments. Check is read-only: it
+asks GitHub, writes only `~/.nexus/skill-check.json`, and applies nothing.

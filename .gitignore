@@ -1,4 +1,5 @@
 skill-lock.json
+skill-check.json
 *.nexus-tmp.*
 .scratch/
 docs/research/

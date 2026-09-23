@@ -95,12 +95,13 @@ test_help_content() {
   for alias in help -h --help; do
     output="$(run_nexus "$home" "$alias")"; status=$?
     [[ "$status" -eq 0 ]] || { printf '  %s: unexpected status %s\n' "$alias" "$status" >&2; failed=1; }
-    [[ "$output" == *'Usage: nexus <bootstrap|setup|link|install|update|remove|new|list|global|help>'* ]] || {
+    [[ "$output" == *'Usage: nexus <bootstrap|setup|link|install|update|remove|new|list|check|global|help>'* ]] || {
       printf '  %s: missing usage line\n' "$alias" >&2; failed=1;
     }
     [[ "$output" == *'list [--json]'* ]] || { printf '  %s: help lacks list --json\n' "$alias" >&2; failed=1; }
+    [[ "$output" == *'check [--json]'* ]] || { printf '  %s: help lacks check --json\n' "$alias" >&2; failed=1; }
     local sub
-    for sub in bootstrap setup link install update remove new list global help; do
+    for sub in bootstrap setup link install update remove new list check global help; do
       [[ "$output" == *"$sub"* ]] || { printf '  %s: missing subcommand %s\n' "$alias" "$sub" >&2; failed=1; }
     done
   done

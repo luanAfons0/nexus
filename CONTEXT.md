@@ -52,6 +52,14 @@ Path is not a collision: Nexus reports it, preserves it, and skips only that
 link.
 _Avoid_: conflict, clash
 
+**Behind**:
+An Installed Skill whose folder upstream has a commit newer than the moment
+that Skill was installed or last updated. Behind is a sentence about upstream
+and never a change: nothing is applied because a Skill is Behind. The other
+two answers a Check gives are `current` and `unknown`, and `unknown` — the
+repository could not be reached — is never counted as `current`.
+_Avoid_: outdated, stale, out of date, drifted, needs update
+
 ### Ownership
 
 **Owner**:
@@ -161,6 +169,19 @@ and the Control Skills: create or update Managed Links, remove Stale Links,
 preserve Foreign Entries.
 _Avoid_: sync, relink, reconcile
 
+**Check**:
+Asking GitHub, read-only, which Installed Skills are Behind. It reaches GitHub
+with `gh`, applies nothing — no Skill, no Managed Link and no line of the
+Nexus Lock moves — and writes only the Check Result.
+_Avoid_: audit, scan, refresh, sync, dry run
+
+**Check Result**:
+`~/.nexus/skill-check.json`, the state of every Installed Skill at the moment
+one Check ran. Git ignores it, and it is never part of the Nexus Lock: the
+lock is authoritative and versioned, while a Check Result goes stale by
+itself.
+_Avoid_: report, cache, status file, check lock
+
 **Preflight**:
 The checks an operation runs before any change. A preflight failure is a
 configuration fault and leaves everything as it was.
@@ -209,5 +230,8 @@ _Avoid_: backend, API, ui server, adapter
 **Envelope**:
 What every tool answers: the argv the CLI ran, its exit code, its standard
 output and its standard error, plus the parsed output when it is JSON. A
-non-zero exit is an answer the page shows, never a transport failure.
+non-zero exit is an answer the page shows, never a transport failure. It is
+the structured half of every answer; the text half repeats it, except where a
+tool has one sentence worth quoting, which today is `check_skills` and its
+counts (ADR 0009).
 _Avoid_: response, payload, result object

@@ -1,6 +1,9 @@
 nexus_init() {
   NEXUS_HOME="${NEXUS_HOME:-$HOME/.nexus}"
   LOCK_FILE="$NEXUS_HOME/skill-lock.json"
+  # The Check Result sits beside the lock and is never part of it: the lock
+  # is authoritative and versioned, a check result goes stale by itself.
+  CHECK_FILE="$NEXUS_HOME/skill-check.json"
   CANONICAL_DIR="$HOME/.agents/skills"
   CUSTOM_ROOT="$HOME/.custom-skills"
   CUSTOM_WORKSPACES="$CUSTOM_ROOT/.workspaces"
