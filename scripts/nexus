@@ -14,6 +14,7 @@ _nexus_source_libraries() {
   source "$SCRIPT_DIR/lib/update.sh"
   source "$SCRIPT_DIR/lib/remove.sh"
   source "$SCRIPT_DIR/lib/list.sh"
+  source "$SCRIPT_DIR/lib/check.sh"
   source "$SCRIPT_DIR/lib/global.sh"
   NEXUS_SCRIPTS_DIR="$SCRIPT_DIR"
 }
@@ -43,6 +44,8 @@ main() {
       remove_skill "${@:2}" ;;
     list)
       list_skills "${@:2}" ;;
+    check)
+      check_skills "${@:2}" ;;
     link)
       [[ "$#" -eq 1 ]] || { usage >&2; return 2; }
       link_all false ;;

@@ -1,0 +1,50 @@
+name: Feature request
+description: Nexus should be able to do something it cannot do today.
+labels: ['enhancement', 'needs-triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Nexus is deliberately small: it owns an Agent Context and nothing
+        else. A request that gives it a second job is likely to be refused,
+        and that is not a judgement on the idea. Read
+        [CONTEXT.md](https://github.com/luanAfons0/nexus/blob/main/CONTEXT.md)
+        and the [ADRs](https://github.com/luanAfons0/nexus/tree/main/docs/adr)
+        first.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >
+        What you were trying to do, and where Nexus stopped you. Describe the
+        problem, not the solution you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like it to do
+      description: >
+        If you have a shape in mind, give the command line you wish existed
+        and what it would print.
+    validations:
+      required: false
+
+  - type: textarea
+    id: today
+    attributes:
+      label: How you work around it today
+    validations:
+      required: false
+
+  - type: textarea
+    id: decisions
+    attributes:
+      label: Decisions it touches
+      description: >
+        Name any ADR your request contradicts, if you found one. Contradicting
+        an ADR is allowed; doing it quietly is not.
+    validations:
+      required: false

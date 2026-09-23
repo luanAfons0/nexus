@@ -159,7 +159,8 @@ test_shell_syntax() {
   local failed=0 file
   while IFS= read -r file; do
     bash -n -- "$file" || failed=1
-  done < <(printf '%s\n' "$REPO_ROOT/scripts/nexus" "$REPO_ROOT"/scripts/lib/*.sh "$REPO_ROOT"/tests/*.sh "$REPO_ROOT"/tests/cases/*.sh)
+  done < <(printf '%s\n' "$REPO_ROOT/scripts/nexus" "$REPO_ROOT/scripts/dev-home" \
+    "$REPO_ROOT"/scripts/lib/*.sh "$REPO_ROOT"/tests/*.sh "$REPO_ROOT"/tests/cases/*.sh)
   while IFS= read -r file; do
     python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$file" || failed=1
   done < <(printf '%s\n' "$REPO_ROOT"/scripts/lib/*.py "$REPO_ROOT"/tests/*.py)
@@ -1207,6 +1208,27 @@ test_setup_canonical_late_collision_is_preserved() {
   if (( failed == 0 )); then pass setup_canonical_late_collision_is_preserved; else fail setup_canonical_late_collision_is_preserved; fi
 }
 
+# The same safety property, for a Managed Link swapped for another Managed
+# Link rather than for a file. The type is unchanged, so only the Owner the
+# link resolves to tells the two apart. On a filesystem that reuses an inode
+# it is the whole of what tells them apart.
+test_setup_canonical_late_repoint_is_preserved() {
+  local failed=0 home output status canonical
+  home="$(new_home setup_canonical_late_repoint)"
+  canonical="$home/.agents/skills"
+  write_lock "$home/.agents/.skill-lock.json" alpha
+  mkdir -p "$home/.claude/skills/alpha" "$canonical" "$home/elsewhere"
+  printf 'skill\n' >"$home/.claude/skills/alpha/SKILL.md"
+  ln -s -- ../../.claude/skills/alpha "$canonical/alpha"
+  output="$(run_nexus_overridden "$home" canonical_late_repoint setup 2>&1)"; status=$?
+  [[ "$status" -ne 0 && -L "$canonical/alpha" &&
+     "$(readlink "$canonical/alpha")" == "$home/elsewhere" ]] || {
+    printf '  late canonical repoint was not preserved\n%s\n' "$output" >&2
+    failed=1
+  }
+  if (( failed == 0 )); then pass setup_canonical_late_repoint_is_preserved; else fail setup_canonical_late_repoint_is_preserved; fi
+}
+
 test_setup_canonical_scan_failure_is_propagated() {
   local failed=0 home output status canonical
   home="$(new_home setup_canonical_scan_failure)"
@@ -1301,7 +1323,8 @@ test_readme_documentation() {
               '#/skills' '#/global' \
               '/p/nexus/' '~/.firstmate/runtime.json' 'systemctl --user status firstmate' \
               'journalctl --user -u firstmate' 'Plugin Server' 'Plugin Page' \
-              'list_skills' 'show_global_instructions' 'update_skill' 'remove_skill' \
+              'list_skills' 'check_skills' 'show_check_result' \
+              'show_global_instructions' 'update_skill' 'remove_skill' \
               'edit_global_instructions' 'Connection lost.' \
               'grouped by kind' 'All kinds'; do
     assert_contains README.md "$term" || failed=1
@@ -1381,6 +1404,7 @@ test_setup_rejects_reserved_control_skill_names
 test_setup_canonical_failures_retain_publication
 test_setup_canonical_safety_preflight
 test_setup_canonical_late_collision_is_preserved
+test_setup_canonical_late_repoint_is_preserved
 test_setup_canonical_scan_failure_is_propagated
 test_discover_lock_uses_immutable_snapshots
 
@@ -1565,7 +1589,40 @@ test_setup_canonical_scan_trailing_tmpdir() {
   if (( failed == 0 )); then pass setup_canonical_scan_trailing_tmpdir; else fail setup_canonical_scan_trailing_tmpdir; fi
 }
 
+# dev-home is the seam a contributor drives the CLI through: a throwaway
+# $HOME instead of the Agent Context they work in. Its two promises are worth
+# a test, because a person reaches for it exactly when a change is unfinished.
+test_dev_home() {
+  local failed=0 home sandbox foreign output
+
+  home="$(new_home dev_home)"
+  sandbox="$TEST_ROOT/dev_home_sandbox"
+  output="$(HOME="$home" NEXUS_DEV_HOME="$sandbox" \
+    bash "$REPO_ROOT/scripts/dev-home" bootstrap 2>&1)" || failed=1
+  [[ -f "$sandbox/.nexus-dev-home" ]] || failed=1
+  [[ -f "$sandbox/.nexus/skills/nexus/SKILL.md" ]] || failed=1
+  [[ -L "$sandbox/.claude/skills/nexus" && -L "$sandbox/.codex/skills/nexus" ]] || failed=1
+  # The home the command was run from is untouched.
+  [[ ! -e "$home/.claude/skills/nexus" && ! -e "$home/.nexus-dev-home" ]] || failed=1
+
+  # A sandbox that would hold the real home is refused before anything is written.
+  output="$(HOME="$home" NEXUS_DEV_HOME="$home" \
+    bash "$REPO_ROOT/scripts/dev-home" list 2>&1)" && failed=1
+  [[ "$output" == *'may not hold your real home'* ]] || failed=1
+  [[ ! -e "$home/.nexus-dev-home" ]] || failed=1
+
+  # --reset deletes only a directory dev-home marked as its own.
+  foreign="$TEST_ROOT/dev_home_foreign"
+  mkdir -p "$foreign" && printf 'keep\n' >"$foreign/keep"
+  output="$(HOME="$home" NEXUS_DEV_HOME="$foreign" \
+    bash "$REPO_ROOT/scripts/dev-home" --reset list 2>&1)" && failed=1
+  [[ "$output" == *'marker'* && -f "$foreign/keep" ]] || failed=1
+
+  if (( failed == 0 )); then pass dev_home; else fail dev_home; fi
+}
+
 test_term_recovery
+test_dev_home
 test_setup_traps_restore
 test_setup_finalization_signal_window
 test_setup_canonical_scan_signal_cleanup

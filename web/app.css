@@ -203,6 +203,17 @@ h2 { font-size: 20px; font-weight: 600; margin: 0; }
 .badge.foreign i { background: var(--attention); }
 .badge.absent, .badge.nohome { color: var(--muted); border-color: var(--line); background: var(--subtle); }
 .badge.absent i, .badge.nohome i { background: var(--faint); }
+/* The Upstream mark on a Skills row. The word is the mark: colour and shape
+   only agree with it, because a person who reads no colour still has to see
+   which Update buttons are worth pressing. `unknown` is the one with the
+   broken edge, so it is never mistaken for `current` at a glance. */
+.upstream {
+  display: inline-block; font-size: 12px; font-weight: 500; padding: 1px 8px;
+  border-radius: 12px; border: 1px solid;
+  color: var(--muted); border-color: var(--line); background: var(--subtle);
+}
+.upstream.behind { color: var(--attention); border-color: var(--warn-line); background: var(--warn-bg); font-weight: 600; }
+.upstream.unknown { border-style: dashed; }
 .exit { padding: 1px 8px; border-radius: 12px; font-weight: 600; font-size: 12px; }
 .exit.ok { background: var(--good-bg); color: var(--ok); }
 .exit.bad { background: var(--err-bg); color: var(--danger); }
@@ -335,7 +346,8 @@ dialog.modal::backdrop { background: var(--backdrop); }
 /* Narrow screens. The Host serves this page to whatever opened the Tray, so
    it has to survive a phone. The table keeps the columns a person acts on and
    drops the ones they only read: Hash first, then Updated, then Source. The
-   dropped values stay on the row's title attribute. */
+   dropped values stay on the row's title attribute. Upstream is never
+   dropped: it is what says whether Update is worth pressing. */
 @media (max-width: 1000px) {
   .hdr, .subnav { padding-inline: 20px; }
   .page { padding: 20px 20px 32px; gap: 24px; }

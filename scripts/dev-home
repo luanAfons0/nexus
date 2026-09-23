@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+#
+# Run the Nexus CLI against a throwaway home directory.
+#
+# Every path Nexus touches is read from $HOME: the Canonical Root, the Custom
+# Root, both Native Skill Roots and both Instruction Paths. Moving $HOME moves
+# the whole Agent Context with it, so a contributor can run setup, install or
+# link for real without touching the context they work in every day. The suite
+# already drives the CLI this way; this is the same seam for a person.
+
+MARKER='.nexus-dev-home'
+
+usage() {
+  cat <<'EOF'
+Usage: dev-home [--reset] <nexus argument>...
+       dev-home [--reset]
+
+Runs scripts/nexus with HOME pointed at a sandbox home directory, so no
+command can reach your real Claude, Codex, Nexus or custom-skills files.
+
+  --reset    Delete the sandbox home and build it again.
+
+The sandbox is .scratch/home in this repository, which Git ignores. Set
+NEXUS_DEV_HOME to put it somewhere else.
+
+Examples:
+  scripts/dev-home list
+  scripts/dev-home setup
+  scripts/dev-home --reset link
+EOF
+}
+
+fail() { printf 'dev-home: error: %s\n' "$*" >&2; }
+
+# The sandbox must never be the real home, or a parent of it: the whole point
+# is that a bad change cannot reach the Agent Context you use.
+refuse_real_home() {
+  local sandbox="$1" resolved real
+  [[ -n "$sandbox" ]] || { fail 'the sandbox home is empty'; return 1; }
+  resolved="$(realpath -m -- "$sandbox")" || return 1
+  real="$(realpath -m -- "$HOME")" || return 1
+  if [[ "$resolved" == '/' || "$resolved" == "$real" || "$real" == "$resolved"/* ]]; then
+    fail "the sandbox home may not hold your real home: $resolved"
+    return 1
+  fi
+  printf '%s\n' "$resolved"
+}
+
+# Only a directory this script marked as its own is ever deleted.
+remove_sandbox() {
+  local sandbox="$1"
+  [[ -e "$sandbox" ]] || return 0
+  if [[ ! -f "$sandbox/$MARKER" ]]; then
+    fail "$sandbox has no $MARKER marker, so it is not a sandbox this script made"
+    return 1
+  fi
+  rm -rf -- "$sandbox"
+}
+
+# A fresh home holds the empty roots Nexus expects and a copy of the Control
+# Skills, exactly as a real Nexus home does. The copy is refreshed on every
+# run, so an edit under skills/ is the one the sandbox sees.
+build_sandbox() {
+  local repo="$1" sandbox="$2" dir
+  if [[ -e "$sandbox" && ! -f "$sandbox/$MARKER" ]]; then
+    fail "$sandbox already exists and has no $MARKER marker; move it aside first"
+    return 1
+  fi
+  mkdir -p -- "$sandbox" || return 1
+  : >"$sandbox/$MARKER" || return 1
+  for dir in .nexus .claude/skills .codex/skills .custom-skills .agents/skills; do
+    mkdir -p -- "$sandbox/$dir" || return 1
+  done
+  rm -rf -- "$sandbox/.nexus/skills" || return 1
+  cp -R -- "$repo/skills" "$sandbox/.nexus/" || return 1
+}
+
+main() {
+  local reset=false repo sandbox
+
+  case "${1:-}" in
+    --reset) reset=true; shift ;;
+    -h|--help) usage; return 0 ;;
+  esac
+
+  repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)" || return 1
+  sandbox="$(refuse_real_home "${NEXUS_DEV_HOME:-$repo/.scratch/home}")" || return 1
+
+  if [[ "$reset" == true ]]; then
+    remove_sandbox "$sandbox" || return 1
+  fi
+  build_sandbox "$repo" "$sandbox" || return 1
+
+  if [[ "$#" -eq 0 ]]; then
+    printf 'dev-home: %s\n' "$sandbox"
+    [[ "$reset" == true ]] && return 0
+    usage >&2
+    return 2
+  fi
+
+  printf 'dev-home: HOME=%s\n' "$sandbox" >&2
+  HOME="$sandbox" NEXUS_HOME="$sandbox/.nexus" exec "$repo/scripts/nexus" "$@"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  set -uo pipefail
+  main "$@"
+fi
