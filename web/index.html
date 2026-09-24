@@ -44,12 +44,19 @@
     <div id="global-body" class="card empty">No global instructions loaded yet.</div>
   </section>
 
-  <section class="sec" id="last-command">
-    <div class="sec-hd"><h2>Last command</h2></div>
-    <div id="last-command-body" class="card empty">No command has run yet.</div>
-  </section>
-
 </main>
+<!-- Last command belongs to the run, not to a page, so it floats above both
+     routes and opens on demand. The dot says how the last command exited. -->
+<button type="button" class="fab" id="last-command-open" aria-haspopup="dialog" aria-controls="last-command">
+  <span class="fab-dot" id="last-command-dot"></span>Last command
+</button>
+<dialog class="modal wide" id="last-command" aria-labelledby="last-command-hd">
+  <div class="modal-hd">
+    <span id="last-command-hd">Last command</span>
+    <button type="button" class="btn sm" id="last-command-close">Close</button>
+  </div>
+  <div id="last-command-body" class="empty">No command has run yet.</div>
+</dialog>
 <div id="toasts" class="toasts"></div>
 <script src="vendor/marked.min.js"></script>
 <script src="app.js"></script>

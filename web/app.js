@@ -215,6 +215,10 @@ function commandLabel(argv) {
 function showLastCommand(envelope) {
   const body = document.getElementById('last-command-body');
   body.classList.remove('empty');
+  const ok = envelope.exit === 0;
+  document.getElementById('last-command-dot').className = 'fab-dot ' + (ok ? 'ok' : 'bad');
+  document.getElementById('last-command-open').classList.toggle('bad', !ok);
+  document.getElementById('last-command-open').title = 'exit ' + envelope.exit;
   const stamp = new Date();
   const lines = [];
   if (envelope.stdout) lines.push(document.createTextNode(envelope.stdout.replace(/\n$/, '') + '\n'));
@@ -229,6 +233,27 @@ function showLastCommand(envelope) {
     el('pre', { class: 'log mono' }, lines),
   ]);
 }
+
+function openLastCommand() {
+  const dialog = document.getElementById('last-command');
+  if (!dialog.open) dialog.showModal();
+}
+
+// A banner that says "the output is in Last command" carries the way there,
+// because the output is behind a button and not on the page.
+function lastCommandLink(text) {
+  return el('button', { class: 'linklike', type: 'button', text: text || 'Last command', onclick: openLastCommand });
+}
+
+function initLastCommand() {
+  const dialog = document.getElementById('last-command');
+  document.getElementById('last-command-open').addEventListener('click', openLastCommand);
+  document.getElementById('last-command-close').addEventListener('click', () => dialog.close());
+  // A click on the backdrop lands on the dialog itself, never on its content.
+  dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
+}
+
+initLastCommand();
 
 // --- skills table -----------------------------------------------------------
 
@@ -707,7 +732,7 @@ function renderGlobal(info) {
     banner('global-absent', 'warn', [
       el('strong', { text: 'Global Instructions absent.' }), ' Owner ',
       el('code', { text: shortPath(info.owner, homeFromOwner(info.owner)) }),
-      ' does not exist. The first save creates the file and runs link, so both Instruction Paths become Managed Links. Link notices show in Last command.',
+      ' does not exist. The first save creates the file and runs link, so both Instruction Paths become Managed Links. Link notices show in ', lastCommandLink(), '.',
     ]);
   }
 }
@@ -917,7 +942,7 @@ async function runMutation(action, name) {
     if (envelope.exit !== 0) {
       banner('mutation', 'err', [
         el('strong', { text: 'nexus ' + action + ' ' + name + ' failed (exit ' + envelope.exit + ').' }),
-        ' The exact output is in Last command.',
+        ' The exact output is in ', lastCommandLink(), '.',
       ]);
     } else {
       // The Check Result on disk was written before this command and still
