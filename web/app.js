@@ -635,6 +635,7 @@ function buildEditor() {
   replaceChildren(body, [editor.hints, box]);
   applySoftWrap(readSoftWrap());
   syncGutter();
+  watchTextWidth();
 }
 
 function applySoftWrap(on) {
@@ -642,6 +643,7 @@ function applySoftWrap(on) {
   editor.wrapToggle.setAttribute('aria-checked', on ? 'true' : 'false');
   editor.textarea.classList.toggle('nowrap', !on);
   editor.textarea.setAttribute('wrap', on ? 'soft' : 'off');
+  fitText();
 }
 
 function toggleSoftWrap() {
@@ -657,10 +659,30 @@ function syncGutter() {
   replaceChildren(editor.gutter, numbers);
   const lines = editor.textarea.value === '' ? 0 : count;
   editor.lineCount.textContent = lines + (lines === 1 ? ' line' : ' lines');
-  // Grow the textarea to its content so the editor body scrolls both
-  // columns together.
+  fitText();
+}
+
+// Grow the textarea to its content so the editor body scrolls both columns
+// together. A hidden textarea has no width and measures its content as
+// nothing, so it is left alone until it is shown and fitted then.
+function fitText() {
+  if (editor.textarea.clientWidth === 0) return;
   editor.textarea.style.height = 'auto';
   editor.textarea.style.height = editor.textarea.scrollHeight + 'px';
+}
+
+// The text wraps to the editor's width, so its height is only right for the
+// width it was measured at. Fit it again whenever that width changes, which
+// includes the moment the Global Instructions section or the Edit tab is
+// shown after the text arrived while it was hidden.
+function watchTextWidth() {
+  let width = 0;
+  new ResizeObserver(() => {
+    const now = editor.editBody.clientWidth;
+    if (now === width) return;
+    width = now;
+    fitText();
+  }).observe(editor.editBody);
 }
 
 // Tab inserts two spaces at the caret so focus never leaves the editor.
