@@ -215,6 +215,10 @@ function commandLabel(argv) {
 function showLastCommand(envelope) {
   const body = document.getElementById('last-command-body');
   body.classList.remove('empty');
+  const ok = envelope.exit === 0;
+  document.getElementById('last-command-dot').className = 'fab-dot ' + (ok ? 'ok' : 'bad');
+  document.getElementById('last-command-open').classList.toggle('bad', !ok);
+  document.getElementById('last-command-open').title = 'exit ' + envelope.exit;
   const stamp = new Date();
   const lines = [];
   if (envelope.stdout) lines.push(document.createTextNode(envelope.stdout.replace(/\n$/, '') + '\n'));
@@ -229,6 +233,27 @@ function showLastCommand(envelope) {
     el('pre', { class: 'log mono' }, lines),
   ]);
 }
+
+function openLastCommand() {
+  const dialog = document.getElementById('last-command');
+  if (!dialog.open) dialog.showModal();
+}
+
+// A banner that says "the output is in Last command" carries the way there,
+// because the output is behind a button and not on the page.
+function lastCommandLink(text) {
+  return el('button', { class: 'linklike', type: 'button', text: text || 'Last command', onclick: openLastCommand });
+}
+
+function initLastCommand() {
+  const dialog = document.getElementById('last-command');
+  document.getElementById('last-command-open').addEventListener('click', openLastCommand);
+  document.getElementById('last-command-close').addEventListener('click', () => dialog.close());
+  // A click on the backdrop lands on the dialog itself, never on its content.
+  dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
+}
+
+initLastCommand();
 
 // --- skills table -----------------------------------------------------------
 
@@ -610,6 +635,7 @@ function buildEditor() {
   replaceChildren(body, [editor.hints, box]);
   applySoftWrap(readSoftWrap());
   syncGutter();
+  watchTextWidth();
 }
 
 function applySoftWrap(on) {
@@ -617,6 +643,7 @@ function applySoftWrap(on) {
   editor.wrapToggle.setAttribute('aria-checked', on ? 'true' : 'false');
   editor.textarea.classList.toggle('nowrap', !on);
   editor.textarea.setAttribute('wrap', on ? 'soft' : 'off');
+  fitText();
 }
 
 function toggleSoftWrap() {
@@ -632,10 +659,30 @@ function syncGutter() {
   replaceChildren(editor.gutter, numbers);
   const lines = editor.textarea.value === '' ? 0 : count;
   editor.lineCount.textContent = lines + (lines === 1 ? ' line' : ' lines');
-  // Grow the textarea to its content so the editor body scrolls both
-  // columns together.
+  fitText();
+}
+
+// Grow the textarea to its content so the editor body scrolls both columns
+// together. A hidden textarea has no width and measures its content as
+// nothing, so it is left alone until it is shown and fitted then.
+function fitText() {
+  if (editor.textarea.clientWidth === 0) return;
   editor.textarea.style.height = 'auto';
   editor.textarea.style.height = editor.textarea.scrollHeight + 'px';
+}
+
+// The text wraps to the editor's width, so its height is only right for the
+// width it was measured at. Fit it again whenever that width changes, which
+// includes the moment the Global Instructions section or the Edit tab is
+// shown after the text arrived while it was hidden.
+function watchTextWidth() {
+  let width = 0;
+  new ResizeObserver(() => {
+    const now = editor.editBody.clientWidth;
+    if (now === width) return;
+    width = now;
+    fitText();
+  }).observe(editor.editBody);
 }
 
 // Tab inserts two spaces at the caret so focus never leaves the editor.
@@ -707,7 +754,7 @@ function renderGlobal(info) {
     banner('global-absent', 'warn', [
       el('strong', { text: 'Global Instructions absent.' }), ' Owner ',
       el('code', { text: shortPath(info.owner, homeFromOwner(info.owner)) }),
-      ' does not exist. The first save creates the file and runs link, so both Instruction Paths become Managed Links. Link notices show in Last command.',
+      ' does not exist. The first save creates the file and runs link, so both Instruction Paths become Managed Links. Link notices show in ', lastCommandLink(), '.',
     ]);
   }
 }
@@ -917,7 +964,7 @@ async function runMutation(action, name) {
     if (envelope.exit !== 0) {
       banner('mutation', 'err', [
         el('strong', { text: 'nexus ' + action + ' ' + name + ' failed (exit ' + envelope.exit + ').' }),
-        ' The exact output is in Last command.',
+        ' The exact output is in ', lastCommandLink(), '.',
       ]);
     } else {
       // The Check Result on disk was written before this command and still
