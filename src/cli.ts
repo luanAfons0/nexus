@@ -9,6 +9,7 @@
  */
 import { check } from './check.ts';
 import { help, HELP_TEXT } from './help.ts';
+import { install } from './install.ts';
 import { bootstrap, link } from './link.ts';
 import { list } from './list.ts';
 import { error } from './output.ts';
@@ -38,7 +39,7 @@ function notPorted(name: string): Command {
 const COMMANDS: ReadonlyMap<string, Entry> = new Map<string, Entry>([
   ['bootstrap', { run: bootstrap, takesArguments: false }],
   ['setup', { run: notPorted('setup'), takesArguments: false }],
-  ['install', { run: notPorted('install'), takesArguments: true }],
+  ['install', { run: install, takesArguments: true }],
   ['new', { run: notPorted('new'), takesArguments: true }],
   ['update', { run: notPorted('update'), takesArguments: true }],
   ['remove', { run: notPorted('remove'), takesArguments: true }],
