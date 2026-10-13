@@ -10,26 +10,27 @@
  * `force_recovery`) wait for #81 and #82. On Linux the same homes also run
  * through the Bash CLI, and the bytes and the trees are compared.
  *
- * On Windows Bootstrap needs junctions (#76); until then it refuses with one
- * sentence, and these cases skip.
+ * Every other case runs on Windows too, where each Managed Link is a junction
+ * (ADR 0010) and the links a case starts with are junctions as well.
  */
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { customHome, writeLock, writeSkill } from './helpers/homes.ts';
 import {
   agentTrees,
+  assertLinkText,
   assertLinkTo,
   isAbsent,
   linkText,
+  makeLink,
   runBash,
+  WINDOWS,
   withoutToolNoise,
 } from './helpers/links.ts';
 import { newHome, runNexus } from './helpers/nexus.ts';
 
-const WINDOWS = process.platform === 'win32';
-const ON_WINDOWS = WINDOWS && 'Bootstrap on Windows makes junctions, which is #76';
 
 const CONTROL_SKILLS = [
   'nexus-setup',
@@ -44,7 +45,6 @@ const CONTROL_SKILLS = [
 
 test(
   'bootstrap links every Control Skill into both Native Skill Roots, and a second run changes nothing',
-  { skip: ON_WINDOWS },
   () => {
     const home = newHome('bootstrap');
     const run = runNexus(home, ['bootstrap']);
@@ -66,12 +66,12 @@ test(
   },
 );
 
-test('a Foreign Entry at a Control Skill is a Collision; it is kept and the rest are linked', { skip: ON_WINDOWS }, () => {
+test('a Foreign Entry at a Control Skill is a Collision; it is kept and the rest are linked', () => {
   const home = newHome('collision');
   mkdirSync(join(home, '.claude', 'skills', 'nexus-setup'), { recursive: true });
   writeFileSync(join(home, '.claude', 'skills', 'nexus-setup', 'marker'), 'preserve\n');
   mkdirSync(join(home, '.codex', 'skills'), { recursive: true });
-  symlinkSync('/external/target', join(home, '.codex', 'skills', 'nexus-link'));
+  makeLink('/external/target', join(home, '.codex', 'skills', 'nexus-link'));
 
   const run = runNexus(home, ['bootstrap']);
   assert.equal(run.status, 1);
@@ -83,12 +83,12 @@ test('a Foreign Entry at a Control Skill is a Collision; it is kept and the rest
       'nexus: error: bootstrap failed with 2 error(s)\n',
   );
   assert.equal(readFileSync(join(home, '.claude', 'skills', 'nexus-setup', 'marker'), 'utf8'), 'preserve\n');
-  assert.equal(linkText(join(home, '.codex', 'skills', 'nexus-link')), '/external/target');
+  assertLinkText(join(home, '.codex', 'skills', 'nexus-link'), '/external/target');
   assertLinkTo(join(home, '.claude', 'skills', 'nexus-link'), join(home, '.nexus', 'skills', 'nexus-link'));
   assertLinkTo(join(home, '.codex', 'skills', 'nexus-setup'), join(home, '.nexus', 'skills', 'nexus-setup'));
 });
 
-test('NEXUS_TEST_FORCE does not let bootstrap replace a Foreign Entry', { skip: ON_WINDOWS }, () => {
+test('NEXUS_TEST_FORCE does not let bootstrap replace a Foreign Entry', () => {
   const home = newHome('force_env_ignored');
   mkdirSync(join(home, '.claude', 'skills', 'nexus-setup'), { recursive: true });
   writeFileSync(join(home, '.claude', 'skills', 'nexus-setup', 'marker'), 'protected\n');
@@ -100,13 +100,12 @@ test('NEXUS_TEST_FORCE does not let bootstrap replace a Foreign Entry', { skip: 
 
 test(
   'a Managed Link that reaches its Owner only lexically, through a link elsewhere, is repointed',
-  { skip: ON_WINDOWS },
   () => {
     const home = newHome('lexical_managed');
-    symlinkSync('/external/target', join(home, '.nexus', 'skills', 'alias'));
+    makeLink('/external/target', join(home, '.nexus', 'skills', 'alias'));
     const link = join(home, '.claude', 'skills', 'nexus-setup');
     mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
-    symlinkSync('../../.nexus/skills/alias/nexus-setup', link);
+    makeLink('../../.nexus/skills/alias/nexus-setup', link);
 
     const run = runNexus(home, ['bootstrap']);
     assert.equal(run.status, 0, run.stderr);
@@ -115,20 +114,20 @@ test(
   },
 );
 
-test('a Managed Link into a symlinked Owner root is repointed to the right skill', { skip: ON_WINDOWS }, () => {
+test('a Managed Link into a symlinked Owner root is repointed to the right skill', () => {
   const home = newHome('symlinked_root');
   renameSync(join(home, '.nexus', 'skills'), join(home, '.nexus', 'skills-real'));
-  symlinkSync('skills-real', join(home, '.nexus', 'skills'));
+  makeLink('skills-real', join(home, '.nexus', 'skills'));
   const link = join(home, '.claude', 'skills', 'nexus-setup');
   mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
-  symlinkSync(join(home, '.nexus', 'skills-real', 'nexus-link'), link);
+  makeLink(join(home, '.nexus', 'skills-real', 'nexus-link'), link);
 
   const run = runNexus(home, ['bootstrap']);
   assert.equal(run.status, 0, run.stderr);
   assertLinkTo(link, join(home, '.nexus', 'skills', 'nexus-setup'));
 });
 
-test('bootstrap never links the Instruction Paths, even when GLOBAL.md is there', { skip: ON_WINDOWS }, () => {
+test('bootstrap never links the Instruction Paths, even when GLOBAL.md is there', () => {
   const home = customHome('global_bootstrap');
   writeSkill(join(home, '.agents', 'skills'), 'installed');
   writeSkill(join(home, '.custom-skills'), 'mine');
@@ -144,7 +143,7 @@ test('bootstrap never links the Instruction Paths, even when GLOBAL.md is there'
   assertLinkTo(join(home, '.claude', 'skills', 'nexus-link'), join(home, '.nexus', 'skills', 'nexus-link'));
 });
 
-test('a Control Skill with no Owner directory is a missing link target', { skip: ON_WINDOWS }, () => {
+test('a Control Skill with no Owner directory is a missing link target', () => {
   const home = newHome('bootstrap_missing_owner');
   const owner = join(home, '.nexus', 'skills', 'nexus-help');
   renameSync(owner, join(home, 'moved'));
@@ -167,9 +166,9 @@ test(
       collisions: (home) => {
         mkdirSync(join(home, '.claude', 'skills', 'nexus-setup', 'inner'), { recursive: true });
         writeFileSync(join(home, '.codex', 'skills', 'nexus'), 'file\n');
-        symlinkSync('/external/target', join(home, '.codex', 'skills', 'nexus-link'));
-        symlinkSync('../../.agents/skills/old', join(home, '.claude', 'skills', 'nexus-new'));
-        symlinkSync('../../.nexus/skills/nexus-help', join(home, '.claude', 'skills', 'nexus-update'));
+        makeLink('/external/target', join(home, '.codex', 'skills', 'nexus-link'));
+        makeLink('../../.agents/skills/old', join(home, '.claude', 'skills', 'nexus-new'));
+        makeLink('../../.nexus/skills/nexus-help', join(home, '.claude', 'skills', 'nexus-update'));
       },
       'missing-owner': (home) => renameSync(join(home, '.nexus', 'skills', 'nexus-help'), join(home, 'moved')),
       'bad-lock': (home) => writeFileSync(join(home, '.nexus', 'skill-lock.json'), '{bad'),
@@ -190,21 +189,5 @@ test(
         assert.equal(same(agentTrees(node), node), same(agentTrees(bash), bash), label);
       }
     }
-  },
-);
-
-test(
-  'on Windows bootstrap refuses with one sentence until it has junctions',
-  { skip: !WINDOWS && 'the refusal is for Windows alone' },
-  () => {
-    const home = newHome('bootstrap_windows');
-    const run = runNexus(home, ['bootstrap']);
-    assert.equal(run.status, 1);
-    assert.equal(run.stdout, '');
-    assert.equal(
-      run.stderr,
-      'nexus: error: bootstrap does not run on Windows yet; run Nexus inside WSL for now\n',
-    );
-    assert.ok(isAbsent(join(home, '.claude')));
   },
 );

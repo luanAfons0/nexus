@@ -108,6 +108,16 @@ link reports the fault and leaves both agent roots exactly as they were.
 After the skill links, link reconciles the two instruction paths against the
 global instructions. See "Global instructions" below.
 
+On Windows, where a symlink needs Developer Mode or an administrator, Nexus
+never makes one. A managed link to a skill is a junction, which needs
+neither, and each instruction path is a managed copy: a regular file with the
+bytes of `GLOBAL.md`, whose SHA-256 Nexus records in
+`~/.nexus/managed-copies.json`. Link and `nexus global edit` keep both copies
+byte-identical to `GLOBAL.md`. A copy you edit by hand no longer matches the
+record, so link reports it as a foreign entry and keeps it. The decision is
+recorded in
+`docs/adr/0010-on-windows-a-managed-link-is-a-junction-or-a-managed-copy.md`.
+
 ## Global instructions
 
 Claude loads `~/.claude/CLAUDE.md` and Codex loads `~/.codex/AGENTS.md` at the
