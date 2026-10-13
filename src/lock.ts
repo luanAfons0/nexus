@@ -13,7 +13,15 @@
  * The sentences are the Bash CLI's (`load_validated_lock_names` in
  * `scripts/lib/lock.sh`).
  */
-import { copyFileSync, lstatSync, mkdtempSync, readFileSync, rmdirSync, rmSync } from 'node:fs';
+import {
+  copyFileSync,
+  lstatSync,
+  mkdtempSync,
+  readFileSync,
+  rmdirSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { isControlSkill } from './control-skills.ts';
 import { sortedJson } from './json.ts';
@@ -47,6 +55,27 @@ export type SnapshotWatch = {
 
 /** The prefix of a Snapshot directory's name in the Nexus home. */
 export const SNAPSHOT_PREFIX = '.nexus-lock.';
+
+/** The prefix of the directory that holds Setup's candidate Snapshots. */
+export const CANDIDATES_PREFIX = '.nexus-lock-candidates.';
+
+/** What Setup's lock discovery gave. */
+export type Discovery =
+  | {
+      readonly ok: true;
+      /** The candidate Setup Publishes from, as the sentences name it. */
+      readonly selected: string;
+      /** Its Snapshot, the file Setup validates again and Publishes. */
+      readonly snapshot: string;
+      /** The directory of every candidate's Snapshot. */
+      readonly dir: string;
+    }
+  | {
+      readonly ok: false;
+      readonly errors: readonly string[];
+      /** The directory of the candidates' Snapshots, when one was made. */
+      readonly dir?: string;
+    };
 
 /**
  * Read the lock at `file` through a Snapshot in `nexusHome`, and validate it.
@@ -112,6 +141,121 @@ export function lockField(lock: NexusLock, name: string, field: string): unknown
  */
 export function semanticLockJson(lock: NexusLock): string {
   return sortedJson(lock.document);
+}
+
+/**
+ * Setup's search for the Upstream Lock it Publishes from. Each candidate
+ * that exists is copied once into a Snapshot under
+ * `<Nexus home>/.nexus-lock-candidates.*` and only the copy is read, so a
+ * lock that changes after discovery cannot change what Setup Publishes.
+ * Every candidate must be a valid version-3 lock, and every valid one must
+ * say the same thing (the same `jq -S -c`); the first is selected. The
+ * sentences and their order are the Bash CLI's (`discover_lock`). `watch`
+ * is told of the candidates' directory and of each validation Snapshot.
+ */
+export function discoverLock(home: string, nexusHome: string, watch?: SnapshotWatch): Discovery {
+  const candidates = [
+    join(home, '.agents', '.skill-lock.json'),
+    join(home, '.agents', 'skill-lock.json'),
+    join(home, '.skills', '.skill-lock.json'),
+    join(home, '.skills', 'skill-lock.json'),
+  ];
+  let dir: string;
+  try {
+    dir = mkdtempSync(join(nexusHome, CANDIDATES_PREFIX));
+  } catch {
+    return { ok: false, errors: ['cannot reserve candidate lock snapshots'] };
+  }
+  watch?.held(dir);
+  const errors: string[] = [];
+  const invalid: string[] = [];
+  const valid: { readonly candidate: string; readonly snapshot: string; readonly json: string }[] =
+    [];
+  let found = 0;
+  for (const candidate of candidates) {
+    if (!isPresent(candidate)) continue;
+    found += 1;
+    const snapshot = join(dir, `${found}.json`);
+    if (!snapshotCandidate(candidate, snapshot)) {
+      errors.push(`cannot snapshot setup lock candidate: ${candidate}`);
+      invalid.push(candidate);
+      continue;
+    }
+    const read = readLock(snapshot, nexusHome, watch);
+    if (!read.ok) {
+      errors.push(...read.errors);
+      invalid.push(candidate);
+      continue;
+    }
+    valid.push({ candidate, snapshot, json: semanticLockJson(read.lock) });
+  }
+  if (invalid.length > 0) {
+    errors.push(`invalid setup lock candidates: ${invalid.join(' ')}`);
+    return { ok: false, errors, dir };
+  }
+  const [first] = valid;
+  if (first === undefined) {
+    errors.push(`no version-3 skill lock found (checked: ${candidates.join(' ')})`);
+    return { ok: false, errors, dir };
+  }
+  if (valid.some((each) => each.json !== first.json)) {
+    const names = valid.map((each) => each.candidate).join(' ');
+    errors.push(`conflicting setup lock candidates: ${names}`);
+    return { ok: false, errors, dir };
+  }
+  return { ok: true, selected: first.candidate, snapshot: first.snapshot, dir };
+}
+
+/**
+ * Remove the candidates' Snapshots that `discoverLock` made in `dir`. Silent
+ * when `dir` is no such directory; the sentence that names it when it stays.
+ */
+export function cleanupDiscoveredLockSnapshots(
+  dir: string,
+  nexusHome: string,
+): string | undefined {
+  if (
+    !isDirectory(dir) ||
+    resolve(dirname(dir)) !== resolve(nexusHome) ||
+    !basename(dir).startsWith(CANDIDATES_PREFIX)
+  ) {
+    return undefined;
+  }
+  try {
+    rmSync(dir, { recursive: true, force: true });
+    return undefined;
+  } catch {
+    return `candidate lock snapshots retained: ${dir}`;
+  }
+}
+
+/** Copy one candidate, following a symlink as `cp` does, and check the copy's bytes. */
+function snapshotCandidate(candidate: string, snapshot: string): boolean {
+  try {
+    copyFileSync(candidate, snapshot);
+    return readFileSync(candidate).equals(readFileSync(snapshot));
+  } catch {
+    return false;
+  }
+}
+
+/** True when anything is at `path`, a dangling symlink too (`-e` or `-L`). */
+function isPresent(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** True when `path` is a directory, following a symlink (`-d`). */
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /** The lock in `bytes` when it passes every rule, else undefined. */

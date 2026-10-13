@@ -12,6 +12,7 @@ import { help, HELP_TEXT } from './help.ts';
 import { bootstrap, link } from './link.ts';
 import { list } from './list.ts';
 import { error } from './output.ts';
+import { setup } from './setup.ts';
 
 /** One command: it gets the arguments after its name and gives the exit code. */
 export type Command = (args: readonly string[]) => Promise<number>;
@@ -37,7 +38,7 @@ function notPorted(name: string): Command {
 
 const COMMANDS: ReadonlyMap<string, Entry> = new Map<string, Entry>([
   ['bootstrap', { run: bootstrap, takesArguments: false }],
-  ['setup', { run: notPorted('setup'), takesArguments: false }],
+  ['setup', { run: setup, takesArguments: false }],
   ['install', { run: notPorted('install'), takesArguments: true }],
   ['new', { run: notPorted('new'), takesArguments: true }],
   ['update', { run: notPorted('update'), takesArguments: true }],
