@@ -8,6 +8,7 @@
  * argument is the command's own to read.
  */
 import { help, HELP_TEXT } from './help.ts';
+import { bootstrap, link } from './link.ts';
 import { list } from './list.ts';
 import { error } from './output.ts';
 
@@ -34,7 +35,7 @@ function notPorted(name: string): Command {
 }
 
 const COMMANDS: ReadonlyMap<string, Entry> = new Map<string, Entry>([
-  ['bootstrap', { run: notPorted('bootstrap'), takesArguments: false }],
+  ['bootstrap', { run: bootstrap, takesArguments: false }],
   ['setup', { run: notPorted('setup'), takesArguments: false }],
   ['install', { run: notPorted('install'), takesArguments: true }],
   ['new', { run: notPorted('new'), takesArguments: true }],
@@ -42,7 +43,7 @@ const COMMANDS: ReadonlyMap<string, Entry> = new Map<string, Entry>([
   ['remove', { run: notPorted('remove'), takesArguments: true }],
   ['list', { run: list, takesArguments: true }],
   ['check', { run: notPorted('check'), takesArguments: true }],
-  ['link', { run: notPorted('link'), takesArguments: false }],
+  ['link', { run: link, takesArguments: false }],
   ['global', { run: notPorted('global'), takesArguments: true }],
   ['help', { run: help, takesArguments: false }],
   ['-h', { run: help, takesArguments: false }],

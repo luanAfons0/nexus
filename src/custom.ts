@@ -8,10 +8,11 @@
  * a fault that names its path. Nexus only reads here, and never runs Git.
  * The sentences are the Bash CLI's (`scripts/lib/custom.sh`).
  */
-import { lstatSync, readdirSync } from 'node:fs';
+import { lstatSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { isControlSkill } from './control-skills.ts';
 import type { Paths } from './paths.ts';
+import { isWithin, realpathMissing, resolvedLinkTarget } from './real-paths.ts';
 import { byteOrder, isSafeSkillName } from './skill-names.ts';
 
 /** The Custom Skills the Custom Root holds, and every fault found on the way. */
@@ -100,6 +101,44 @@ export function customCollisions(
         `custom skill collides with an installed skill: ${name} ` +
         `(${join(paths.customRoot, name)} and ${join(paths.canonicalRoot, name)})`,
     );
+}
+
+/**
+ * One sentence per link in the Canonical Root that reaches into the Custom
+ * Root (`custom_canonical_preflight`). A Custom Skill is owned by the Custom
+ * Root alone; reached through the Canonical Root it would have two Owners.
+ * Dot entries count too.
+ */
+export function customCanonicalLinks(paths: Paths): readonly string[] {
+  const canonical = paths.canonicalRoot;
+  if (!isDirectory(canonical)) return [];
+  let customRoot: string;
+  try {
+    customRoot = realpathMissing(paths.customRoot);
+  } catch {
+    return [];
+  }
+  const sentences: string[] = [];
+  for (const name of readdirSync(canonical).sort(byteOrder)) {
+    const child = join(canonical, name);
+    if (lstatOrUndefined(child)?.isSymbolicLink() !== true) continue;
+    const resolved = resolvedLinkTarget(child);
+    if (resolved === undefined || !isWithin(resolved, customRoot)) continue;
+    sentences.push(
+      `custom skill link in canonical root: ${child} -> ${resolved} ` +
+        `(remove it; custom skills are owned by ${paths.customRoot})`,
+    );
+  }
+  return sentences;
+}
+
+/** True when `path` is a directory, following a symlink (`-d`). */
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function lstatOrUndefined(path: string) {
