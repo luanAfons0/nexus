@@ -508,13 +508,15 @@ test('a second mutation is BUSY, and a read during a mutation is answered', asyn
 
 test('a CLI child past the timeout is ended with every program it started', async (t) => {
   const home = hangHome(t, 'server-timeout');
-  const server = serve(t, home, { NEXUS_MCP_TIMEOUT: '1' });
+  // Long enough for the CLI and its npx to start on a busy Windows runner,
+  // so the hung npx has written its process ID before the timeout ends it.
+  const server = serve(t, home, { NEXUS_MCP_TIMEOUT: '4' });
 
   const envelope = envelopeOf(await server.call('update_skill', { name: 'alpha' }));
 
   assert.equal(envelope.exit, 124);
   assert.ok(
-    envelope.stderr.endsWith('nexus: command killed after 1.0 seconds (timeout)\n'),
+    envelope.stderr.endsWith('nexus: command killed after 4.0 seconds (timeout)\n'),
     envelope.stderr,
   );
   assert.equal(envelope.json, undefined);
