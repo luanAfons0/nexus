@@ -8,12 +8,12 @@
  * argument is the command's own to read.
  */
 import { check } from './check.ts';
+import { global } from './global.ts';
 import { help, HELP_TEXT } from './help.ts';
 import { install } from './install.ts';
 import { bootstrap, link } from './link.ts';
 import { list } from './list.ts';
 import { newSkill } from './new.ts';
-import { error } from './output.ts';
 import { remove } from './remove.ts';
 import { setup } from './setup.ts';
 import { update } from './update.ts';
@@ -29,17 +29,6 @@ type Entry = {
   readonly takesArguments: boolean;
 };
 
-/**
- * A command the Node CLI does not run yet. The port grows beside the Bash CLI
- * (expand, then contract): each ticket swaps one of these for the real module.
- */
-function notPorted(name: string): Command {
-  return async () => {
-    error(`${name} is not in the Node CLI yet; run scripts/nexus ${name}.`);
-    return 1;
-  };
-}
-
 const COMMANDS: ReadonlyMap<string, Entry> = new Map<string, Entry>([
   ['bootstrap', { run: bootstrap, takesArguments: false }],
   ['setup', { run: setup, takesArguments: false }],
@@ -50,7 +39,7 @@ const COMMANDS: ReadonlyMap<string, Entry> = new Map<string, Entry>([
   ['list', { run: list, takesArguments: true }],
   ['check', { run: check, takesArguments: true }],
   ['link', { run: link, takesArguments: false }],
-  ['global', { run: notPorted('global'), takesArguments: true }],
+  ['global', { run: global, takesArguments: true }],
   ['help', { run: help, takesArguments: false }],
   ['-h', { run: help, takesArguments: false }],
   ['--help', { run: help, takesArguments: false }],

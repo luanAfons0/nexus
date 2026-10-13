@@ -88,18 +88,3 @@ test('below Node 24 the CLI refuses with one sentence that names the version it 
 });
 
 // Each ticket of the port takes its command out of this list as it lands.
-test('a command not yet in the Node CLI says so and exits 1', () => {
-  const home = newHome('not-ported');
-  const commands: readonly (readonly string[])[] = [
-    ['global'],
-  ];
-  for (const args of commands) {
-    const run = runNexus(home, args);
-    assert.equal(run.status, 1, args[0]);
-    assert.equal(run.stdout, '', args[0]);
-    assert.equal(
-      run.stderr,
-      `nexus: error: ${args[0]} is not in the Node CLI yet; run scripts/nexus ${args[0]}.\n`,
-    );
-  }
-});
