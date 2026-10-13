@@ -8,9 +8,8 @@
  * the Bash CLI, and the bytes are compared, because the Bash CLI is the
  * specification.
  *
- * A case that ends in a link skips on Windows until Link has junctions and
- * Managed Copies (#76). Every refusal before the link runs on Windows too,
- * and there the fake is found as `npx.cmd`.
+ * Every case but the Bash comparison runs on Windows too, where the fake is
+ * found as `npx.cmd` and a link is a junction.
  */
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -26,7 +25,6 @@ import {
 import { fakeCalls, installFake, runNexus } from './helpers/nexus.ts';
 
 const WINDOWS = process.platform === 'win32';
-const UNTIL_JUNCTIONS = WINDOWS && 'link refuses on Windows until it has junctions (#76)';
 
 /** The arguments `npx` gets for `update alpha`. */
 const UPDATE_ALPHA = ['--yes', 'skills', 'update', 'alpha', '--global', '--yes'];
@@ -57,7 +55,6 @@ function lockOrNone(home: string): Buffer | undefined {
 
 test(
   'update runs npx skills update, publishes the Upstream Lock, links, and says both hashes',
-  { skip: UNTIL_JUNCTIONS },
   () => {
     const home = updateHome('update-happy');
     const canonical = join(home, '.agents', 'skills', 'alpha');

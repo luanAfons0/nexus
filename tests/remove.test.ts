@@ -8,28 +8,27 @@
  * the Bash CLI, and the bytes are compared, because the Bash CLI is the
  * specification.
  *
- * A home starts reconciled by a real `nexus link`, and a case that ends in a
- * link skips on Windows until Link has junctions and Managed Copies (#76).
- * Until then a Windows home starts unlinked: every refusal before the link
- * runs there too, and there the fake is found as `npx.cmd`.
+ * A home starts reconciled by a real `nexus link`. Every case but the Bash
+ * comparison runs on Windows too, where the fake is found as `npx.cmd` and a
+ * link is a junction.
  */
 import assert from 'node:assert/strict';
-import { mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { customHome, snapshotTree, writeLock, writeSkill } from './helpers/homes.ts';
 import {
   agentTrees,
+  assertLinkText,
   assertLinkTo,
   isAbsent,
-  linkText,
+  makeLink,
   runBashWithFakes,
   withoutToolNoise,
 } from './helpers/links.ts';
 import { fakeCalls, installFake, runNexus } from './helpers/nexus.ts';
 
 const WINDOWS = process.platform === 'win32';
-const UNTIL_JUNCTIONS = WINDOWS && 'link refuses on Windows until it has junctions (#76)';
 
 /** A home with `names` installed in both locks and the remove fake first on its PATH. */
 function removeHome(name: string, names: readonly string[]): string {
@@ -50,14 +49,9 @@ function installedHome(name: string): string {
   const home = removeHome(name, ['alpha', 'beta']);
   mkdirSync(join(home, '.claude', 'skills', 'unrelated'));
   writeFileSync(join(home, '.claude', 'skills', 'unrelated', 'marker'), 'preserve\n');
-  // A junction on Windows, which needs no privilege; it holds the absolute form.
-  const external = join(home, '.codex', 'skills', 'external');
-  if (WINDOWS) symlinkSync(resolve('/external/target'), external, 'junction');
-  else symlinkSync('/external/target', external);
-  if (!UNTIL_JUNCTIONS) {
-    const link = runNexus(home, ['link']);
-    assert.equal(link.status, 0, link.stderr);
-  }
+  makeLink('/external/target', join(home, '.codex', 'skills', 'external'));
+  const link = runNexus(home, ['link']);
+  assert.equal(link.status, 0, link.stderr);
   return home;
 }
 
@@ -80,7 +74,6 @@ function upstreamLock(home: string): Buffer {
 
 test(
   'remove runs npx skills remove, publishes the lock without the skill, and unlinks it alone',
-  { skip: UNTIL_JUNCTIONS },
   () => {
     const home = installedHome('remove-happy');
     const run = runNexus(home, ['remove', 'alpha'], { env: { XDG_STATE_HOME: 'state' } });
@@ -111,7 +104,7 @@ test(
       readFileSync(join(home, '.claude', 'skills', 'unrelated', 'marker'), 'utf8'),
       'preserve\n',
     );
-    assert.equal(linkText(join(home, '.codex', 'skills', 'external')), '/external/target');
+    assertLinkText(join(home, '.codex', 'skills', 'external'), '/external/target');
     assert.deepEqual(scratch(home), []);
   },
 );
@@ -153,7 +146,6 @@ test('remove refuses a bad, custom or uninstalled name before npx, and keeps the
 
 test(
   'remove of the last Installed Skill Publishes a lock that selects no skills',
-  { skip: UNTIL_JUNCTIONS },
   () => {
     const home = removeHome('remove-last', ['alpha']);
     assert.equal(runNexus(home, ['link']).status, 0);
@@ -181,11 +173,9 @@ test('a failed npx remove keeps the Nexus Lock and the links, and exits with its
   assert.equal(run.stderr, 'nexus: error: upstream skill removal failed (status 42)\n');
   assert.deepEqual(nexusLock(home), before);
   assert.equal(agentTrees(home), trees);
-  if (!UNTIL_JUNCTIONS) {
-    const canonical = join(home, '.agents', 'skills', 'alpha');
-    assertLinkTo(join(home, '.claude', 'skills', 'alpha'), canonical);
-    assertLinkTo(join(home, '.codex', 'skills', 'alpha'), canonical);
-  }
+  const canonical = join(home, '.agents', 'skills', 'alpha');
+  assertLinkTo(join(home, '.claude', 'skills', 'alpha'), canonical);
+  assertLinkTo(join(home, '.codex', 'skills', 'alpha'), canonical);
 });
 
 test('an Upstream Lock that still names the skill is not Published, and no link moves', () => {
@@ -206,7 +196,6 @@ test('an Upstream Lock that still names the skill is not Published, and no link 
 
 test(
   'a canonical directory upstream left behind is named and kept',
-  { skip: UNTIL_JUNCTIONS },
   () => {
     const home = installedHome('remove-untracked');
     const run = runNexus(home, ['remove', 'alpha'], {
