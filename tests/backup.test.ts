@@ -12,8 +12,9 @@
  * target or hard-link group, needs a change made in the middle of a Setup:
  * those are fault cases, and wait for #82.
  *
- * On Windows Setup refuses until Link has junctions and Managed Copies
- * (#76), and these cases skip.
+ * On Windows a copy's time is exact to ten microseconds, and a home has no
+ * FIFO, no newline in a link and no name that is not UTF-8, so those parts
+ * run on Linux and macOS alone.
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -31,12 +32,10 @@ import {
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { snapshotTree, writeLock } from './helpers/homes.ts';
-import { isAbsent } from './helpers/links.ts';
+import { isAbsent, makeLink, WINDOWS } from './helpers/links.ts';
 import { newHome, runNexus } from './helpers/nexus.ts';
 import { assertSetupSameAsBash, runSetup, setupResidue } from './helpers/setup.ts';
 
-const WINDOWS = process.platform === 'win32';
-const ON_WINDOWS = WINDOWS && 'Setup links through junctions and Managed Copies, which is #76';
 const BASH_PARITY = WINDOWS && 'the Bash CLI runs on Linux alone';
 
 /** The precision a copy's time is written to: one microsecond, ten on Windows. */
@@ -44,6 +43,11 @@ const TIME_UNIT = WINDOWS ? 10_000n : 1_000n;
 
 /** A file name that is not UTF-8, as `backup_manifest_test.py` makes it. */
 const NOT_UTF8 = Buffer.from([0x6e, 0x6f, 0x6e, 0x75, 0x74, 0x66, 0x38, 0x5f, 0xff]);
+
+/** A plain path as Python's `repr` writes it: in quotes, each backslash doubled. */
+function pythonRepr(path: string): string {
+  return `'${path.replaceAll('\\', '\\\\')}'`;
+}
 
 /** A path under `dir` named by bytes. */
 function bytePath(dir: string, name: Buffer): Buffer {
@@ -77,7 +81,7 @@ function fixtureHome(home: string): void {
   }
 }
 
-test('the Backup keeps hidden files, hard links, modes, sub-second times and symlink bytes', { skip: ON_WINDOWS }, () => {
+test('the Backup keeps hidden files, hard links, modes, sub-second times and symlink bytes', () => {
   const home = newHome('backup_fidelity');
   fixtureHome(home);
   const claude = join(home, '.claude');
@@ -141,14 +145,14 @@ test('a FIFO in an Agent Home refuses setup with the manifest sentence and chang
   assert.deepEqual(setupResidue(home), []);
 });
 
-test('an Agent Home that is a file or a symlink refuses setup and changes nothing', { skip: ON_WINDOWS }, () => {
+test('an Agent Home that is a file or a symlink refuses setup and changes nothing', () => {
   const kinds: readonly (readonly [string, (path: string, home: string) => void])[] = [
     ['file', (path) => writeFileSync(path, 'not a directory\n')],
     [
       'symlink',
       (path, home) => {
         mkdirSync(join(home, 'real-claude'));
-        symlinkSync('real-claude', path);
+        makeLink('real-claude', path);
       },
     ],
   ];
@@ -162,7 +166,7 @@ test('an Agent Home that is a file or a symlink refuses setup and changes nothin
     assert.equal(run.status, 1, kind);
     assert.equal(
       run.stderr,
-      `backup manifest: agent root is not a physical directory: '${claude}'\n` +
+      `backup manifest: agent root is not a physical directory: ${pythonRepr(claude)}\n` +
         'nexus: error: cannot create complete agent backups\n',
       kind,
     );

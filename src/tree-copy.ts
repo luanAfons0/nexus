@@ -14,10 +14,12 @@
  * takes cannot carry it into the next unit. The manifest compares a copy at
  * that same precision; whatever this copier gets wrong, it refuses.
  *
- * On Windows a directory symlink with an absolute target, such as the
- * junction a Managed Link is there, is copied as a junction, which needs no
- * privilege; any other symlink needs the privilege a symlink needs there,
- * and its copy fails loudly without it. Windows has no owner to copy.
+ * On Windows Node reads a junction and a symlink alike. A link with an
+ * absolute target that reaches a directory or nothing, which is what a
+ * junction holds (a Managed Link there is one), is copied as a junction,
+ * which needs no privilege; any other link needs the privilege a symlink
+ * needs there, and its copy fails loudly without it. The manifest compares
+ * the target text, not the kind of link. Windows has no owner to copy.
  */
 import {
   chmodSync,
@@ -162,14 +164,14 @@ function copySymlink(from: Buffer, to: Buffer): void {
     return;
   }
   const text = target.toString();
-  let directory = false;
+  let reached: 'directory' | 'file' | 'nothing';
   try {
-    directory = statSync(from).isDirectory();
+    reached = statSync(from).isDirectory() ? 'directory' : 'file';
   } catch {
-    directory = false;
+    reached = 'nothing';
   }
-  if (directory && isAbsolute(text)) symlinkSync(text, to, 'junction');
-  else symlinkSync(text, to, directory ? 'dir' : 'file');
+  if (isAbsolute(text) && reached !== 'file') symlinkSync(text, to, 'junction');
+  else symlinkSync(text, to, reached === 'directory' ? 'dir' : 'file');
 }
 
 /** How one entry's metadata is copied. */

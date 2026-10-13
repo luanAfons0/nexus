@@ -10,9 +10,10 @@
  * run through the Bash CLI, and the bytes and the trees are compared,
  * because the Bash CLI is the specification.
  *
- * On Windows Setup ends with Link, which needs junctions and Managed Copies
- * (#76); until then it refuses before it changes anything, and these cases
- * skip.
+ * On Windows a home's links are junctions, as `makeLink` makes them, a
+ * Managed Link is a junction, and an Instruction Path a Managed Copy (ADR
+ * 0010). A symlink inside a skill needs a privilege there, so the nested
+ * symlink cases run on Linux and macOS alone.
  */
 import assert from 'node:assert/strict';
 import {
@@ -29,13 +30,20 @@ import {
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { snapshotTree, writeLock, writeSkill } from './helpers/homes.ts';
-import { assertLinkTo, isAbsent, linkText } from './helpers/links.ts';
+import {
+  assertLinkText,
+  assertLinkTo,
+  assertManagedCopy,
+  isAbsent,
+  linkText,
+  makeLink,
+  WINDOWS,
+} from './helpers/links.ts';
 import { newHome, runNexus, testRoot } from './helpers/nexus.ts';
 import { assertSetupSameAsBash, runSetup, setupResidue } from './helpers/setup.ts';
 
-const WINDOWS = process.platform === 'win32';
-const ON_WINDOWS = WINDOWS && 'Setup links through junctions and Managed Copies, which is #76';
 const BASH_PARITY = WINDOWS && 'the Bash CLI runs on Linux alone';
+const NESTED = WINDOWS && 'a symlink inside a skill needs a privilege on Windows';
 
 /** Every tree of a home Setup may touch, as one snapshot. */
 function homeTrees(home: string): string {
@@ -74,16 +82,16 @@ function happyHome(home: string): void {
   mkdirSync(join(home, '.codex', 'skills', '.system'), { recursive: true });
   write(join(home, '.claude', '.hidden'), 'hidden\n');
   write(join(home, '.claude', 'run-me'), 'executable\n');
-  symlinkSync('/ordinary/link', join(home, '.claude', 'ordinary-link'));
+  makeLink('/ordinary/link', join(home, '.claude', 'ordinary-link'));
   write(join(home, '.claude', 'skills', 'alpha', 'SKILL.md'), 'alpha-content\n');
   write(join(home, '.claude', 'skills', 'beta'), 'replace-file\n');
-  symlinkSync('/external/beta', join(home, '.codex', 'skills', 'beta'));
+  makeLink('/external/beta', join(home, '.codex', 'skills', 'beta'));
   write(join(home, '.codex', 'state'), 'state\n');
   write(join(home, '.codex', 'skills', '.system', 'marker'), 'system\n');
   mkdirSync(join(home, '.agents', 'skills'), { recursive: true });
-  symlinkSync('../../.claude/skills/alpha', join(home, '.agents', 'skills', 'alpha'));
+  makeLink('../../.claude/skills/alpha', join(home, '.agents', 'skills', 'alpha'));
   writeSkill(join(home, '.agents', 'skills'), 'beta');
-  symlinkSync('/external/unmanaged', join(home, '.agents', 'skills', 'unmanaged'));
+  makeLink('/external/unmanaged', join(home, '.agents', 'skills', 'unmanaged'));
 }
 
 /** Existing Backups beside a broken lock: the Preflight refuses first. */
@@ -118,14 +126,14 @@ function brokenCanonicalHome(home: string): void {
   mkdirSync(join(home, '.agents', 'skills'), { recursive: true });
   mkdirSync(join(home, '.claude', 'skills', 'alpha'), { recursive: true });
   mkdirSync(join(home, '.codex', 'skills', 'alpha'), { recursive: true });
-  symlinkSync('/missing/alpha', join(home, '.agents', 'skills', 'alpha'));
+  makeLink('/missing/alpha', join(home, '.agents', 'skills', 'alpha'));
 }
 
 /** `~/.agents` is a symlink to Claude's home. */
 function symlinkedAgentsHome(home: string): void {
   mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
   mkdirSync(join(home, '.agents-real'), { recursive: true });
-  symlinkSync('.claude', join(home, '.agents'));
+  makeLink('.claude', join(home, '.agents'));
   writeLock(join(home, '.claude', '.skill-lock.json'), ['alpha']);
 }
 
@@ -134,22 +142,22 @@ function symlinkedSkillFileHome(home: string): void {
   writeLock(join(home, '.agents', '.skill-lock.json'), ['alpha']);
   mkdirSync(join(home, '.agents', 'skills', 'alpha'), { recursive: true });
   write(join(home, '.claude', 'skills', 'alpha', 'SKILL.md'), 'live\n');
-  symlinkSync(
+  makeLink(
     '../../../.claude/skills/alpha/SKILL.md',
     join(home, '.agents', 'skills', 'alpha', 'SKILL.md'),
   );
 }
 
-/** A Canonical Root symlink to a skill that holds `link`, made by `makeLink`. */
-function nestedHome(makeLink: (skill: string, home: string) => void): (home: string) => void {
+/** A Canonical Root symlink to a skill whose own links `addLinks` makes. */
+function nestedHome(addLinks: (skill: string, home: string) => void): (home: string) => void {
   return (home) => {
     writeLock(join(home, '.agents', '.skill-lock.json'), ['alpha']);
     const skill = join(home, '.claude', 'skills', 'alpha');
     write(join(skill, 'SKILL.md'), 'alpha\n');
     mkdirSync(join(home, '.agents', 'skills'), { recursive: true });
     mkdirSync(join(home, '.codex', 'skills'), { recursive: true });
-    makeLink(skill, home);
-    symlinkSync('../../.claude/skills/alpha', join(home, '.agents', 'skills', 'alpha'));
+    addLinks(skill, home);
+    makeLink('../../.claude/skills/alpha', join(home, '.agents', 'skills', 'alpha'));
   };
 }
 
@@ -168,7 +176,7 @@ const nestedInternal = nestedHome((skill) => {
   symlinkSync('target', join(skill, 'nested'));
 });
 
-test('setup moves an Agent Context under Nexus and keeps every Foreign Entry', { skip: ON_WINDOWS }, () => {
+test('setup moves an Agent Context under Nexus and keeps every Foreign Entry', () => {
   const { home, run } = runSetup('setup_happy', happyHome);
   assert.equal(run.status, 0, run.stderr);
   const source = join(home, '.agents', '.skill-lock.json');
@@ -176,7 +184,7 @@ test('setup moves an Agent Context under Nexus and keeps every Foreign Entry', {
   assert.ok(statSync(join(home, '.claude')).isDirectory());
   assert.ok(statSync(join(home, '.codex')).isDirectory());
   assert.equal(readFileSync(join(home, '.claude-backup', '.hidden'), 'utf8'), 'hidden\n');
-  assert.equal(linkText(join(home, '.claude-backup', 'ordinary-link')), '/ordinary/link');
+  assertLinkText(join(home, '.claude-backup', 'ordinary-link'), '/ordinary/link');
   assert.ok(statSync(join(home, '.claude-backup', 'skills', 'alpha', 'SKILL.md')).isFile());
   assert.ok(statSync(join(home, '.codex-backup', 'skills', '.system', 'marker')).isFile());
   // The symlinked Installed Skill is now a physical copy in the Canonical Root.
@@ -189,7 +197,7 @@ test('setup moves an Agent Context under Nexus and keeps every Foreign Entry', {
   // The Foreign Entries Setup replaced are kept in the Backups.
   assert.ok(lstatSync(join(home, '.claude-backup', 'skills', 'beta')).isFile());
   assert.ok(lstatSync(join(home, '.codex-backup', 'skills', 'beta')).isSymbolicLink());
-  assert.equal(linkText(join(canonical, 'unmanaged')), '/external/unmanaged');
+  assertLinkText(join(canonical, 'unmanaged'), '/external/unmanaged');
   assert.ok(statSync(join(home, '.codex', 'skills', '.system', 'marker')).isFile());
   assert.ok(readFileSync(source).equals(readFileSync(join(home, '.nexus', 'skill-lock.json'))));
   const output = run.stdout + run.stderr;
@@ -201,7 +209,7 @@ test('setup moves an Agent Context under Nexus and keeps every Foreign Entry', {
   assert.ok(isAbsent(join(home, '.nexus', '.nexus-setup.lock')));
 });
 
-test('a second setup says it is already initialized and changes nothing', { skip: ON_WINDOWS }, () => {
+test('a second setup says it is already initialized and changes nothing', () => {
   const { home, run } = runSetup('setup_idempotent', happyHome);
   assert.equal(run.status, 0, run.stderr);
   const before = homeTrees(home);
@@ -215,7 +223,7 @@ test('a second setup says it is already initialized and changes nothing', { skip
   assert.equal(homeTrees(home), before);
 });
 
-test('an existing Backup refuses setup before anything changes, naming both', { skip: ON_WINDOWS }, () => {
+test('an existing Backup refuses setup before anything changes, naming both', () => {
   const home = newHome('setup_preflight');
   existingBackupsHome(home);
   const before = snapshotTree(home);
@@ -231,7 +239,7 @@ test('an existing Backup refuses setup before anything changes, naming both', { 
   assert.deepEqual(setupResidue(home), []);
 });
 
-test('a setup mutex in the Nexus home refuses another setup and changes nothing', { skip: ON_WINDOWS }, () => {
+test('a setup mutex in the Nexus home refuses another setup and changes nothing', () => {
   const home = newHome('setup_mutex');
   writeLock(join(home, '.agents', '.skill-lock.json'), ['alpha']);
   mkdirSync(join(home, '.nexus', '.nexus-setup.lock'));
@@ -248,7 +256,7 @@ test('a setup mutex in the Nexus home refuses another setup and changes nothing'
   assert.ok(isAbsent(join(home, '.nexus', 'skill-lock.json')));
 });
 
-test('lock candidates that say the same thing publish the first, byte for byte', { skip: ON_WINDOWS }, () => {
+test('lock candidates that say the same thing publish the first, byte for byte', () => {
   const { home, run } = runSetup('setup_candidates', (home) => {
     const one = join(home, '.agents', '.skill-lock.json');
     writeLock(one, ['alpha']);
@@ -263,7 +271,7 @@ test('lock candidates that say the same thing publish the first, byte for byte',
   assert.deepEqual(setupResidue(home, ['.nexus-lock-candidates.']), []);
 });
 
-test('conflicting lock candidates refuse setup, naming each, and change nothing', { skip: ON_WINDOWS }, () => {
+test('conflicting lock candidates refuse setup, naming each, and change nothing', () => {
   const home = newHome('setup_conflicts');
   conflictingHome(home);
   const before = snapshotTree(home);
@@ -279,7 +287,7 @@ test('conflicting lock candidates refuse setup, naming each, and change nothing'
   assert.deepEqual(setupResidue(home, ['.nexus-lock', '.nexus-setup']), []);
 });
 
-test('an invalid lock candidate refuses setup, naming every invalid one', { skip: ON_WINDOWS }, () => {
+test('an invalid lock candidate refuses setup, naming every invalid one', () => {
   const home = newHome('setup_invalid_candidate');
   invalidCandidateHome(home);
   const before = snapshotTree(home);
@@ -297,7 +305,7 @@ test('an invalid lock candidate refuses setup, naming every invalid one', { skip
   assert.deepEqual(setupResidue(home, ['.nexus-lock', '.nexus-setup']), []);
 });
 
-test('no lock candidate anywhere refuses setup, naming every place it looked', { skip: ON_WINDOWS }, () => {
+test('no lock candidate anywhere refuses setup, naming every place it looked', () => {
   const home = newHome('setup_no_candidate');
   noCandidateHome(home);
   const run = runNexus(home, ['setup']);
@@ -312,7 +320,7 @@ test('no lock candidate anywhere refuses setup, naming every place it looked', {
   assert.deepEqual(setupResidue(home, ['.nexus-lock', '.nexus-setup']), []);
 });
 
-test('a lock that names a Control Skill refuses setup and changes nothing', { skip: ON_WINDOWS }, () => {
+test('a lock that names a Control Skill refuses setup and changes nothing', () => {
   for (const reserved of ['nexus-setup', 'nexus-help', 'nexus-update', 'nexus-remove', 'nexus']) {
     const home = newHome(`setup_reserved_control_${reserved}`);
     writeLock(join(home, '.agents', '.skill-lock.json'), [reserved]);
@@ -328,7 +336,7 @@ test('a lock that names a Control Skill refuses setup and changes nothing', { sk
   }
 });
 
-test('a broken Canonical Root symlink fails after publication and keeps the lock and both Backups', { skip: ON_WINDOWS }, () => {
+test('a broken Canonical Root symlink fails after publication and keeps the lock and both Backups', () => {
   const { home, run } = runSetup('setup_broken_canonical', brokenCanonicalHome);
   assert.equal(run.status, 1);
   assert.match(run.stderr, /broken symlink/);
@@ -342,7 +350,7 @@ test('a broken Canonical Root symlink fails after publication and keeps the lock
   assert.deepEqual(setupResidue(home), []);
 });
 
-test('a symlinked ~/.agents refuses setup before anything changes', { skip: ON_WINDOWS }, () => {
+test('a symlinked ~/.agents refuses setup before anything changes', () => {
   const home = newHome('setup_canonical_root_symlink');
   symlinkedAgentsHome(home);
   const before = snapshotTree(home);
@@ -354,7 +362,7 @@ test('a symlinked ~/.agents refuses setup before anything changes', { skip: ON_W
   assert.ok(isAbsent(join(home, '.nexus', 'skill-lock.json')));
 });
 
-test('a Canonical Root SKILL.md that is a symlink fails after publication and keeps the agents', { skip: ON_WINDOWS }, () => {
+test('a Canonical Root SKILL.md that is a symlink fails after publication and keeps the agents', () => {
   const { home, run } = runSetup('setup_skill_md_symlink', symlinkedSkillFileHome);
   assert.equal(run.status, 1);
   assert.match(run.stderr, /physical SKILL\.md/);
@@ -364,7 +372,7 @@ test('a Canonical Root SKILL.md that is a symlink fails after publication and ke
   assert.ok(lstatSync(join(home, '.claude', 'skills', 'alpha')).isDirectory());
 });
 
-test('a nested symlink that escapes, breaks or loops keeps the Canonical Root symlink', { skip: ON_WINDOWS }, () => {
+test('a nested symlink that escapes, breaks or loops keeps the Canonical Root symlink', { skip: NESTED }, () => {
   const cases = [
     ['nested_escape', nestedEscape],
     ['nested_broken', nestedBroken],
@@ -383,7 +391,7 @@ test('a nested symlink that escapes, breaks or loops keeps the Canonical Root sy
   assert.equal(readFileSync(join(testRoot(), 'nested-secret'), 'utf8'), 'secret\n');
 });
 
-test('a nested symlink inside the skill is copied as the file it reaches', { skip: ON_WINDOWS }, () => {
+test('a nested symlink inside the skill is copied as the file it reaches', { skip: NESTED }, () => {
   const { home, run } = runSetup('nested_internal', nestedInternal);
   assert.equal(run.status, 0, run.stderr);
   const canonical = join(home, '.agents', 'skills', 'alpha');
@@ -392,7 +400,7 @@ test('a nested symlink inside the skill is copied as the file it reaches', { ski
   assert.equal(readFileSync(join(canonical, 'nested'), 'utf8'), 'nested\n');
 });
 
-test('a TMPDIR with a trailing slash leaves no canonical scan behind', { skip: ON_WINDOWS }, () => {
+test('a TMPDIR with a trailing slash leaves no canonical scan behind', () => {
   const home = newHome('canonical_scan_trailing_tmpdir');
   mkdirSync(join(home, 'tmp'));
   mkdirSync(join(home, '.claude'));
@@ -404,7 +412,7 @@ test('a TMPDIR with a trailing slash leaves no canonical scan behind', { skip: O
   assert.deepEqual(readdirSync(join(home, 'tmp')), []);
 });
 
-test('setup ends with both Instruction Paths linked to GLOBAL.md', { skip: ON_WINDOWS }, () => {
+test('setup ends with both Instruction Paths linked to GLOBAL.md', () => {
   const { home, run } = runSetup('global_setup', (home) => {
     for (const dir of ['.claude', '.codex', '.custom-skills', '.agents/skills']) {
       mkdirSync(join(home, dir), { recursive: true });
@@ -414,14 +422,19 @@ test('setup ends with both Instruction Paths linked to GLOBAL.md', { skip: ON_WI
     writeFileSync(join(home, '.custom-skills', 'GLOBAL.md'), 'rule one\n');
   });
   assert.equal(run.status, 0, run.stderr);
+  const owner = join(home, '.custom-skills', 'GLOBAL.md');
   for (const path of [join(home, '.claude', 'CLAUDE.md'), join(home, '.codex', 'AGENTS.md')]) {
-    assertLinkTo(path, join(home, '.custom-skills', 'GLOBAL.md'));
-    assert.equal(linkText(path), '../.custom-skills/GLOBAL.md');
+    if (WINDOWS) {
+      assertManagedCopy(home, path, owner);
+    } else {
+      assertLinkTo(path, owner);
+      assert.equal(linkText(path), '../.custom-skills/GLOBAL.md');
+    }
   }
   assertLinkTo(join(home, '.claude', 'skills', 'alpha'), join(home, '.agents', 'skills', 'alpha'));
 });
 
-test('setup replaces a Foreign Entry at a skill path and keeps an unrelated recovery container', { skip: ON_WINDOWS }, () => {
+test('setup replaces a Foreign Entry at a skill path and keeps an unrelated recovery container', () => {
   const { home, run } = runSetup('force_directory', (home) => {
     writeLock(join(home, '.agents', '.skill-lock.json'), []);
     const parent = join(home, '.claude', 'skills');
@@ -449,7 +462,7 @@ test('setup replaces a Foreign Entry at a skill path and keeps an unrelated reco
   );
 });
 
-test('a setup that removed its lock cannot run again over its Backups', { skip: ON_WINDOWS }, () => {
+test('a setup that removed its lock cannot run again over its Backups', () => {
   const { home, run } = runSetup('setup_rerun', (home) => {
     writeLock(join(home, '.agents', '.skill-lock.json'), []);
   });
@@ -464,7 +477,7 @@ test('a setup that removed its lock cannot run again over its Backups', { skip: 
   assert.ok(isAbsent(join(home, '.nexus', '.nexus-setup.lock')));
 });
 
-test('setup with absent Agent Homes makes two empty Backups', { skip: ON_WINDOWS }, () => {
+test('setup with absent Agent Homes makes two empty Backups', () => {
   const { home, run } = runSetup('setup_absent_roots', (home) => {
     writeLock(join(home, '.agents', '.skill-lock.json'), []);
   });
@@ -504,22 +517,3 @@ test('setup says the same bytes and leaves the same trees as the Bash CLI', { sk
   for (const [name, build] of homes) assertSetupSameAsBash(name, build);
 });
 
-test(
-  'on Windows setup refuses with one sentence until Link has junctions and Managed Copies',
-  { skip: !WINDOWS && 'the refusal is for Windows alone' },
-  () => {
-    const home = newHome('setup_windows');
-    writeLock(join(home, '.agents', '.skill-lock.json'), []);
-    mkdirSync(join(home, '.claude'));
-    const before = snapshotTree(home);
-    const run = runNexus(home, ['setup']);
-    assert.equal(run.status, 1);
-    assert.equal(run.stdout, '');
-    assert.equal(
-      run.stderr,
-      'nexus: error: setup does not run on Windows yet; run Nexus inside WSL for now\n',
-    );
-    assert.deepEqual(snapshotTree(home), before);
-    assert.ok(!existsSync(join(home, '.nexus', '.nexus-setup.lock')));
-  },
-);
