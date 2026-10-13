@@ -770,12 +770,18 @@ and the home directory it manages comes from `$HOME`.
 git clone https://github.com/luanAfons0/nexus.git
 cd nexus
 bash tests/run.sh
+npm install
+npm run check
 ```
 
-`bash tests/run.sh` is the whole suite and its only entry point. Every test
-builds its own home directory under a temporary root and drives the CLI over
-its command line. The `Check` workflow runs that one command on
-`ubuntu-latest` for every pull request.
+Nexus is being ported to TypeScript on Node 24, and the TypeScript CLI,
+`node src/nexus.js`, grows beside the Bash CLI until the port ends.
+`bash tests/run.sh` is the Bash suite; `npm run check` checks the types and
+runs the Node suite with `node --test`. Every test builds its own home
+directory under a temporary root and drives the CLI over its command line.
+The `Check` workflow runs the Bash suite on `ubuntu-latest`, and
+`npm run check` on `ubuntu-latest` and `windows-latest`, for every pull
+request.
 
 To try a change by hand, never point it at your own agent context. Use the
 sandbox home:

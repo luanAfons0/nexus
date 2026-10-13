@@ -4,3 +4,4 @@ skill-check.json
 .scratch/
 docs/research/
 *.bak
+node_modules/

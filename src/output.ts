@@ -1,0 +1,16 @@
+/**
+ * The two kinds of line the CLI says, in the form the Bash CLI says them:
+ * `nexus: <message>` on stdout and `nexus: error: <message>` on stderr.
+ *
+ * An error is a sentence a person can act on, and names the path it is about.
+ */
+
+/** Say one line of progress on stdout. */
+export function info(message: string): void {
+  process.stdout.write(`nexus: ${message}\n`);
+}
+
+/** Say one error on stderr. */
+export function error(message: string): void {
+  process.stderr.write(`nexus: error: ${message}\n`);
+}

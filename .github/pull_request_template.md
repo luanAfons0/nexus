@@ -24,6 +24,7 @@ is quietly overridden is worse than one that is argued with.
 ## Checks
 
 - [ ] `bash tests/run.sh` passes locally, and the last line says so.
+- [ ] `npm run check` passes locally.
 - [ ] New behaviour has a test, in `tests/cases/<subcommand>.sh` or next to
       its relatives in `tests/run.sh`.
 - [ ] I tried it by hand with `scripts/dev-home`, not against my real Agent

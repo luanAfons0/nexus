@@ -1,0 +1,5 @@
+# The repository is written with LF endings, and a Windows checkout keeps them,
+# so that a test that compares bytes reads the same bytes on every runner. A
+# .cmd file is the one exception: cmd.exe reads a batch file by CRLF lines.
+* text=auto eol=lf
+*.cmd text eol=crlf

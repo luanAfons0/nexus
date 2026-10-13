@@ -3,8 +3,9 @@
 Nexus is the context manager for Claude and Codex. It gives both agents one
 owner for their Agent Context: the skills of all three kinds and the Global
 Instructions (`~/.custom-skills/GLOBAL.md`), which it links into each agent's
-Instruction Path. See `README.md` for behavior, safety contract, and recovery. Run `bash tests/run.sh` before a
-commit.
+Instruction Path. See `README.md` for behavior, safety contract, and recovery. Run `bash tests/run.sh` and
+`npm run check` before a commit. The TypeScript CLI on Node 24 (`node
+src/nexus.js`) grows beside the Bash CLI until the port of #72 ends.
 
 Try a change with `scripts/dev-home <nexus arguments>`, which runs the CLI
 against a sandbox home under `.scratch/`. Never drive a half-finished change
