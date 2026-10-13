@@ -114,37 +114,45 @@ test('the Backup keeps hidden files, hard links, modes, sub-second times and sym
   assert.deepEqual(setupResidue(home), []);
 });
 
-test('the Backup keeps a symlink whose target ends in a newline', { skip: WINDOWS && 'Windows cannot hold a newline in a link target' }, () => {
-  const { home, run } = runSetup('backup_trailing_newline_link', (home) => {
+test(
+  'the Backup keeps a symlink whose target ends in a newline',
+  { skip: WINDOWS && 'Windows cannot hold a newline in a link target' },
+  () => {
+    const { home, run } = runSetup('backup_trailing_newline_link', (home) => {
+      writeLock(join(home, '.agents', '.skill-lock.json'), []);
+      mkdirSync(join(home, '.claude'));
+      symlinkSync('literal-target\n', join(home, '.claude', 'trailing-newline-link'));
+    });
+    assert.equal(run.status, 0, run.stderr);
+    const copy = readlinkSync(join(home, '.claude-backup', 'trailing-newline-link'));
+    assert.equal(copy, 'literal-target\n');
+  },
+);
+
+test(
+  'a FIFO in an Agent Home refuses setup with the manifest sentence and changes nothing',
+  { skip: WINDOWS && 'Windows has no FIFO' },
+  () => {
+    const home = newHome('backup_fifo');
     writeLock(join(home, '.agents', '.skill-lock.json'), []);
     mkdirSync(join(home, '.claude'));
-    symlinkSync('literal-target\n', join(home, '.claude', 'trailing-newline-link'));
-  });
-  assert.equal(run.status, 0, run.stderr);
-  const copy = readlinkSync(join(home, '.claude-backup', 'trailing-newline-link'));
-  assert.equal(copy, 'literal-target\n');
-});
-
-test('a FIFO in an Agent Home refuses setup with the manifest sentence and changes nothing', { skip: WINDOWS && 'Windows has no FIFO' }, () => {
-  const home = newHome('backup_fifo');
-  writeLock(join(home, '.agents', '.skill-lock.json'), []);
-  mkdirSync(join(home, '.claude'));
-  writeFileSync(join(home, '.claude', 'marker'), 'live\n');
-  const fifo = join(home, '.claude', 'unsupported-fifo');
-  assert.equal(spawnSync('mkfifo', [fifo]).status, 0);
-  const before = snapshotTree(home);
-  const run = runNexus(home, ['setup']);
-  assert.equal(run.status, 1);
-  assert.equal(
-    run.stderr,
-    `backup manifest: unsupported agent backup entry (device/FIFO/socket): '${fifo}'\n` +
-      'nexus: error: cannot create complete agent backups\n',
-  );
-  assert.deepEqual(snapshotTree(home), before);
-  assert.ok(isAbsent(join(home, '.claude-backup')));
-  assert.ok(isAbsent(join(home, '.nexus', 'skill-lock.json')));
-  assert.deepEqual(setupResidue(home), []);
-});
+    writeFileSync(join(home, '.claude', 'marker'), 'live\n');
+    const fifo = join(home, '.claude', 'unsupported-fifo');
+    assert.equal(spawnSync('mkfifo', [fifo]).status, 0);
+    const before = snapshotTree(home);
+    const run = runNexus(home, ['setup']);
+    assert.equal(run.status, 1);
+    assert.equal(
+      run.stderr,
+      `backup manifest: unsupported agent backup entry (device/FIFO/socket): '${fifo}'\n` +
+        'nexus: error: cannot create complete agent backups\n',
+    );
+    assert.deepEqual(snapshotTree(home), before);
+    assert.ok(isAbsent(join(home, '.claude-backup')));
+    assert.ok(isAbsent(join(home, '.nexus', 'skill-lock.json')));
+    assert.deepEqual(setupResidue(home), []);
+  },
+);
 
 test('an Agent Home that is a file or a symlink refuses setup and changes nothing', () => {
   const kinds: readonly (readonly [string, (path: string, home: string) => void])[] = [

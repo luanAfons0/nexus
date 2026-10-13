@@ -83,8 +83,10 @@ Where a new test goes:
   `NEXUS_FAULT=<name>` only with `NEXUS_TEST_MODE=1` and the test-home marker
   file `.nexus-test-home` in the home, so a fault can never reach a person's
   Agent Context. Each point is one `if (fault(...))` line at its site, in the
-  terms of `src/fault.ts`. Its case belongs in `tests/faults.test.ts`,
-  `tests/setup-faults.test.ts` or `tests/interruption.test.ts`.
+  terms of `src/fault.ts`. What a point changes in a tree, and the names of
+  the files it touches, go in `src/fault-changes.ts`, never at the site. Its
+  case belongs in `tests/faults.test.ts`, `tests/setup-faults.test.ts` or
+  `tests/interruption.test.ts`.
 
 A test name is a sentence about behaviour, not about code:
 `'a Foreign Entry at a desired link path is a Collision and is kept'`.

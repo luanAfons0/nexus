@@ -1,6 +1,6 @@
 /**
- * Link and Bootstrap: reconcile both Native Skill Roots and both Instruction
- * Paths into Managed Links to their Owners.
+ * Link and Bootstrap: make both Native Skill Roots and both Instruction Paths
+ * hold the Managed Links to their Owners, and no other Managed Link.
  *
  * Link reads the Nexus Lock and the Custom Root, runs every Preflight before
  * any change, then removes Stale Links, makes or repoints one Managed Link
@@ -12,17 +12,9 @@
  *
  * This module is system-free: what a Managed Link is on disk is the Link
  * primitive's (`link-primitive.ts`). The sentences and their order are the
- * Bash CLI's (`put_link` in `scripts/lib/common.sh`, `scripts/lib/link.sh`).
+ * Bash CLI's (`put_link`, and its link and bootstrap commands).
  */
-import {
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  renameSync,
-  rmdirSync,
-  rmSync,
-  statSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, renameSync, rmdirSync, rmSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type { Command } from './cli.ts';
 import { CONTROL_SKILLS, controlSkillTarget, isControlSkill } from './control-skills.ts';
@@ -33,7 +25,8 @@ import {
   globalInstructionsFault,
   readCustomSkills,
 } from './custom.ts';
-import { fault } from './fault.ts';
+import { reachesDirectory, reachesEntry, reachesFile } from './entries.ts';
+import { fault, seamFailure } from './fault.ts';
 import { globalInstructionsPresent } from './instructions.ts';
 import { type LinkPrimitive, linkPrimitive } from './link-primitive.ts';
 import { readLock, type SnapshotWatch } from './lock.ts';
@@ -52,7 +45,7 @@ type Tally = {
   readonly count: () => number;
 };
 
-/** `nexus link`: reconcile every Managed Link from the lock. */
+/** `nexus link`: Link every Managed Link the Nexus Lock and the Custom Root ask for. */
 export const link: Command = async () => linkAll(readPaths(), false);
 
 /** `nexus bootstrap`: link the Control Skills, and nothing else. */
@@ -66,7 +59,7 @@ export const bootstrap: Command = async () => {
     putLink(primitive, tally, owner, join(paths.codexSkills, name), false);
   }
   if (tally.count() > 0) {
-    process.stderr.write(`nexus: error: bootstrap failed with ${tally.count()} error(s)\n`);
+    error(`bootstrap failed with ${tally.count()} error(s)`);
     return 1;
   }
   info('bootstrap complete: control skills linked');
@@ -74,7 +67,7 @@ export const bootstrap: Command = async () => {
 };
 
 /**
- * Reconcile both Native Skill Roots and both Instruction Paths, and give the
+ * Link both Native Skill Roots and both Instruction Paths, and give the
  * exit code. `force` is Setup's alone: it replaces a Foreign Entry at a
  * desired skill path, keeping it in a recovery container until the new link
  * is verified. Install, Update, Remove and `global edit` call this too.
@@ -100,9 +93,7 @@ export function linkAll(paths: Paths, force: boolean, watch?: SnapshotWatch): nu
   for (const sentence of customCanonicalLinks(paths)) tally.error(sentence);
   for (const sentence of customCollisions(paths, lockNames, custom.names)) tally.error(sentence);
   if (tally.count() > 0) {
-    process.stderr.write(
-      `nexus: error: link failed with ${tally.count()} error(s); no changes were made\n`,
-    );
+    error(`link failed with ${tally.count()} error(s); no changes were made`);
     return 1;
   }
 
@@ -121,7 +112,7 @@ export function linkAll(paths: Paths, force: boolean, watch?: SnapshotWatch): nu
     const owner = skillOwner(paths, customSet, name);
     const claude = join(paths.claudeSkills, name);
     const codex = join(paths.codexSkills, name);
-    if (!isFile(join(owner, 'SKILL.md'))) {
+    if (!reachesFile(join(owner, 'SKILL.md'))) {
       tally.error(`missing skill: ${name} (expected ${owner}/SKILL.md)`);
       removeManaged(primitive, tally, claude, 'missing managed link');
       removeManaged(primitive, tally, codex, 'missing managed link');
@@ -132,7 +123,7 @@ export function linkAll(paths: Paths, force: boolean, watch?: SnapshotWatch): nu
   }
   linkInstructionPaths(paths, primitive, tally);
   if (tally.count() > 0) {
-    process.stderr.write(`nexus: error: link failed with ${tally.count()} error(s)\n`);
+    error(`link failed with ${tally.count()} error(s)`);
     return 1;
   }
   info('link complete: skills reconciled');
@@ -157,7 +148,7 @@ function linkInstructionPaths(paths: Paths, primitive: LinkPrimitive, tally: Tal
   }
   for (const path of [paths.claudeInstructions, paths.codexInstructions]) {
     const home = dirname(path);
-    if (!isDirectory(home)) {
+    if (!reachesDirectory(home)) {
       info(`skipped ${path}: agent home is absent: ${home}`);
       continue;
     }
@@ -187,7 +178,7 @@ function removeStaleLinks(
   dir: string,
   desired: ReadonlySet<string>,
 ): void {
-  if (!isDirectory(dir)) return;
+  if (!reachesDirectory(dir)) return;
   for (const name of readdirSync(dir).sort(byteOrder)) {
     if (name === '.system' || desired.has(name)) continue;
     removeManaged(primitive, tally, join(dir, name), 'stale managed link');
@@ -221,7 +212,7 @@ function putLink(
     tally.error(message);
     return false;
   };
-  if (!exists(owner)) return fail(`missing link target: ${owner}`);
+  if (!reachesEntry(owner)) return fail(`missing link target: ${owner}`);
   const parent = dirname(path);
   try {
     mkdirSync(parent, { recursive: true });
@@ -274,7 +265,7 @@ function replaceForeign(
     return fail(`cannot reserve recovery container for ${path}`);
   }
   if (!isFreshContainer(container, parent)) {
-    if (isDirectory(container)) tryRmdir(container);
+    if (reachesDirectory(container)) tryRmdir(container);
     primitive.discard(staged);
     return fail(`invalid recovery container: ${container}`);
   }
@@ -315,8 +306,8 @@ function replaceForeign(
  * fault points `stage`, `promote` and `restore` fail it.
  */
 function promote(primitive: LinkPrimitive, tally: Tally, staged: string, path: string): boolean {
-  if (fault('stage')) return seamFailure(tally, 'staged link creation failed');
-  if (fault('promote', 'restore')) return seamFailure(tally, 'staged move failed');
+  if (fault('stage')) return seamFailure('staged link creation failed', tally.error);
+  if (fault('promote', 'restore')) return seamFailure('staged move failed', tally.error);
   return primitive.promote(staged, path);
 }
 
@@ -326,15 +317,9 @@ function promote(primitive: LinkPrimitive, tally: Tally, staged: string, path: s
  * fail it.
  */
 function restore(tally: Tally, original: string, path: string): boolean {
-  if (fault('stage')) return seamFailure(tally, 'staged link creation failed');
-  if (fault('restore')) return seamFailure(tally, 'staged move failed');
+  if (fault('stage')) return seamFailure('staged link creation failed', tally.error);
+  if (fault('restore')) return seamFailure('staged move failed', tally.error);
   return move(original, path);
-}
-
-/** Say and count a test seam's failure, as the Bash overrides did, and give false. */
-function seamFailure(tally: Tally, what: string): false {
-  tally.error(`test seam: ${what}`);
-  return false;
 }
 
 /** True when `container` is an empty recovery container made in `parent`. */
@@ -342,12 +327,15 @@ function isFreshContainer(container: string, parent: string): boolean {
   return (
     dirname(container) === parent &&
     basename(container).startsWith(RECOVERY_PREFIX) &&
-    isDirectory(container) &&
+    reachesDirectory(container) &&
     readdirSync(container).length === 0
   );
 }
 
-/** The Owner of a desired skill: the Control Skills' root, the Custom Root, or the Canonical one. */
+/**
+ * The Owner of a desired skill: the Control Skills' root, the Custom Root, or
+ * the Canonical Root.
+ */
 function skillOwner(paths: Paths, customSet: ReadonlySet<string>, name: string): string {
   if (isControlSkill(name)) return controlSkillTarget(paths, name);
   return customSet.has(name) ? join(paths.customRoot, name) : join(paths.canonicalRoot, name);
@@ -382,32 +370,4 @@ function newTally(): Tally {
     },
     count: () => count,
   };
-}
-
-/** True when `path` exists, following a symlink (`-e`). */
-function exists(path: string): boolean {
-  try {
-    statSync(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** True when `path` is a directory, following a symlink (`-d`). */
-function isDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-/** True when `path` is a file, following a symlink (`-f`). */
-function isFile(path: string): boolean {
-  try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
 }

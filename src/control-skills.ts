@@ -3,8 +3,8 @@
  *
  * They ship with Nexus, and their Owner is the Nexus home
  * (`<Nexus home>/skills/<name>`). Their names are reserved: no Installed or
- * Custom Skill may take one. The order is the Bash CLI's (`CONTROL_SKILLS` in
- * `scripts/lib/common.sh`), which Bootstrap links in.
+ * Custom Skill may take one. The order is the Bash CLI's (`CONTROL_SKILLS`),
+ * which Bootstrap links in.
  */
 import { join } from 'node:path';
 import type { Paths } from './paths.ts';

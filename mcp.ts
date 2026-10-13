@@ -38,6 +38,7 @@ import { constants } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { isObject } from './src/json.ts';
 
 /** The Nexus home this file sits in. */
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -273,10 +274,10 @@ function envelopeResult(envelope: Envelope, says?: (envelope: Envelope) => strin
 /** One tool call, as an MCP answer. */
 async function callTool(name: unknown, args: Readonly<Record<string, unknown>>): Promise<Answer> {
   const tool = typeof name === 'string' && Object.hasOwn(TOOLS, name) ? TOOLS[name] : undefined;
-  if (tool === undefined) return refusal(INVALID_PARAMS, `no such tool: ${pyText(name)}`);
+  if (tool === undefined) return refusal(INVALID_PARAMS, `no such tool: ${valueText(name)}`);
   for (const key of tool.required) {
     if (typeof args[key] !== 'string') {
-      return refusal(INVALID_PARAMS, `${pyText(name)} needs ${key} as a string`);
+      return refusal(INVALID_PARAMS, `${valueText(name)} needs ${key} as a string`);
     }
   }
   const call = tool.call;
@@ -351,7 +352,7 @@ function runCli(tail: readonly string[], input?: string): Promise<Envelope> {
       clearTimeout(drain);
       let stderr = Buffer.concat(err).toString('utf8');
       if (timedOut) {
-        stderr += `nexus: command killed after ${pyFloat(seconds)} seconds (timeout)\n`;
+        stderr += `nexus: command killed after ${floatText(seconds)} seconds (timeout)\n`;
       }
       const stdout = Buffer.concat(out).toString('utf8');
       const exit = timedOut ? TIMED_OUT : exitCode(code, signal);
@@ -420,7 +421,7 @@ function readTimeout(value: string | undefined): number | undefined {
  * A number of seconds as Python's `str(float)` writes it, so the timeout
  * sentence keeps its bytes: `300.0`, `0.5`, `1e-05`, `1e+16`.
  */
-function pyFloat(value: number): string {
+function floatText(value: number): string {
   if (value === Number.POSITIVE_INFINITY) return 'inf';
   if (value === Number.NEGATIVE_INFINITY) return '-inf';
   if (Object.is(value, -0)) return '-0.0';
@@ -440,7 +441,7 @@ function pyFloat(value: number): string {
 }
 
 /** A value as Python's `%s` writes it, for the sentences that name one. */
-function pyText(value: unknown): string {
+function valueText(value: unknown): string {
   if (value === undefined || value === null) return 'None';
   if (value === true) return 'True';
   if (value === false) return 'False';
@@ -448,12 +449,8 @@ function pyText(value: unknown): string {
   return typeof value === 'number' ? String(value) : JSON.stringify(value);
 }
 
-function isObject(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 /** Whether Python would read a value as false: `x or {}` takes `{}` then. */
-function pyFalsy(value: unknown): boolean {
+function isEmptyValue(value: unknown): boolean {
   if (value === undefined || value === null || value === false || value === 0 || value === '') {
     return true;
   }
@@ -469,7 +466,7 @@ function refusal(code: number, message: string): Answer {
 async function answerFor(request: Readonly<Record<string, unknown>>): Promise<Answer> {
   const method = request['method'];
   const rawParams = request['params'];
-  const params = pyFalsy(rawParams) ? {} : rawParams;
+  const params = isEmptyValue(rawParams) ? {} : rawParams;
   switch (method) {
     case 'initialize':
       return {
@@ -494,12 +491,12 @@ async function answerFor(request: Readonly<Record<string, unknown>>): Promise<An
     case 'tools/call': {
       if (!isObject(params)) return refusal(INVALID_PARAMS, 'params must be an object');
       const given = params['arguments'];
-      const args = pyFalsy(given) ? {} : given;
+      const args = isEmptyValue(given) ? {} : given;
       if (!isObject(args)) return refusal(INVALID_PARAMS, 'arguments must be an object');
       return callTool(params['name'], args);
     }
     default:
-      return refusal(METHOD_NOT_FOUND, `no such method: ${pyText(method)}`);
+      return refusal(METHOD_NOT_FOUND, `no such method: ${valueText(method)}`);
   }
 }
 

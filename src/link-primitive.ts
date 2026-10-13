@@ -10,7 +10,7 @@
  * sees a half-made link. An entry is managed when its link text reaches into
  * an Owner root (the Canonical Root, the Control Skills' root in the Nexus
  * home, or the Custom Root), read lexically or resolved, as the Bash CLI's
- * `is_managed_link` reads it (`scripts/lib/common.sh`).
+ * `is_managed_link` read it.
  *
  * On Windows a symlink needs Developer Mode or an administrator, so Nexus
  * never makes one there (ADR 0010). A Managed Link to an Owner directory is a
@@ -28,12 +28,12 @@ import {
   readlinkSync,
   realpathSync,
   renameSync,
-  statSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
+import { isPresent, isRegularFile, reachesDirectory, sameBytes } from './entries.ts';
 import { fault } from './fault.ts';
 import { note } from './output.ts';
 import type { Paths } from './paths.ts';
@@ -192,7 +192,7 @@ function windowsPrimitive(paths: Paths): LinkPrimitive {
   const isManagedLink = managedLinkRule(paths);
   const record = managedCopies(join(paths.nexusHome, MANAGED_COPIES_FILE));
   const isManagedCopy = (path: string): boolean => {
-    const hash = isFile(path) ? sha256(path) : undefined;
+    const hash = isRegularFile(path) ? sha256(path) : undefined;
     return hash !== undefined && record.hashes(path).includes(hash);
   };
   return {
@@ -201,12 +201,12 @@ function windowsPrimitive(paths: Paths): LinkPrimitive {
       return entry === 'foreign' && isManagedCopy(path) ? 'managed' : entry;
     },
     reaches(path, owner) {
-      if (isDirectory(owner)) return isLinkTo(path, owner);
+      if (reachesDirectory(owner)) return isLinkTo(path, owner);
       return sameBytes(path, owner) && isManagedCopy(path);
     },
     isManagedCopy,
     stage(owner, path) {
-      if (!isDirectory(owner)) return stageCopy(owner, path);
+      if (!reachesDirectory(owner)) return stageCopy(owner, path);
       let target: string;
       try {
         target = realpathSync.native(owner);
@@ -226,7 +226,7 @@ function windowsPrimitive(paths: Paths): LinkPrimitive {
       return { ok: true, path: staged };
     },
     promote(staged, path) {
-      if (isFile(staged)) return promoteCopy(record, staged, path);
+      if (isRegularFile(staged)) return promoteCopy(record, staged, path);
       if (!moveInPlace(staged, path, false)) return false;
       return record.set(path, []);
     },
@@ -270,7 +270,7 @@ function promoteCopy(record: ManagedCopies, staged: string, path: string): boole
  * entry cannot take its place.
  */
 function moveInPlace(staged: string, path: string, copy: boolean): boolean {
-  const aside = exists(path) && !(copy && isFile(path)) ? stagedName(path) : undefined;
+  const aside = isPresent(path) && !(copy && isRegularFile(path)) ? stagedName(path) : undefined;
   if (aside !== undefined && !move(path, aside)) return false;
   if (!move(staged, path)) {
     if (aside !== undefined) move(aside, path);
@@ -303,7 +303,10 @@ function stageCopy(owner: string, path: string): Staged {
 type ManagedCopies = {
   /** The hashes recorded for the Managed Copy at `path`; empty when none. */
   readonly hashes: (path: string) => readonly string[];
-  /** Record `hashes` for `path`, or drop it when empty. False when the file could not be written. */
+  /**
+   * Record `hashes` for `path`, or drop the path when they are empty. False
+   * when the file could not be written.
+   */
   readonly set: (path: string, hashes: readonly string[]) => boolean;
 };
 
@@ -462,43 +465,6 @@ function sha256(path: string): string | undefined {
     return createHash('sha256').update(readFileSync(path)).digest('hex');
   } catch {
     return undefined;
-  }
-}
-
-/** True when both files can be read and hold the same bytes. */
-function sameBytes(a: string, b: string): boolean {
-  try {
-    return readFileSync(a).equals(readFileSync(b));
-  } catch {
-    return false;
-  }
-}
-
-/** True when something, even a dangling link, is at `path`. */
-function exists(path: string): boolean {
-  try {
-    lstatSync(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** True when `path` is a regular file itself, not through a link. */
-function isFile(path: string): boolean {
-  try {
-    return lstatSync(path).isFile();
-  } catch {
-    return false;
-  }
-}
-
-/** True when `path` is a directory, following a link (`-d`). */
-function isDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
   }
 }
 

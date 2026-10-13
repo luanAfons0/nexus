@@ -6,11 +6,12 @@
  * `SKILL.md`; dot entries (`.git`, `.workspaces`) and top-level files
  * (`README.md`, `GLOBAL.md`) are furniture and are skipped; anything else is
  * a fault that names its path. Nexus only reads here, and never runs Git.
- * The sentences are the Bash CLI's (`scripts/lib/custom.sh`).
+ * The sentences are the Bash CLI's.
  */
-import { lstatSync, readdirSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { isControlSkill } from './control-skills.ts';
+import { reachesDirectory } from './entries.ts';
 import type { Paths } from './paths.ts';
 import { isWithin, realpathMissing, resolvedLinkTarget } from './real-paths.ts';
 import { byteOrder, isSafeSkillName } from './skill-names.ts';
@@ -111,7 +112,7 @@ export function customCollisions(
  */
 export function customCanonicalLinks(paths: Paths): readonly string[] {
   const canonical = paths.canonicalRoot;
-  if (!isDirectory(canonical)) return [];
+  if (!reachesDirectory(canonical)) return [];
   let customRoot: string;
   try {
     customRoot = realpathMissing(paths.customRoot);
@@ -130,15 +131,6 @@ export function customCanonicalLinks(paths: Paths): readonly string[] {
     );
   }
   return sentences;
-}
-
-/** True when `path` is a directory, following a symlink (`-d`). */
-function isDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
 }
 
 function lstatOrUndefined(path: string) {

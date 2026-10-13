@@ -5,8 +5,8 @@
  * Every refusal here comes before `npx` is looked for, so a name Nexus cannot
  * own never reaches upstream and no Upstream Lock is rewritten. Like the
  * other shared modules this prints nothing: it gives the sentences, and the
- * command prints them. The sentences are the Bash CLI's
- * (`scripts/lib/update.sh`, `remove.sh`, `new.sh`).
+ * command prints them. The sentences are the Bash CLI's, for update, remove
+ * and new.
  */
 import { isControlSkill } from './control-skills.ts';
 import { customRootFault, readCustomSkills } from './custom.ts';

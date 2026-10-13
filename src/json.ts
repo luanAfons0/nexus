@@ -7,6 +7,11 @@
  * DEL can only stand inside a string in JSON text, so replacing it is safe.
  */
 
+/** True when `value` is a JSON object: not null, and not an array. */
+export function isObject(value: unknown): value is Readonly<Record<string, unknown>> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 /** One value on one line, as `jq -c` writes it. */
 export function compactJson(value: unknown): string {
   return jqEscapes(JSON.stringify(value));

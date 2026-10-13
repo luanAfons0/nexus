@@ -11,15 +11,14 @@
  * kept. When `GLOBAL.md` is new, Link runs as `nexus link` does, so both
  * Instruction Paths reach it at once.
  *
- * The sentences, the output and the exit codes are the Bash CLI's
- * (`scripts/lib/global.sh`): output makes no terminal assumption, so the
- * Plugin Page drives the command as a subprocess.
+ * The sentences, the output and the exit codes are the Bash CLI's: output
+ * makes no terminal assumption, so the Plugin Page drives the command as a
+ * subprocess.
  */
 import { createHash, randomBytes } from 'node:crypto';
 import {
   chmodSync,
   closeSync,
-  lstatSync,
   openSync,
   readFileSync,
   renameSync,
@@ -30,7 +29,8 @@ import {
 import { join } from 'node:path';
 import type { Command } from './cli.ts';
 import { customRootFault, globalInstructionsFault } from './custom.ts';
-import { HELP_TEXT } from './help.ts';
+import { isPresent } from './entries.ts';
+import { usageRefusal } from './help.ts';
 import { globalInstructionsPresent, readGlobalInstructions } from './instructions.ts';
 import { compactJson } from './json.ts';
 import { refreshManagedCopies } from './link-primitive.ts';
@@ -48,12 +48,11 @@ const EMPTY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b78
 const TEMPORARY_PREFIX = '.nexus-tmp.global.';
 
 /** `nexus global`: show or edit; anything else is the usage and exit 2. */
-export const global: Command = async (args) => {
+export const globalInstructions: Command = async (args) => {
   const [action, ...rest] = args;
   if (action === 'show') return show(rest);
   if (action === 'edit') return edit(rest);
-  process.stderr.write(HELP_TEXT);
-  return 2;
+  return usageRefusal();
 };
 
 /** Print `GLOBAL.md` as it is, or with `--json` one object about it. */
@@ -159,8 +158,7 @@ function parseEditArgs(args: readonly string[]): EditArgs | number {
 /** Say the refusal, then the usage, on stderr; the exit code is 2. */
 function usage(sentence: string): number {
   error(sentence);
-  process.stderr.write(HELP_TEXT);
-  return 2;
+  return usageRefusal();
 }
 
 /**
@@ -168,7 +166,7 @@ function usage(sentence: string): number {
  * absent or a regular file. Nexus never makes the Custom Root.
  */
 function preflight(paths: Paths): boolean {
-  if (!exists(paths.customRoot)) {
+  if (!isPresent(paths.customRoot)) {
     error(`custom skill root is absent: ${paths.customRoot}`);
     return false;
   }
@@ -225,14 +223,4 @@ async function readStdin(): Promise<Buffer> {
 /** The SHA-256 of `bytes`, in hex. */
 function sha256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
-}
-
-/** True when something, even a dangling link, is at `path` (`-e || -L`). */
-function exists(path: string): boolean {
-  try {
-    lstatSync(path);
-    return true;
-  } catch {
-    return false;
-  }
 }

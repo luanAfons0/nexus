@@ -27,7 +27,6 @@ import {
 } from './helpers/links.ts';
 import { newHome, runNexus } from './helpers/nexus.ts';
 
-
 const CONTROL_SKILLS = [
   'nexus-setup',
   'nexus-link',
@@ -40,7 +39,7 @@ const CONTROL_SKILLS = [
 ];
 
 test(
-  'bootstrap links every Control Skill into both Native Skill Roots, and a second run changes nothing',
+  'bootstrap links every Control Skill into both agents, and a second run changes nothing',
   () => {
     const home = newHome('bootstrap');
     const run = runNexus(home, ['bootstrap']);
@@ -51,7 +50,12 @@ test(
       assertLinkTo(join(home, '.claude', 'skills', name), join(home, '.nexus', 'skills', name));
       assertLinkTo(join(home, '.codex', 'skills', name), join(home, '.nexus', 'skills', name));
     }
-    for (const path of ['.claude/commands/nexus', '.nexus/skill-lock.json', '.claude-backup', '.codex-backup']) {
+    for (const path of [
+      '.claude/commands/nexus',
+      '.nexus/skill-lock.json',
+      '.claude-backup',
+      '.codex-backup',
+    ]) {
       assert.ok(isAbsent(join(home, path)), path);
     }
 
@@ -62,27 +66,40 @@ test(
   },
 );
 
-test('a Foreign Entry at a Control Skill is a Collision; it is kept and the rest are linked', () => {
-  const home = newHome('collision');
-  mkdirSync(join(home, '.claude', 'skills', 'nexus-setup'), { recursive: true });
-  writeFileSync(join(home, '.claude', 'skills', 'nexus-setup', 'marker'), 'preserve\n');
-  mkdirSync(join(home, '.codex', 'skills'), { recursive: true });
-  makeLink('/external/target', join(home, '.codex', 'skills', 'nexus-link'));
+test(
+  'a Foreign Entry at a Control Skill is a Collision; it is kept and the rest are linked',
+  () => {
+    const home = newHome('collision');
+    mkdirSync(join(home, '.claude', 'skills', 'nexus-setup'), { recursive: true });
+    writeFileSync(join(home, '.claude', 'skills', 'nexus-setup', 'marker'), 'preserve\n');
+    mkdirSync(join(home, '.codex', 'skills'), { recursive: true });
+    makeLink('/external/target', join(home, '.codex', 'skills', 'nexus-link'));
 
-  const run = runNexus(home, ['bootstrap']);
-  assert.equal(run.status, 1);
-  assert.equal(run.stdout, '');
-  assert.equal(
-    run.stderr,
-    `nexus: error: collision at ${join(home, '.claude', 'skills', 'nexus-setup')}\n` +
-      `nexus: error: collision at ${join(home, '.codex', 'skills', 'nexus-link')} (external symlink)\n` +
-      'nexus: error: bootstrap failed with 2 error(s)\n',
-  );
-  assert.equal(readFileSync(join(home, '.claude', 'skills', 'nexus-setup', 'marker'), 'utf8'), 'preserve\n');
-  assertLinkText(join(home, '.codex', 'skills', 'nexus-link'), '/external/target');
-  assertLinkTo(join(home, '.claude', 'skills', 'nexus-link'), join(home, '.nexus', 'skills', 'nexus-link'));
-  assertLinkTo(join(home, '.codex', 'skills', 'nexus-setup'), join(home, '.nexus', 'skills', 'nexus-setup'));
-});
+    const run = runNexus(home, ['bootstrap']);
+    assert.equal(run.status, 1);
+    assert.equal(run.stdout, '');
+    assert.equal(
+      run.stderr,
+      `nexus: error: collision at ${join(home, '.claude', 'skills', 'nexus-setup')}\n` +
+        `nexus: error: collision at ${join(home, '.codex', 'skills', 'nexus-link')} ` +
+        '(external symlink)\n' +
+        'nexus: error: bootstrap failed with 2 error(s)\n',
+    );
+    assert.equal(
+      readFileSync(join(home, '.claude', 'skills', 'nexus-setup', 'marker'), 'utf8'),
+      'preserve\n',
+    );
+    assertLinkText(join(home, '.codex', 'skills', 'nexus-link'), '/external/target');
+    assertLinkTo(
+      join(home, '.claude', 'skills', 'nexus-link'),
+      join(home, '.nexus', 'skills', 'nexus-link'),
+    );
+    assertLinkTo(
+      join(home, '.codex', 'skills', 'nexus-setup'),
+      join(home, '.nexus', 'skills', 'nexus-setup'),
+    );
+  },
+);
 
 test('NEXUS_TEST_FORCE does not let bootstrap replace a Foreign Entry', () => {
   const home = newHome('force_env_ignored');
@@ -91,7 +108,10 @@ test('NEXUS_TEST_FORCE does not let bootstrap replace a Foreign Entry', () => {
   const run = runNexus(home, ['bootstrap'], { env: { NEXUS_TEST_FORCE: 'true' } });
   assert.equal(run.status, 1);
   assert.ok(run.stderr.includes('collision'));
-  assert.equal(readFileSync(join(home, '.claude', 'skills', 'nexus-setup', 'marker'), 'utf8'), 'protected\n');
+  assert.equal(
+    readFileSync(join(home, '.claude', 'skills', 'nexus-setup', 'marker'), 'utf8'),
+    'protected\n',
+  );
 });
 
 test(
@@ -136,7 +156,10 @@ test('bootstrap never links the Instruction Paths, even when GLOBAL.md is there'
   assert.ok(isAbsent(join(home, '.codex', 'AGENTS.md')));
   assert.ok(isAbsent(join(home, '.claude', 'skills', 'mine')));
   assert.ok(isAbsent(join(home, '.claude', 'skills', 'installed')));
-  assertLinkTo(join(home, '.claude', 'skills', 'nexus-link'), join(home, '.nexus', 'skills', 'nexus-link'));
+  assertLinkTo(
+    join(home, '.claude', 'skills', 'nexus-link'),
+    join(home, '.nexus', 'skills', 'nexus-link'),
+  );
 });
 
 test('a Control Skill with no Owner directory is a missing link target', () => {

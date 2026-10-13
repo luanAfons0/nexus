@@ -11,7 +11,15 @@
  * the home from `HOME` on Linux and macOS and from `USERPROFILE` on Windows.
  */
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, parse, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -146,7 +154,12 @@ function main(args: readonly string[]): number {
 
   process.stderr.write(`dev-home: HOME=${sandbox}\n`);
   const run = spawnSync(process.execPath, [join(REPO, 'src', 'nexus.js'), ...rest], {
-    env: { ...process.env, HOME: sandbox, USERPROFILE: sandbox, NEXUS_HOME: join(sandbox, '.nexus') },
+    env: {
+      ...process.env,
+      HOME: sandbox,
+      USERPROFILE: sandbox,
+      NEXUS_HOME: join(sandbox, '.nexus'),
+    },
     shell: false,
     stdio: 'inherit',
   });

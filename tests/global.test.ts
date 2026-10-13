@@ -67,7 +67,9 @@ function owner(home: string): string {
 /** Every tree a global run may touch, and the Custom Skill's bytes. */
 function snapshot(home: string): string {
   const mine = join(home, '.custom-skills', 'mine');
-  return [agentTrees(home), textOf(join(mine, 'SKILL.md')), textOf(join(mine, 'notes.md'))].join('\n');
+  return [agentTrees(home), textOf(join(mine, 'SKILL.md')), textOf(join(mine, 'notes.md'))].join(
+    '\n',
+  );
 }
 
 /** The text of the file at `path`, or nothing when it cannot be read. */
@@ -120,28 +122,31 @@ test('global show prints the bytes of GLOBAL.md as they are and changes nothing'
   assertCustomSkillIntact(home);
 });
 
-test('global show --json prints one object with the content and both Instruction Path states', () => {
-  const home = globalHome('global_show_json');
-  writeFileSync(owner(home), 'rule one\n');
-  writeFileSync(join(home, '.codex', 'AGENTS.md'), 'hand written\n');
-  assert.equal(runNexus(home, ['link']).status, 0);
+test(
+  'global show --json prints one object with the content and both Instruction Path states',
+  () => {
+    const home = globalHome('global_show_json');
+    writeFileSync(owner(home), 'rule one\n');
+    writeFileSync(join(home, '.codex', 'AGENTS.md'), 'hand written\n');
+    assert.equal(runNexus(home, ['link']).status, 0);
 
-  const run = runNexus(home, ['global', 'show', '--json']);
-  assert.equal(run.status, 0, run.stderr);
-  assert.equal(run.stderr, '');
-  assert.equal(
-    run.stdout,
-    `${JSON.stringify({
-      owner: owner(home),
-      present: true,
-      sha256: sha256(owner(home)),
-      content: 'rule one\n',
-      claude: 'linked',
-      codex: 'foreign',
-    })}\n`,
-  );
-  assertCustomSkillIntact(home);
-});
+    const run = runNexus(home, ['global', 'show', '--json']);
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stderr, '');
+    assert.equal(
+      run.stdout,
+      `${JSON.stringify({
+        owner: owner(home),
+        present: true,
+        sha256: sha256(owner(home)),
+        content: 'rule one\n',
+        claude: 'linked',
+        codex: 'foreign',
+      })}\n`,
+    );
+    assertCustomSkillIntact(home);
+  },
+);
 
 test('global show with no GLOBAL.md prints nothing, and its JSON says absent and no home', () => {
   const home = globalHome('global_show_absent');
@@ -176,7 +181,10 @@ for (const [kind, make] of [
     const home = globalHome(`global_show_fault_${kind}`);
     make(owner(home));
     const before = snapshot(home);
-    for (const args of [['global', 'show'], ['global', 'show', '--json']]) {
+    for (const args of [
+      ['global', 'show'],
+      ['global', 'show', '--json'],
+    ]) {
       const run = runNexus(home, args);
       assert.equal(run.status, 1, args.join(' '));
       assert.equal(run.stdout, '');
@@ -230,80 +238,93 @@ test('a Custom Root that is a file is refused as not a physical directory', () =
     assert.equal(run.status, 1);
     assert.equal(
       run.stderr,
-      `nexus: error: custom skill root must be a physical directory: ${join(home, '.custom-skills')}\n`,
+      'nexus: error: custom skill root must be a physical directory: ' +
+        `${join(home, '.custom-skills')}\n`,
     );
   }
   assert.equal(readFileSync(join(home, '.custom-skills'), 'utf8'), '');
 });
 
-test('global with no action, an unknown action, or a stray argument prints the usage and exits 2', () => {
-  const home = globalHome('global_usage');
-  writeFileSync(owner(home), 'old rule\n');
-  const before = snapshot(home);
-  const usage = runNexus(home, ['help']).stdout;
-  const cases: readonly (readonly [readonly string[], string])[] = [
-    [['global'], ''],
-    [['global', 'nope'], ''],
-    [['global', 'show', '--nope'], 'global show accepts only --json'],
-    [['global', 'show', 'extra'], 'global show accepts only --json'],
-    [['global', 'show', '--json', 'extra'], 'global show accepts only --json'],
-    [['global', 'edit', '--nope'], 'global edit accepts only --if-match <sha256>'],
-    [['global', 'edit', 'extra'], 'global edit accepts only --if-match <sha256>'],
-    [['global', 'edit', '--if-match'], 'global edit: --if-match requires a sha256 value'],
-    [
-      ['global', 'edit', '--if-match', 'nothex'],
-      'global edit: --if-match requires a hex sha256, got: nothex',
-    ],
-  ];
-  for (const [args, sentence] of cases) {
-    const run = runNexus(home, args, { input: 'new rule\n' });
-    assert.equal(run.status, 2, args.join(' '));
-    assert.equal(run.stdout, '', args.join(' '));
-    const refusal = sentence === '' ? '' : `nexus: error: ${sentence}\n`;
-    assert.equal(run.stderr, refusal + usage, args.join(' '));
-  }
-  assert.equal(snapshot(home), before);
-  assert.equal(readFileSync(owner(home), 'utf8'), 'old rule\n');
-});
+test(
+  'global with no action, an unknown action, or a stray argument prints the usage and exits 2',
+  () => {
+    const home = globalHome('global_usage');
+    writeFileSync(owner(home), 'old rule\n');
+    const before = snapshot(home);
+    const usage = runNexus(home, ['help']).stdout;
+    const cases: readonly (readonly [readonly string[], string])[] = [
+      [['global'], ''],
+      [['global', 'nope'], ''],
+      [['global', 'show', '--nope'], 'global show accepts only --json'],
+      [['global', 'show', 'extra'], 'global show accepts only --json'],
+      [['global', 'show', '--json', 'extra'], 'global show accepts only --json'],
+      [['global', 'edit', '--nope'], 'global edit accepts only --if-match <sha256>'],
+      [['global', 'edit', 'extra'], 'global edit accepts only --if-match <sha256>'],
+      [['global', 'edit', '--if-match'], 'global edit: --if-match requires a sha256 value'],
+      [
+        ['global', 'edit', '--if-match', 'nothex'],
+        'global edit: --if-match requires a hex sha256, got: nothex',
+      ],
+    ];
+    for (const [args, sentence] of cases) {
+      const run = runNexus(home, args, { input: 'new rule\n' });
+      assert.equal(run.status, 2, args.join(' '));
+      assert.equal(run.stdout, '', args.join(' '));
+      const refusal = sentence === '' ? '' : `nexus: error: ${sentence}\n`;
+      assert.equal(run.stderr, refusal + usage, args.join(' '));
+    }
+    assert.equal(snapshot(home), before);
+    assert.equal(readFileSync(owner(home), 'utf8'), 'old rule\n');
+  },
+);
 
-test('global edit makes GLOBAL.md, then links both Instruction Paths and says what link says', () => {
-  const home = globalHome('global_edit_create');
-  const codex = join(home, '.codex', 'AGENTS.md');
-  writeFileSync(codex, 'hand written\n');
+test(
+  'global edit makes GLOBAL.md, then links both Instruction Paths and says what link says',
+  () => {
+    const home = globalHome('global_edit_create');
+    const codex = join(home, '.codex', 'AGENTS.md');
+    writeFileSync(codex, 'hand written\n');
 
-  const run = edit(home, 'first rule\n');
-  assert.equal(run.status, 0, run.stderr);
-  assert.equal(run.stderr, '');
-  assert.equal(
-    run.stdout,
-    `nexus: foreign entry at ${codex}: preserved; to manage it, run: ` +
-      `mv ${codex} ${owner(home)}, then rerun link\n` +
-      'nexus: link complete: skills reconciled\n',
-  );
-  assert.ok(statSync(owner(home)).isFile());
-  assert.equal(linkText(owner(home)), undefined);
-  assert.equal(readFileSync(owner(home), 'utf8'), 'first rule\n');
-  assertInstructionLink(home, join(home, '.claude', 'CLAUDE.md'));
-  assert.equal(readFileSync(codex, 'utf8'), 'hand written\n');
-  assertLinkTo(join(home, '.claude', 'skills', 'mine'), join(home, '.custom-skills', 'mine'));
-  assert.deepEqual(residue(join(home, '.custom-skills')), []);
-  assertCustomSkillIntact(home);
-});
+    const run = edit(home, 'first rule\n');
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stderr, '');
+    assert.equal(
+      run.stdout,
+      `nexus: foreign entry at ${codex}: preserved; to manage it, run: ` +
+        `mv ${codex} ${owner(home)}, then rerun link\n` +
+        'nexus: link complete: skills reconciled\n',
+    );
+    assert.ok(statSync(owner(home)).isFile());
+    assert.equal(linkText(owner(home)), undefined);
+    assert.equal(readFileSync(owner(home), 'utf8'), 'first rule\n');
+    assertInstructionLink(home, join(home, '.claude', 'CLAUDE.md'));
+    assert.equal(readFileSync(codex, 'utf8'), 'hand written\n');
+    assertLinkTo(join(home, '.claude', 'skills', 'mine'), join(home, '.custom-skills', 'mine'));
+    assert.deepEqual(residue(join(home, '.custom-skills')), []);
+    assertCustomSkillIntact(home);
+  },
+);
 
-test('global edit that makes GLOBAL.md in a clean home links both Instruction Paths, with no error', () => {
-  const home = globalHome('global_edit_create_clean');
-  const run = edit(home, 'first rule\n');
-  assert.equal(run.status, 0, run.stderr);
-  assert.equal(run.stderr, '');
-  assertInstructionLink(home, join(home, '.claude', 'CLAUDE.md'));
-  assertInstructionLink(home, join(home, '.codex', 'AGENTS.md'));
-});
+test(
+  'global edit that makes GLOBAL.md in a clean home links both Instruction Paths, with no error',
+  () => {
+    const home = globalHome('global_edit_create_clean');
+    const run = edit(home, 'first rule\n');
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stderr, '');
+    assertInstructionLink(home, join(home, '.claude', 'CLAUDE.md'));
+    assertInstructionLink(home, join(home, '.codex', 'AGENTS.md'));
+  },
+);
 
 test('global edit replaces GLOBAL.md, says nothing, and writes nothing else', () => {
   const home = globalHome('global_edit_overwrite');
   writeFileSync(owner(home), 'old rule\n');
   const custom = join(home, '.custom-skills');
-  const before = { agents: agentTrees(home, ['.claude', '.codex', '.agents']), custom: snapshotTree(custom) };
+  const before = {
+    agents: agentTrees(home, ['.claude', '.codex', '.agents']),
+    custom: snapshotTree(custom),
+  };
 
   const run = edit(home, 'new rule\nline two\n');
   assert.equal(run.status, 0, run.stderr);
@@ -319,7 +340,9 @@ test('global edit replaces GLOBAL.md, says nothing, and writes nothing else', ()
 test('global edit --if-match with the sha256 that show gave replaces GLOBAL.md', () => {
   const home = globalHome('global_edit_if_match_ok');
   writeFileSync(owner(home), 'old rule\n');
-  const shown = JSON.parse(runNexus(home, ['global', 'show', '--json']).stdout) as { sha256: string };
+  const shown = JSON.parse(runNexus(home, ['global', 'show', '--json']).stdout) as {
+    sha256: string;
+  };
 
   const run = edit(home, 'new rule\n', ['--if-match', shown.sha256.toUpperCase()]);
   assert.equal(run.status, 0, run.stderr);
@@ -421,7 +444,10 @@ test(
       assertManagedCopy(home, path, owner(home));
       assert.equal(readFileSync(path, 'utf8'), 'rule two\n');
     }
-    assert.deepEqual(managedCopies(home), { [claude]: sha256(owner(home)), [codex]: sha256(owner(home)) });
+    assert.deepEqual(managedCopies(home), {
+      [claude]: sha256(owner(home)),
+      [codex]: sha256(owner(home)),
+    });
     assert.deepEqual(residue(join(home, '.claude')), []);
     assert.deepEqual(residue(join(home, '.codex')), []);
   },
@@ -469,7 +495,7 @@ test(
 );
 
 test(
-  'global edit of an existing GLOBAL.md leaves a Managed Link to another Owner file where it points',
+  'global edit leaves a Managed Link to another Owner file where it points',
   { skip: POSIX_ONLY },
   () => {
     const home = globalHome('global_edit_other_owner_file');

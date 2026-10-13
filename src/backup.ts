@@ -4,7 +4,7 @@
  * anything an agent reads.
  *
  * The Backup is the safety contract of Setup, so it keeps every guarantee of
- * the Bash CLI (`backup_transaction` in `scripts/lib/setup.sh`):
+ * the Bash CLI (`backup_transaction`):
  * - it is a copy, never a move: the Agent Home is left as it was;
  * - it never overwrites: an existing Backup refuses Setup, and each
  *   promotion is a rename onto nothing;
@@ -18,31 +18,17 @@
  * - each promoted root must still be the tree that was verified: the same
  *   device, inode and type (`identity.ts`).
  */
-import {
-  appendFileSync,
-  chmodSync,
-  copyFileSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  renameSync,
-  rmdirSync,
-  symlinkSync,
-  unlinkSync,
-  utimesSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmdirSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { type Manifest, readManifest, sameManifest } from './backup-manifest.ts';
-import { fault, homeFile, occupy, seamFailure, tryChange } from './fault.ts';
+import { isPhysicalDirectory, isPresent } from './entries.ts';
+import { fault, faultChange, recordCall, seamFailure } from './fault.ts';
 import { entryIdentity } from './identity.ts';
 import { moveOntoNothing } from './move.ts';
 import { error } from './output.ts';
 import {
   type Checkpoint,
   isOwnedDir,
-  isPhysicalDirectory,
-  isPresent,
   removeOwnedDir,
   removeTree,
   type Residue,
@@ -57,11 +43,20 @@ export type BackupResult =
   | { readonly ok: true; readonly claude: string; readonly codex: string }
   | { readonly ok: false };
 
-/** A time the fault points write: `2026-01-01 00:00:00.987654321`, local, as `touch -d`. */
-const LATE = new Date(2026, 0, 1).getTime() / 1000 + 0.987654321;
+/** The faults that change the Claude copy once it is made. */
+const COPY_CHANGES = ['backup_root_corrupt', 'backup_child_corrupt', 'backup_symlink_corrupt'];
 
-/** A whole second the fault points write: 2026-01-01T00:00:00Z. */
-const WHOLE_SECOND = Date.UTC(2026, 0, 1) / 1000;
+/** The faults that put something at the Claude Backup's path before its promotion. */
+const DESTINATION_CHANGES = ['backup_destination_empty', 'backup_destination_full'];
+
+/** The faults that change the Claude home after its first copy. */
+const SOURCE_CHANGES = [
+  'backup_retry_once',
+  'backup_source_mode',
+  'backup_source_time',
+  'backup_source_symlink',
+  'backup_source_relink',
+];
 
 /** How one attempt at one Agent Home ended. */
 type Verdict = 'verified' | 'failed' | 'changed';
@@ -198,9 +193,8 @@ function verifyBackupAttempt(source: string, copied: string, attempt: number): V
 
 /** The manifest of `root`, or undefined after its sentence is said. */
 function backupManifest(root: string, digests: boolean): Manifest | undefined {
-  if (fault('backup_manifest_count')) {
-    appendFileSync(homeFile('manifest-calls'), `${root}|${digests ? 'full' : 'state'}\n`);
-  }
+  const manifestKind = digests ? 'full' : 'state';
+  if (fault('backup_manifest_count')) recordCall('manifest-calls', `${root}|${manifestKind}`);
   const read = readManifest(root, digests);
   if (read.ok) return read.manifest;
   process.stderr.write(`backup manifest: ${read.error}\n`);
@@ -215,43 +209,14 @@ function backupManifest(root: string, digests: boolean): Manifest | undefined {
 function copyAgentTree(source: string, destination: string, attempt: number): boolean {
   const claude = basename(source) === '.claude';
   const first = claude && attempt === 1;
-  const payload = join(source, 'payload');
   if (fault('backup_copy_fail') && claude) return seamFailure('backup copy failed');
   if (fault('backup_copy_false')) return makeDirectory(destination);
-  if (fault('backup_source_content') && first) {
-    writeFileSync(payload, 'changed');
-    utimesSync(payload, WHOLE_SECOND, WHOLE_SECOND);
-  }
+  if (fault('backup_source_content') && first) faultChange(source);
   if (!copyHome(source, destination)) return false;
-  if (fault('backup_copy_corrupt')) writeFileSync(join(destination, 'corrupt'), 'corrupt');
-  if (fault('backup_root_corrupt') && claude) {
-    chmodSync(destination, 0o700);
-    utimesSync(destination, LATE, LATE);
-  }
-  if (fault('backup_child_corrupt') && claude) {
-    appendFileSync(join(destination, 'child'), ''); // `touch` makes a missing file.
-    utimesSync(join(destination, 'child'), LATE, LATE);
-  }
-  if (fault('backup_symlink_corrupt') && claude) {
-    tryChange(() => unlinkSync(join(destination, 'trailing-newline-link')));
-    symlinkSync('literal-target', join(destination, 'trailing-newline-link'));
-  }
-  if (fault('backup_retry_once') && first) {
-    appendFileSync(join(source, 'retry-marker'), 'retry-state\n');
-  }
-  if (fault('backup_retry_always') && claude) {
-    appendFileSync(join(source, 'retry-marker'), `unstable-${attempt}\n`);
-  }
-  if (fault('backup_source_mode') && first) chmodSync(payload, 0o640);
-  if (fault('backup_source_time') && first) utimesSync(payload, WHOLE_SECOND, WHOLE_SECOND);
-  if (fault('backup_source_symlink') && first) {
-    unlinkSync(join(source, 'line\nlink'));
-    symlinkSync('other\n', join(source, 'line\nlink'));
-  }
-  if (fault('backup_source_relink') && first) {
-    unlinkSync(join(source, 'hardlink'));
-    copyFileSync(payload, join(source, 'hardlink'));
-  }
+  if (fault('backup_copy_corrupt')) faultChange(destination);
+  if (fault(...COPY_CHANGES) && claude) faultChange(destination);
+  if (fault(...SOURCE_CHANGES) && first) faultChange(source);
+  if (fault('backup_retry_always') && claude) faultChange(source, attempt);
   return true;
 }
 
@@ -288,19 +253,14 @@ function backupMove(source: string, destination: string): boolean {
   const codex = basename(destination) === '.codex-backup';
   const claude = basename(destination) === '.claude-backup';
   const rollback = basename(source) === '.claude-backup';
+  const home = dirname(destination);
   if (fault('backup_promote_second') && codex) return seamFailure('second backup promotion failed');
   if (fault('backup_rollback') && (codex || rollback)) return seamFailure('backup rollback failed');
-  if (fault('backup_destination_empty') && claude) occupy(destination, false);
-  if (fault('backup_destination_full') && claude) occupy(destination, true);
+  if (fault(...DESTINATION_CHANGES) && claude) faultChange(destination);
   if (!moveOntoNothing(source, destination)) return false;
   if (isPresent(source)) return false;
-  if (fault('backup_final_corrupt') && codex) {
-    tryChange(() => chmodSync(join(dirname(destination), '.claude-backup', '.hidden'), 0o600));
-  }
-  if (fault('backup_promote_ambiguous') && claude) {
-    renameSync(destination, `${destination}.unknown`);
-    mkdirSync(destination);
-  }
+  if (fault('backup_final_corrupt') && codex) faultChange(join(home, '.claude-backup'));
+  if (fault('backup_promote_ambiguous') && claude) faultChange(destination);
   return true;
 }
 

@@ -5,15 +5,16 @@
  * (`cp -aL`), every symlink inside the skill is followed. So first each one
  * must resolve, must not loop, and must stay inside the skill: a link that
  * escapes would copy a file from elsewhere on the machine into the skill.
- * This is the port of `scripts/lib/validate_skill_tree.py`, and its
- * sentences are that helper's, printed as it printed them, with no prefix.
+ * This is the Bash CLI's skill tree check, and its sentences are that
+ * check's, printed as it printed them, with no prefix.
  *
  * Paths are bytes throughout (`Buffer`), because a file name need not be
  * UTF-8. Entries are met in the order the system lists them, as Python's
  * `os.scandir` met them; `readdirSync` would sort them (libuv's `scandir`).
  */
-import { type Dirent, lstatSync, opendirSync, realpathSync, statSync } from 'node:fs';
+import { type Dirent, lstatSync, opendirSync, realpathSync } from 'node:fs';
 import { join, sep } from 'node:path';
+import { isPhysicalDirectory, reachesDirectory, reachesEntry } from './entries.ts';
 
 /**
  * The sentence that refuses the skill tree at `target`, or undefined when
@@ -44,12 +45,12 @@ function walk(directory: Buffer, root: Buffer, active: Set<string>): string | un
     for (const item of entries) {
       const entry = Buffer.concat([directory, Buffer.from(sep), item.name]);
       if (item.isSymbolicLink()) {
-        if (!exists(entry)) return `skill source has broken or cyclic symlink: ${entry}`;
+        if (!reachesEntry(entry)) return `skill source has broken or cyclic symlink: ${entry}`;
         const resolved = realpathSync.native(entry, { encoding: 'buffer' });
         if (!within(resolved, root)) {
           return `skill source symlink escapes skill tree: ${entry} -> ${resolved}`;
         }
-        if (isDirectory(entry)) {
+        if (reachesDirectory(entry)) {
           const fault = walk(resolved, root, active);
           if (fault !== undefined) return fault;
         }
@@ -91,33 +92,6 @@ function within(path: Buffer, root: Buffer): boolean {
   if (path.equals(root)) return true;
   const prefix = Buffer.concat([root, Buffer.from(sep)]);
   return path.length > prefix.length && path.subarray(0, prefix.length).equals(prefix);
-}
-
-/** True when `path` exists, following links (`os.path.exists`). */
-function exists(path: Buffer): boolean {
-  try {
-    statSync(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function isDirectory(path: Buffer): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-/** A directory that is not a symlink (`isdir` and not `islink`). */
-function isPhysicalDirectory(path: string): boolean {
-  try {
-    return lstatSync(path).isDirectory();
-  } catch {
-    return false;
-  }
 }
 
 /** A regular file that is not a symlink (`isfile` and not `islink`). */

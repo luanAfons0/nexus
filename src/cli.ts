@@ -8,8 +8,8 @@
  * argument is the command's own to read.
  */
 import { check } from './check.ts';
-import { global } from './global.ts';
-import { help, HELP_TEXT } from './help.ts';
+import { globalInstructions } from './global.ts';
+import { help, usageRefusal } from './help.ts';
 import { install } from './install.ts';
 import { bootstrap, link } from './link.ts';
 import { list } from './list.ts';
@@ -39,7 +39,7 @@ const COMMANDS: ReadonlyMap<string, Entry> = new Map<string, Entry>([
   ['list', { run: list, takesArguments: true }],
   ['check', { run: check, takesArguments: true }],
   ['link', { run: link, takesArguments: false }],
-  ['global', { run: global, takesArguments: true }],
+  ['global', { run: globalInstructions, takesArguments: true }],
   ['help', { run: help, takesArguments: false }],
   ['-h', { run: help, takesArguments: false }],
   ['--help', { run: help, takesArguments: false }],
@@ -50,8 +50,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   const [name, ...args] = argv;
   const entry = name === undefined ? undefined : COMMANDS.get(name);
   if (entry === undefined || (!entry.takesArguments && args.length > 0)) {
-    process.stderr.write(HELP_TEXT);
-    return 2;
+    return usageRefusal();
   }
   return entry.run(args);
 }

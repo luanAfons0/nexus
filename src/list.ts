@@ -3,18 +3,17 @@
  * state of the Global Instructions. It reads and never writes, apart from
  * the lock Snapshot it removes again.
  *
- * The output is the Bash CLI's byte for byte (`list_skills` in
- * `scripts/lib/list.sh`), because scripts and the Plugin Page read it: a
- * tab-separated table sorted by name, then one line for the Global
- * Instructions; or, with `--json`, one compact JSON object. A missing lock
- * is a notice, not a fault, and with `--json` the notice goes to stderr so
- * that stdout stays JSON.
+ * The output is the Bash CLI's byte for byte (`list_skills`), because
+ * scripts and the Plugin Page read it: a tab-separated table sorted by name,
+ * then one line for the Global Instructions; or, with `--json`, one compact
+ * JSON object. A missing lock is a notice, not a fault, and with `--json` the
+ * notice goes to stderr so that stdout stays JSON.
  */
-import { statSync } from 'node:fs';
 import type { Command } from './cli.ts';
 import { CONTROL_SKILLS } from './control-skills.ts';
 import { customRootFault, globalInstructionsFault, readCustomSkills } from './custom.ts';
-import { HELP_TEXT } from './help.ts';
+import { reachesFile } from './entries.ts';
+import { usageRefusal } from './help.ts';
 import { globalInstructionsLine, readGlobalInstructions } from './instructions.ts';
 import { compactJson } from './json.ts';
 import { lockField, type NexusLock, readLock } from './lock.ts';
@@ -34,14 +33,13 @@ type Row = {
 /** List the skills; exit 0, 1 on a fault, 2 on a usage refusal. */
 export const list: Command = async (args) => {
   if (args.some((arg) => arg !== '--json')) {
-    process.stderr.write(HELP_TEXT);
-    return 2;
+    return usageRefusal();
   }
   const json = args.length > 0;
   const paths = readPaths();
 
   let lock: NexusLock | undefined;
-  if (isFile(paths.lock)) {
+  if (reachesFile(paths.lock)) {
     const read = readLock(paths.lock, paths.nexusHome);
     if (!read.ok) {
       for (const sentence of read.errors) error(sentence);
@@ -122,13 +120,4 @@ function cell(value: unknown): string {
 /** The order of `LC_ALL=C sort -t TAB -k1,1`: by name, then by the whole line. */
 function byTableKey(a: string, b: string): number {
   return byteOrder(a.split('\t')[0] ?? '', b.split('\t')[0] ?? '') || byteOrder(a, b);
-}
-
-/** True when `path` is a file, following a symlink (`-f`). */
-function isFile(path: string): boolean {
-  try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
 }

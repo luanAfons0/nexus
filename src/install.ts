@@ -10,13 +10,13 @@
  * it was, and names each skill directory it may have left behind, because
  * Nexus deletes nothing it does not own.
  *
- * The sentences and exit codes are the Bash CLI's (`scripts/lib/install.sh`).
+ * The sentences and exit codes are the Bash CLI's.
  */
-import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Command } from './cli.ts';
 import { isControlSkill } from './control-skills.ts';
 import { customRootFault, readCustomSkills } from './custom.ts';
+import { reachesDirectory } from './entries.ts';
 import { error, info } from './output.ts';
 import { readPaths } from './paths.ts';
 import { isSafeSkillName } from './skill-names.ts';
@@ -75,7 +75,7 @@ export const install: Command = async (args) => {
     error(`upstream skill installation failed (status ${status})`);
     for (const name of request.skills) {
       const target = join(paths.canonicalRoot, name);
-      if (isDirectory(target)) info(`untracked canonical skill directory: ${target}`);
+      if (reachesDirectory(target)) info(`untracked canonical skill directory: ${target}`);
     }
     return status;
   }
@@ -122,13 +122,4 @@ function parseInstallArgs(args: readonly string[]): InstallRequest | string {
   if (source === '') return 'install requires one source';
   if (skills.length === 0) return 'install requires at least one --skill NAME';
   return { source, skills };
-}
-
-/** True when `path` is a directory, following a symlink (`-d`). */
-function isDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
 }

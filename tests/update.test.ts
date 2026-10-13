@@ -137,26 +137,29 @@ test('a failed npx update keeps the Nexus Lock and exits with its status', () =>
   assert.deepEqual(nexusLock(home), before);
 });
 
-test('an Upstream Lock that lost the skill, is invalid, or lacks a SKILL.md is not Published', () => {
-  const cases: Readonly<Record<string, (home: string) => RegExp | string>> = {
-    drops_name: () => 'nexus: error: upstream lock no longer contains alpha\n',
-    invalid_lock: () =>
-      /\nnexus: error: upstream did not produce a valid version-3 skill lock\n$/,
-    missing_skill_md: (home) =>
-      'nexus: error: upstream lock skill is missing SKILL.md: ' +
-      `${join(home, '.agents', 'skills', 'alpha', 'SKILL.md')}\n`,
-  };
-  for (const [mode, expected] of Object.entries(cases)) {
-    const home = updateHome(`update-${mode}`);
-    writeLock(join(home, '.agents', '.skill-lock.json'), ['alpha']);
-    const before = nexusLock(home);
-    const run = runNexus(home, ['update', 'alpha'], { env: { NEXUS_FAKE_NPX_MODE: mode } });
-    assert.equal(run.status, 1, mode);
-    assert.equal(run.stdout, '', mode);
-    const sentence = expected(home);
-    if (typeof sentence === 'string') assert.equal(run.stderr, sentence, mode);
-    else assert.match(run.stderr, sentence, mode);
-    assert.deepEqual(nexusLock(home), before, mode);
-    assert.deepEqual(scratch(home), [], mode);
-  }
-});
+test(
+  'an Upstream Lock that lost the skill, is invalid, or lacks a SKILL.md is not Published',
+  () => {
+    const cases: Readonly<Record<string, (home: string) => RegExp | string>> = {
+      drops_name: () => 'nexus: error: upstream lock no longer contains alpha\n',
+      invalid_lock: () =>
+        /\nnexus: error: upstream did not produce a valid version-3 skill lock\n$/,
+      missing_skill_md: (home) =>
+        'nexus: error: upstream lock skill is missing SKILL.md: ' +
+        `${join(home, '.agents', 'skills', 'alpha', 'SKILL.md')}\n`,
+    };
+    for (const [mode, expected] of Object.entries(cases)) {
+      const home = updateHome(`update-${mode}`);
+      writeLock(join(home, '.agents', '.skill-lock.json'), ['alpha']);
+      const before = nexusLock(home);
+      const run = runNexus(home, ['update', 'alpha'], { env: { NEXUS_FAKE_NPX_MODE: mode } });
+      assert.equal(run.status, 1, mode);
+      assert.equal(run.stdout, '', mode);
+      const sentence = expected(home);
+      if (typeof sentence === 'string') assert.equal(run.stderr, sentence, mode);
+      else assert.match(run.stderr, sentence, mode);
+      assert.deepEqual(nexusLock(home), before, mode);
+      assert.deepEqual(scratch(home), [], mode);
+    }
+  },
+);

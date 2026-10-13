@@ -1,11 +1,9 @@
 /**
- * Text as the Python helpers of the Bash CLI printed it.
- *
- * The Backup manifest and the skill tree validation were Python
- * (`scripts/lib/backup_manifest.py`, `scripts/lib/validate_skill_tree.py`),
- * and their sentences name a path the way Python's `repr` writes it and an
- * OS error the way Python's `OSError` writes it. The port keeps those bytes,
- * so a person who knows the old sentence still reads the same one.
+ * A path and an OS error in the text the Bash CLI's Backup manifest and skill
+ * tree checks printed: a path quoted and escaped the way Python's `repr`
+ * writes it, and an error as `[Errno 13] Permission denied: '<path>'`. The
+ * port keeps those bytes, so a person who knows the old sentence still reads
+ * the same one.
  */
 import { constants } from 'node:os';
 import { getSystemErrorMessage } from 'node:util';
@@ -16,7 +14,7 @@ import { getSystemErrorMessage } from 'node:util';
  * characters and for each byte that is not UTF-8 (`\udcff`, as Python's
  * `surrogateescape` reads a file name).
  */
-export function pyRepr(path: Buffer | string): string {
+export function quotedPath(path: Buffer | string): string {
   const bytes = typeof path === 'string' ? Buffer.from(path) : path;
   const chars = decodeEscaped(bytes);
   const hasSingle = chars.some((char) => char === "'");
@@ -31,11 +29,11 @@ export function pyRepr(path: Buffer | string): string {
  * An OS error as Python's `str(OSError)` writes it:
  * `[Errno 13] Permission denied: '<path>'`.
  */
-export function pyOsError(failure: unknown, path: Buffer | string): string {
+export function errnoText(failure: unknown, path: Buffer | string): string {
   const code = errorCode(failure);
   const errno = errorNumber(failure, code);
   const message = systemMessage(failure);
-  return `[Errno ${errno}] ${message}: ${pyRepr(path)}`;
+  return `[Errno ${errno}] ${message}: ${quotedPath(path)}`;
 }
 
 /** The characters of `bytes`, each byte that is not UTF-8 kept as a lone surrogate. */

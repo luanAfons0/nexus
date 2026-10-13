@@ -8,10 +8,11 @@
  * named. A recovery path holds something a person may need back (a moved
  * Backup, a moved Canonical Root entry); Setup never removes it, and names
  * it when a signal stops Setup. These are the Bash CLI's
- * `SETUP_OWNED_TEMPS` and `SETUP_OWNED_RECOVERY` (`scripts/lib/setup.sh`).
+ * `SETUP_OWNED_TEMPS` and `SETUP_OWNED_RECOVERY`.
  */
-import { lstatSync, rmSync, statSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
+import { isPresent, isRegularFile, reachesDirectory } from './entries.ts';
 import { fault, paused, seamFailure } from './fault.ts';
 import { error } from './output.ts';
 
@@ -58,7 +59,7 @@ export function newResidue(): Residue {
 
 /** True when `path` is a directory Setup made in `parent` with `prefix` (`owned_setup_dir`). */
 export function isOwnedDir(path: string, parent: string, prefix: string): boolean {
-  return isDirectory(path) && dirname(path) === parent && basename(path).startsWith(prefix);
+  return reachesDirectory(path) && dirname(path) === parent && basename(path).startsWith(prefix);
 }
 
 /**
@@ -107,43 +108,6 @@ export function removeTree(path: string): boolean {
   try {
     rmSync(path, { recursive: true, force: true, maxRetries: 3 });
     return true;
-  } catch {
-    return false;
-  }
-}
-
-/** True when anything is at `path`, a dangling symlink too (`-e` or `-L`). */
-export function isPresent(path: string): boolean {
-  try {
-    lstatSync(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** True when `path` is a directory, following a symlink (`-d`). */
-export function isDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-/** True when `path` is a directory and no symlink (`-d` and not `-L`). */
-export function isPhysicalDirectory(path: string): boolean {
-  try {
-    return lstatSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-/** True when `path` is a regular file and no symlink (`-f` and not `-L`). */
-export function isRegularFile(path: string): boolean {
-  try {
-    return lstatSync(path).isFile();
   } catch {
     return false;
   }

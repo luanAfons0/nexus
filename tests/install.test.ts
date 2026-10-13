@@ -73,40 +73,37 @@ function onPath(name: string): string | undefined {
   return undefined;
 }
 
-test(
-  'install runs npx skills add with every skill, publishes the Upstream Lock and links',
-  () => {
-    const home = installHome('install-cli');
-    const run = runNexus(home, ['install', 'source', '--skill', 'alpha', '--skill', 'beta'], {
-      env: { XDG_STATE_HOME: join(home, 'state') },
-    });
-    assert.equal(run.status, 0, run.stderr);
-    assert.deepEqual(fakeCalls(home, 'npx'), [ADD_ALPHA_BETA]);
-    assert.ok(!existsSync(join(home, 'npx-state-home')), 'npx was given XDG_STATE_HOME');
-    assert.deepEqual(
-      readFileSync(join(home, '.nexus', 'skill-lock.json')),
-      readFileSync(join(home, '.agents', '.skill-lock.json')),
-    );
-    const canonical = join(home, '.agents', 'skills');
-    assertLinkTo(join(home, '.claude', 'skills', 'alpha'), join(canonical, 'alpha'));
-    assertLinkTo(join(home, '.codex', 'skills', 'beta'), join(canonical, 'beta'));
-    assert.equal(
-      run.stdout,
-      `nexus: global instructions are absent: ${join(home, '.custom-skills', 'GLOBAL.md')} ` +
-        '(create it and rerun link to link the Instruction Paths)\n' +
-        'nexus: link complete: skills reconciled\n' +
-        ['alpha', 'beta']
-          .map(
-            (name) =>
-              `nexus: installed ${name}: canonical ${join(canonical, name)}; ` +
-              `Claude ${join(home, '.claude', 'skills', name)}; ` +
-              `Codex ${join(home, '.codex', 'skills', name)}\n`,
-          )
-          .join(''),
-    );
-    assert.deepEqual(scratch(home), []);
-  },
-);
+test('install runs npx skills add with every skill, publishes the Upstream Lock and links', () => {
+  const home = installHome('install-cli');
+  const run = runNexus(home, ['install', 'source', '--skill', 'alpha', '--skill', 'beta'], {
+    env: { XDG_STATE_HOME: join(home, 'state') },
+  });
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(fakeCalls(home, 'npx'), [ADD_ALPHA_BETA]);
+  assert.ok(!existsSync(join(home, 'npx-state-home')), 'npx was given XDG_STATE_HOME');
+  assert.deepEqual(
+    readFileSync(join(home, '.nexus', 'skill-lock.json')),
+    readFileSync(join(home, '.agents', '.skill-lock.json')),
+  );
+  const canonical = join(home, '.agents', 'skills');
+  assertLinkTo(join(home, '.claude', 'skills', 'alpha'), join(canonical, 'alpha'));
+  assertLinkTo(join(home, '.codex', 'skills', 'beta'), join(canonical, 'beta'));
+  assert.equal(
+    run.stdout,
+    `nexus: global instructions are absent: ${join(home, '.custom-skills', 'GLOBAL.md')} ` +
+      '(create it and rerun link to link the Instruction Paths)\n' +
+      'nexus: link complete: skills reconciled\n' +
+      ['alpha', 'beta']
+        .map(
+          (name) =>
+            `nexus: installed ${name}: canonical ${join(canonical, name)}; ` +
+            `Claude ${join(home, '.claude', 'skills', name)}; ` +
+            `Codex ${join(home, '.codex', 'skills', name)}\n`,
+        )
+        .join(''),
+  );
+  assert.deepEqual(scratch(home), []);
+});
 
 test('a failed npx keeps the Nexus Lock and names the untracked skill directory', () => {
   const home = installHome('install-failure');

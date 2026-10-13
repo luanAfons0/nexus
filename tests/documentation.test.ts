@@ -84,7 +84,14 @@ test('every Control Skill names itself and runs its command in the one CLI form'
 });
 
 test('the nexus launcher prints the page address and owns no run', () => {
-  assertLacks('skills/nexus/SKILL.md', ['nohup', 'disown', 'mktemp', 'sleep', 'nexus ui', 'Stop server']);
+  assertLacks('skills/nexus/SKILL.md', [
+    'nohup',
+    'disown',
+    'mktemp',
+    'sleep',
+    'nexus ui',
+    'Stop server',
+  ]);
 });
 
 test('the nexus launcher command prints the page address from the FirstMate runtime file', () => {
@@ -107,32 +114,75 @@ test('the nexus launcher command prints the page address from the FirstMate runt
 
 test('the README says how to install, run and recover Nexus on Node alone', () => {
   assertHolds('README.md', [
-    '~/.agents/skills', 'skill-lock.json', '.claude-backup', '.codex-backup',
-    '/nexus-setup', '$nexus-setup', 'npx skills', 'recovery', 'another agent',
-    '~/.custom-skills', '/nexus-new', '$nexus-new', '.workspaces',
-    '/nexus-update', '$nexus-update', '/nexus-remove', '$nexus-remove',
-    '/nexus-help', '$nexus-help', 'nexus list', '`/nexus`', '`$nexus`', 'Save changes',
-    '## Global instructions', '~/.custom-skills/GLOBAL.md',
+    '~/.agents/skills',
+    'skill-lock.json',
+    '.claude-backup',
+    '.codex-backup',
+    '/nexus-setup',
+    '$nexus-setup',
+    'npx skills',
+    'recovery',
+    'another agent',
+    '~/.custom-skills',
+    '/nexus-new',
+    '$nexus-new',
+    '.workspaces',
+    '/nexus-update',
+    '$nexus-update',
+    '/nexus-remove',
+    '$nexus-remove',
+    '/nexus-help',
+    '$nexus-help',
+    'nexus list',
+    '`/nexus`',
+    '`$nexus`',
+    'Save changes',
+    '## Global instructions',
+    '~/.custom-skills/GLOBAL.md',
     '0003-global-instructions-are-a-managed-link-into-the-custom-root.md',
     '0004-nexus-writes-only-global-md-in-the-custom-root.md',
-    '## The page', '0008-nexus-is-a-firstmate-plugin.md',
+    '## The page',
+    '0008-nexus-is-a-firstmate-plugin.md',
     '0005-nexus-opens-one-loopback-listener-only-in-nexus-ui.md',
     '0006-a-web-ui-run-is-recorded-in-a-run-file-and-can-be-stopped.md',
     '0007-the-tray-is-a-windows-client-of-the-nexus-cli.md',
     '0010-on-windows-a-managed-link-is-a-junction-or-a-managed-copy.md',
-    '#/skills', '#/global', '/p/nexus/', 'Plugin Server', 'Plugin Page',
-    'list_skills', 'check_skills', 'show_check_result', 'show_global_instructions',
-    'update_skill', 'remove_skill', 'edit_global_instructions', 'Connection lost.',
-    'grouped by kind', 'All kinds',
-    'Node 24', 'npx.cmd', 'junction', 'Managed Copy', CLI_FORM,
-    'node scripts/dev-home.ts', 'node --test',
+    '#/skills',
+    '#/global',
+    '/p/nexus/',
+    'Plugin Server',
+    'Plugin Page',
+    'list_skills',
+    'check_skills',
+    'show_check_result',
+    'show_global_instructions',
+    'update_skill',
+    'remove_skill',
+    'edit_global_instructions',
+    'Connection lost.',
+    'grouped by kind',
+    'All kinds',
+    'Node 24',
+    'npx.cmd',
+    'junction',
+    'Managed Copy',
+    CLI_FORM,
+    'node scripts/dev-home.ts',
+    'node --test',
     'it does not check Git, npm, npx, or NVM',
     'directly available `npx`; if it is unavailable, NVM is the fallback',
     'retries once and then removes the temporary transaction, leaves',
   ]);
   // The listener, the Run File and the Tray left with ADR 0008, and the Bash
   // CLI, Python and jq left with the port to Node.
-  assertLacks('README.md', [...GONE, 'nexus ui', 'http.server', 'ui-run.json', 'POST api/', 'GET api/']);
+  assertLacks('README.md', [
+    ...GONE,
+    'nexus ui',
+    'http.server',
+    'ui-run.json',
+    'POST api/',
+    'GET api/',
+  ]);
 });
 
 test('the contributor documents name the Node suite and the sandbox home command', () => {
@@ -153,14 +203,22 @@ test('the decision records and the Ubiquitous Language ship with the code', () =
   for (const adr of superseded) assertHolds(`docs/adr/${adr}.md`, ['Superseded by ADR 0008']);
   assertHolds('docs/adr/0008-nexus-is-a-firstmate-plugin.md', ['Accepted']);
   assertHolds('CONTEXT.md', [
-    '**Host**', '**Plugin**', '**Plugin Page**', '**Plugin Server**', '**Envelope**',
-    '**Managed Link**', '**Managed Copy**',
+    '**Host**',
+    '**Plugin**',
+    '**Plugin Page**',
+    '**Plugin Server**',
+    '**Envelope**',
+    '**Managed Link**',
+    '**Managed Copy**',
   ]);
 });
 
 test('Git ignores the Nexus Lock, the Check Result and the Managed Copy record', () => {
   for (const name of ['skill-lock.json', 'skill-check.json', 'managed-copies.json']) {
-    const run = spawnSync('git', ['check-ignore', '-q', '--', name], { cwd: REPO_ROOT, shell: false });
+    const run = spawnSync('git', ['check-ignore', '-q', '--', name], {
+      cwd: REPO_ROOT,
+      shell: false,
+    });
     assert.equal(run.status, 0, `${name} is not ignored`);
   }
 });
@@ -179,5 +237,8 @@ test('Nexus runs on Node alone: no Bash, Python or jq file, and no runtime depen
 
   const manifest = JSON.parse(read('package.json')) as Record<string, unknown>;
   assert.equal(manifest.dependencies, undefined);
-  assert.deepEqual(Object.keys(manifest.devDependencies as object).sort(), ['@types/node', 'typescript']);
+  assert.deepEqual(Object.keys(manifest.devDependencies as object).sort(), [
+    '@types/node',
+    'typescript',
+  ]);
 });

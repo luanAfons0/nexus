@@ -10,23 +10,14 @@
  * The file is copied into a Snapshot directory, `<Nexus home>/.nexus-lock.*`,
  * and only the copy is read, exactly once; the directory is removed after. A
  * lock replaced while Nexus reads it cannot change what Nexus does with it.
- * The sentences are the Bash CLI's (`load_validated_lock_names` in
- * `scripts/lib/lock.sh`).
+ * The sentences are the Bash CLI's (`load_validated_lock_names`).
  */
-import {
-  copyFileSync,
-  lstatSync,
-  mkdtempSync,
-  readFileSync,
-  rmdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { isControlSkill } from './control-skills.ts';
+import { isPresent, isRegularFile, reachesDirectory } from './entries.ts';
 import { fault, pause, paused, seamFailure } from './fault.ts';
-import { sortedJson } from './json.ts';
+import { isObject, sortedJson } from './json.ts';
 import { byteOrder, isSafeSkillName } from './skill-names.ts';
 
 /** A lock that passed every rule. */
@@ -222,7 +213,7 @@ export function cleanupDiscoveredLockSnapshots(
   nexusHome: string,
 ): string | undefined {
   if (
-    !isDirectory(dir) ||
+    !reachesDirectory(dir) ||
     resolve(dirname(dir)) !== resolve(nexusHome) ||
     !basename(dir).startsWith(CANDIDATES_PREFIX)
   ) {
@@ -246,25 +237,6 @@ function snapshotCandidate(candidate: string, snapshot: string): boolean {
   }
 }
 
-/** True when anything is at `path`, a dangling symlink too (`-e` or `-L`). */
-function isPresent(path: string): boolean {
-  try {
-    lstatSync(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** True when `path` is a directory, following a symlink (`-d`). */
-function isDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 /** The lock in `bytes` when it passes every rule, else undefined. */
 function validate(bytes: Buffer): NexusLock | undefined {
   // jq skips a leading byte order mark; JSON.parse does not.
@@ -281,19 +253,6 @@ function validate(bytes: Buffer): NexusLock | undefined {
   const names = Object.keys(document.skills);
   if (!names.every((name) => isSafeSkillName(name) && !isControlSkill(name))) return undefined;
   return { names: names.sort(byteOrder), document, bytes };
-}
-
-function isObject(value: unknown): value is Readonly<Record<string, unknown>> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-/** True for a regular file that is not a symlink (`-f` and not `-L`). */
-function isRegularFile(path: string): boolean {
-  try {
-    return lstatSync(path).isFile();
-  } catch {
-    return false;
-  }
 }
 
 /** Remove a Snapshot directory; the sentence that says why not, or undefined. */

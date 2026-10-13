@@ -8,11 +8,11 @@
  * become the Nexus Lock. Removing the last Installed Skill Publishes a lock
  * that selects no skills. Nexus never deletes from the Canonical Root itself;
  * upstream owns it, so a directory upstream left behind is only named. The
- * sentences and exit codes are the Bash CLI's (`scripts/lib/remove.sh`).
+ * sentences and exit codes are the Bash CLI's.
  */
-import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Command } from './cli.ts';
+import { isPresent } from './entries.ts';
 import { parseOneSkillName, readInstalledSkill } from './one-skill.ts';
 import { error, info } from './output.ts';
 import { readPaths } from './paths.ts';
@@ -57,20 +57,10 @@ export const remove: Command = async (args) => {
   if (published !== 0) return 1;
 
   const target = join(paths.canonicalRoot, name);
-  if (exists(target)) info(`untracked canonical skill directory: ${target}`);
+  if (isPresent(target)) info(`untracked canonical skill directory: ${target}`);
   info(
     `removed ${name}: Claude ${join(paths.claudeSkills, name)} and ` +
       `Codex ${join(paths.codexSkills, name)} links reconciled`,
   );
   return 0;
 };
-
-/** True when anything is at `path`, a dangling symlink too (`-e || -L`). */
-function exists(path: string): boolean {
-  try {
-    lstatSync(path);
-    return true;
-  } catch {
-    return false;
-  }
-}

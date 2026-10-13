@@ -10,20 +10,12 @@
  */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import {
-  existsSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { customHome, snapshotTree } from './helpers/homes.ts';
-import { fakeCalls, installFake, REPO_ROOT, runNexus } from './helpers/nexus.ts';
+import { fakeCalls, installFake, runNexus } from './helpers/nexus.ts';
 
-const HELP = readFileSync(join(REPO_ROOT, 'src', 'help.ts'), 'utf8');
-const USAGE = /export const HELP_TEXT = `([^`]*)`;/.exec(HELP)?.[1] ?? '';
 
 /** The fourth field of a gh call, the jq filter that picks the committer date. */
 const DATE_FILTER = '.[0].commit.committer.date // empty';
@@ -223,11 +215,11 @@ test('check --json prints the document the Check Result holds, in jq pretty form
 test('every unknown Installed Skill carries the reason, and none counts as current', () => {
   const home = customHome('check-reasons');
   installFake(home, 'gh', 'gh-check.ts');
-  const { installedAt: _installed, updatedAt: _updated, ...undated } = skill(
-    'owner/quiet',
-    'skills/undated/SKILL.md',
-    'eeee',
-  );
+  const {
+    installedAt: _installed,
+    updatedAt: _updated,
+    ...undated
+  } = skill('owner/quiet', 'skills/undated/SKILL.md', 'eeee');
   writeCheckLock(home, {
     local: { ...skill('owner/quiet', 'skills/local/SKILL.md', 'ffff'), sourceType: 'local' },
     nameless: { ...skill('', 'skills/nameless/SKILL.md', 'ffff') },
@@ -330,16 +322,21 @@ test('check refuses without a lock, and with an invalid one', () => {
   );
   assert.ok(!existsSync(resultPath(home)));
   assert.deepEqual(scratch(home), []);
-  assert.deepEqual(fakeCalls(home, 'gh'), [['auth', 'status'], ['auth', 'status']]);
+  assert.deepEqual(fakeCalls(home, 'gh'), [
+    ['auth', 'status'],
+    ['auth', 'status'],
+  ]);
 });
 
 test('check refuses an argument it does not know with the usage', () => {
   const home = checkHome('check-usage');
+  const usage = runNexus(home, ['help']).stdout;
+  assert.match(usage, /^Usage: nexus /);
   for (const args of [['--all'], ['--json', '--bogus'], ['--last', 'now']]) {
     const run = runNexus(home, ['check', ...args]);
     assert.equal(run.status, 2, args.join(' '));
     assert.equal(run.stdout, '');
-    assert.equal(run.stderr, USAGE);
+    assert.equal(run.stderr, usage);
   }
   assert.deepEqual(fakeCalls(home, 'gh'), []);
 });
@@ -401,7 +398,8 @@ test('check --last refuses a result that is not there, or not a result', () => {
   // Half a file, and a whole JSON document that is not a Check Result, are
   // both unreadable, and neither is corrected in place.
   const unreadable =
-    `nexus: error: the check result is unreadable: run nexus check to write ${result} again\n`;
+    `nexus: error: the check result is unreadable: ` +
+    `run nexus check to write ${result} again\n`;
   for (const text of [
     'half a result\n',
     '{"checkedAt":"2026-01-01T00:00:00Z"}\n',
@@ -425,7 +423,12 @@ test('check --last refuses a result that is not there, or not a result', () => {
 test('a moment with no zone is read as UTC, whatever zone the machine is in', () => {
   // owner/moved last changed at 2026-06-01T10:00:00Z.
   const skills = {
-    'early-skill': skill('owner/moved', 'skills/early-skill/SKILL.md', 'aaaa', '2026-06-01 09:00:00'),
+    'early-skill': skill(
+      'owner/moved',
+      'skills/early-skill/SKILL.md',
+      'aaaa',
+      '2026-06-01 09:00:00',
+    ),
     'late-skill': skill('owner/moved', 'skills/late-skill/SKILL.md', 'bbbb', '2026-06-01 11:00:00'),
   };
   for (const zone of ['America/Sao_Paulo', 'Asia/Tokyo']) {
@@ -435,6 +438,13 @@ test('a moment with no zone is read as UTC, whatever zone the machine is in', ()
     const run = runNexus(home, ['check'], { env: { TZ: zone } });
     assert.equal(run.status, 0, run.stderr);
     const states = readResult(home).skills.map((row) => [row.name, row.state]);
-    assert.deepEqual(states, [['early-skill', 'behind'], ['late-skill', 'current']], zone);
+    assert.deepEqual(
+      states,
+      [
+        ['early-skill', 'behind'],
+        ['late-skill', 'current'],
+      ],
+      zone,
+    );
   }
 });

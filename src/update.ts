@@ -5,7 +5,7 @@
  * Every refusal Nexus can make on its own comes before `npx` is started. A
  * failed `npx` leaves the Nexus Lock as it was, and an Upstream Lock that no
  * longer names the skill is never Published (ADR 0001). The sentences and
- * exit codes are the Bash CLI's (`scripts/lib/update.sh`).
+ * exit codes are the Bash CLI's.
  */
 import { join } from 'node:path';
 import type { Command } from './cli.ts';

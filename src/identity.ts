@@ -10,7 +10,7 @@
  * symlink the text it holds, are what make a replacement visible. Device
  * and inode are read as `bigint`, because a Windows file ID does not fit a
  * number. This is the Bash CLI's `stat -c '%d:%i:%F'` and
- * `canonical_identity` (`scripts/lib/setup.sh`).
+ * `canonical_identity`.
  */
 import { lstatSync, readlinkSync, statSync, type BigIntStats } from 'node:fs';
 

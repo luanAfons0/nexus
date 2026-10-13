@@ -2,7 +2,7 @@
  * The Backup manifest: a record of every entry of an Agent Home tree, exact
  * enough that two equal manifests mean two trees a person cannot tell apart.
  *
- * This is the port of `scripts/lib/backup_manifest.py`. Setup takes one of
+ * It is the Bash CLI's manifest, record for record. Setup takes one of
  * the source before the copy, one of the copy, and one of the source after,
  * and accepts the Backup only when they agree. Each entry records its type,
  * its relative path as bytes, its mode, owner, group and modification time
@@ -37,7 +37,7 @@ import {
   type BigIntStats,
 } from 'node:fs';
 import { sep } from 'node:path';
-import { pyOsError, pyRepr } from './py-text.ts';
+import { errnoText, quotedPath } from './quoted-path.ts';
 
 /** One entry of a tree, as the manifest records it. */
 export type ManifestRecord = {
@@ -91,11 +91,13 @@ export function readManifest(root: string, digests: boolean): ManifestRead {
   } catch {
     return {
       ok: true,
-      manifest: { records: [{ kind: 'a', rel: Buffer.from('.'), mode: 0, uid: 0, gid: 0, mtimeNs: 0n }] },
+      manifest: {
+        records: [{ kind: 'a', rel: Buffer.from('.'), mode: 0, uid: 0, gid: 0, mtimeNs: 0n }],
+      },
     };
   }
   if (!rootStats.isDirectory()) {
-    return { ok: false, error: `agent root is not a physical directory: ${pyRepr(rootPath)}` };
+    return { ok: false, error: `agent root is not a physical directory: ${quotedPath(rootPath)}` };
   }
   try {
     const entries = walk(rootPath);
@@ -170,7 +172,7 @@ function walk(root: Buffer): Entry[] {
     try {
       stats = lstatSync(path, { bigint: true });
     } catch (failure) {
-      throw manifestError(`cannot lstat ${pyRepr(path)}: ${pyOsError(failure, path)}`);
+      throw manifestError(`cannot lstat ${quotedPath(path)}: ${errnoText(failure, path)}`);
     }
     entries.push({ path, rel, stats });
     if (!stats.isDirectory()) return;
@@ -178,7 +180,7 @@ function walk(root: Buffer): Entry[] {
     try {
       names = readdirSync(path, { encoding: 'buffer' });
     } catch (failure) {
-      throw manifestError(`cannot traverse ${pyRepr(path)}: ${pyOsError(failure, path)}`);
+      throw manifestError(`cannot traverse ${quotedPath(path)}: ${errnoText(failure, path)}`);
     }
     names.sort(Buffer.compare);
     for (const name of names) {
@@ -213,7 +215,7 @@ function record(
     try {
       target = readlinkSync(path, { encoding: 'buffer' });
     } catch (failure) {
-      throw manifestError(`cannot read symlink ${pyRepr(path)}: ${pyOsError(failure, path)}`);
+      throw manifestError(`cannot read symlink ${quotedPath(path)}: ${errnoText(failure, path)}`);
     }
     return { kind: 'l', ...common, target };
   }
@@ -228,7 +230,7 @@ function record(
     }
     return { kind: 'f', ...common, size: stats.size, representative, digest };
   }
-  throw manifestError(`unsupported agent backup entry (device/FIFO/socket): ${pyRepr(path)}`);
+  throw manifestError(`unsupported agent backup entry (device/FIFO/socket): ${quotedPath(path)}`);
 }
 
 /**
@@ -236,12 +238,13 @@ function record(
  * that is checked to be the file the walk saw, before and after.
  */
 function hashFile(path: Buffer, seen: BigIntStats): Buffer {
-  const changed = (): ManifestError => manifestError(`file changed while hashing: ${pyRepr(path)}`);
+  const changed = (): ManifestError =>
+    manifestError(`file changed while hashing: ${quotedPath(path)}`);
   let fd: number;
   try {
     fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   } catch (failure) {
-    throw manifestError(`cannot read file ${pyRepr(path)}: ${pyOsError(failure, path)}`);
+    throw manifestError(`cannot read file ${quotedPath(path)}: ${errnoText(failure, path)}`);
   }
   try {
     const checked = fstatSync(fd, { bigint: true });
@@ -257,7 +260,7 @@ function hashFile(path: Buffer, seen: BigIntStats): Buffer {
     return hash.digest();
   } catch (failure) {
     if (isManifestError(failure)) throw failure;
-    throw manifestError(`cannot read file ${pyRepr(path)}: ${pyOsError(failure, path)}`);
+    throw manifestError(`cannot read file ${quotedPath(path)}: ${errnoText(failure, path)}`);
   } finally {
     closeSync(fd);
   }

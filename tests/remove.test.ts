@@ -14,13 +14,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { customHome, snapshotTree, writeLock, writeSkill } from './helpers/homes.ts';
-import {
-  agentTrees,
-  assertLinkText,
-  assertLinkTo,
-  isAbsent,
-  makeLink,
-} from './helpers/links.ts';
+import { agentTrees, assertLinkText, assertLinkTo, isAbsent, makeLink } from './helpers/links.ts';
 import { fakeCalls, installFake, runNexus } from './helpers/nexus.ts';
 
 /** A home with `names` installed in both locks and the remove fake first on its PATH. */
@@ -137,24 +131,21 @@ test('remove refuses a bad, custom or uninstalled name before npx, and keeps the
   assert.deepEqual(nexusLock(home), before);
 });
 
-test(
-  'remove of the last Installed Skill Publishes a lock that selects no skills',
-  () => {
-    const home = removeHome('remove-last', ['alpha']);
-    assert.equal(runNexus(home, ['link']).status, 0);
-    const run = runNexus(home, ['remove', 'alpha']);
-    assert.equal(run.status, 0, run.stderr);
-    assert.match(run.stdout, /nexus: removed alpha: /);
-    const lock = JSON.parse(nexusLock(home).toString()) as { skills: unknown };
-    assert.deepEqual(lock.skills, {});
-    assert.ok(isAbsent(join(home, '.claude', 'skills', 'alpha')));
-    assert.ok(isAbsent(join(home, '.codex', 'skills', 'alpha')));
-    assertLinkTo(
-      join(home, '.claude', 'skills', 'nexus-remove'),
-      join(home, '.nexus', 'skills', 'nexus-remove'),
-    );
-  },
-);
+test('remove of the last Installed Skill Publishes a lock that selects no skills', () => {
+  const home = removeHome('remove-last', ['alpha']);
+  assert.equal(runNexus(home, ['link']).status, 0);
+  const run = runNexus(home, ['remove', 'alpha']);
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /nexus: removed alpha: /);
+  const lock = JSON.parse(nexusLock(home).toString()) as { skills: unknown };
+  assert.deepEqual(lock.skills, {});
+  assert.ok(isAbsent(join(home, '.claude', 'skills', 'alpha')));
+  assert.ok(isAbsent(join(home, '.codex', 'skills', 'alpha')));
+  assertLinkTo(
+    join(home, '.claude', 'skills', 'nexus-remove'),
+    join(home, '.nexus', 'skills', 'nexus-remove'),
+  );
+});
 
 test('a failed npx remove keeps the Nexus Lock and the links, and exits with its status', () => {
   const home = installedHome('remove-upstream-failure');
@@ -187,22 +178,22 @@ test('an Upstream Lock that still names the skill is not Published, and no link 
   assert.deepEqual(scratch(home), []);
 });
 
-test(
-  'a canonical directory upstream left behind is named and kept',
-  () => {
-    const home = installedHome('remove-untracked');
-    const run = runNexus(home, ['remove', 'alpha'], {
-      env: { NEXUS_FAKE_NPX_MODE: 'leave_directory' },
-    });
-    assert.equal(run.status, 0, run.stderr);
-    const canonical = join(home, '.agents', 'skills', 'alpha');
-    assert.match(run.stdout, new RegExp(`untracked canonical skill directory: ${escape(canonical)}\n`));
-    assert.equal(readFileSync(join(canonical, 'SKILL.md'), 'utf8'), '---\nname: alpha\n---\n');
-    assert.ok(isAbsent(join(home, '.claude', 'skills', 'alpha')));
-    assert.ok(isAbsent(join(home, '.codex', 'skills', 'alpha')));
-    assert.deepEqual(nexusLock(home), upstreamLock(home));
-  },
-);
+test('a canonical directory upstream left behind is named and kept', () => {
+  const home = installedHome('remove-untracked');
+  const run = runNexus(home, ['remove', 'alpha'], {
+    env: { NEXUS_FAKE_NPX_MODE: 'leave_directory' },
+  });
+  assert.equal(run.status, 0, run.stderr);
+  const canonical = join(home, '.agents', 'skills', 'alpha');
+  assert.match(
+    run.stdout,
+    new RegExp(`untracked canonical skill directory: ${escape(canonical)}\n`),
+  );
+  assert.equal(readFileSync(join(canonical, 'SKILL.md'), 'utf8'), '---\nname: alpha\n---\n');
+  assert.ok(isAbsent(join(home, '.claude', 'skills', 'alpha')));
+  assert.ok(isAbsent(join(home, '.codex', 'skills', 'alpha')));
+  assert.deepEqual(nexusLock(home), upstreamLock(home));
+});
 
 /** `text` with every character a regular expression reads as syntax made plain. */
 function escape(text: string): string {

@@ -174,17 +174,29 @@ test('a copied file with another sub-second time is seen and refuses setup', () 
   assert.match(run.stderr, NOT_VERIFIED);
 });
 
-test('a copied symlink that lost its trailing newline is seen and refuses setup', { skip: POSIX_ONLY }, () => {
-  const { home, run } = setupWithFault('backup_symlink_corrupt', 'backup_symlink_corrupt', (home) => {
-    emptyHome(home);
-    symlinkSync('literal-target\n', join(home, '.claude', 'trailing-newline-link'));
-  });
-  assertNothingPublished(home, run);
-  assert.match(run.stderr, NOT_VERIFIED);
-});
+test(
+  'a copied symlink that lost its trailing newline is seen and refuses setup',
+  { skip: POSIX_ONLY },
+  () => {
+    const { home, run } = setupWithFault(
+      'backup_symlink_corrupt',
+      'backup_symlink_corrupt',
+      (home) => {
+        emptyHome(home);
+        symlinkSync('literal-target\n', join(home, '.claude', 'trailing-newline-link'));
+      },
+    );
+    assertNothingPublished(home, run);
+    assert.match(run.stderr, NOT_VERIFIED);
+  },
+);
 
 test('a promoted Backup that is not the verified tree refuses setup and keeps every tree', () => {
-  const { home, run } = setupWithFault('backup_promotion_identity', 'backup_promote_ambiguous', emptyHome);
+  const { home, run } = setupWithFault(
+    'backup_promotion_identity',
+    'backup_promote_ambiguous',
+    emptyHome,
+  );
   assert.notEqual(run.status, 0);
   assert.match(run.stderr, /backup promotion changed verified tree identity/);
   for (const dir of ['.claude-backup', '.codex-backup', '.claude-backup.unknown']) {
@@ -194,32 +206,41 @@ test('a promoted Backup that is not the verified tree refuses setup and keeps ev
 });
 
 test('a second Backup that cannot be promoted takes the first back', () => {
-  const { home, run } = setupWithFault('backup_promotion_failure', 'backup_promote_second', (home) =>
-    writeLock(join(home, '.agents', '.skill-lock.json'), []),
+  const { home, run } = setupWithFault(
+    'backup_promotion_failure',
+    'backup_promote_second',
+    (home) => writeLock(join(home, '.agents', '.skill-lock.json'), []),
   );
   assertNothingPublished(home, run);
   assert.match(run.stderr, /test seam: second backup promotion failed/);
 });
 
-test('a Backup that cannot be taken back is named with the transaction that holds the other', () => {
-  const { home, run } = setupWithFault('backup_rollback_recovery', 'backup_rollback', (home) => {
-    writeLock(join(home, '.agents', '.skill-lock.json'), []);
-    write(join(home, '.claude', 'marker'), 'claude-original\n');
-    write(join(home, '.codex', 'marker'), 'codex-original\n');
-  });
-  assert.notEqual(run.status, 0);
-  const tx = /; (.*\.nexus-setup-backup\.[^ ]*) \(Codex backup:/.exec(run.stderr)?.[1];
-  assert.ok(tx !== undefined, run.stderr);
-  const codex = join(tx, 'codex-backup');
-  assert.equal(readFileSync(join(home, '.claude-backup', 'marker'), 'utf8'), 'claude-original\n');
-  assert.equal(readFileSync(join(codex, 'marker'), 'utf8'), 'codex-original\n');
-  for (const path of [join(home, '.claude-backup'), tx, codex]) assert.ok(run.stderr.includes(path));
-  assert.ok(isAbsent(join(home, '.nexus', 'skill-lock.json')));
-  const txs = readdirSync(home).filter((name) => name.startsWith('.nexus-setup-backup.'));
-  assert.deepEqual(txs.map((name) => join(home, name)), [tx]);
-  const prefixes = ['.nexus-setup-source.', '.nexus-setup-copy.'];
-  assert.deepEqual(setupResidue(home, prefixes), []);
-});
+test(
+  'a Backup that cannot be taken back is named with the transaction that holds the other',
+  () => {
+    const { home, run } = setupWithFault('backup_rollback_recovery', 'backup_rollback', (home) => {
+      writeLock(join(home, '.agents', '.skill-lock.json'), []);
+      write(join(home, '.claude', 'marker'), 'claude-original\n');
+      write(join(home, '.codex', 'marker'), 'codex-original\n');
+    });
+    assert.notEqual(run.status, 0);
+    const tx = /; (.*\.nexus-setup-backup\.[^ ]*) \(Codex backup:/.exec(run.stderr)?.[1];
+    assert.ok(tx !== undefined, run.stderr);
+    const codex = join(tx, 'codex-backup');
+    assert.equal(readFileSync(join(home, '.claude-backup', 'marker'), 'utf8'), 'claude-original\n');
+    assert.equal(readFileSync(join(codex, 'marker'), 'utf8'), 'codex-original\n');
+    for (const path of [join(home, '.claude-backup'), tx, codex])
+      assert.ok(run.stderr.includes(path));
+    assert.ok(isAbsent(join(home, '.nexus', 'skill-lock.json')));
+    const txs = readdirSync(home).filter((name) => name.startsWith('.nexus-setup-backup.'));
+    assert.deepEqual(
+      txs.map((name) => join(home, name)),
+      [tx],
+    );
+    const prefixes = ['.nexus-setup-source.', '.nexus-setup-copy.'];
+    assert.deepEqual(setupResidue(home, prefixes), []);
+  },
+);
 
 test('an Agent Home that changes once during the Backup is copied again', () => {
   const { home, run } = setupWithFault('backup_retry_once', 'backup_retry_once', (home) => {
@@ -237,10 +258,7 @@ test('an Agent Home that keeps changing refuses setup and asks to close the agen
     write(join(home, '.codex', 'retry-marker'), 'live\n');
   });
   assertNothingPublished(home, run);
-  assert.match(
-    run.stderr,
-    /agent state changed during backup; close Claude and Codex and retry/,
-  );
+  assert.match(run.stderr, /agent state changed during backup; close Claude and Codex and retry/);
   assert.ok(statSync(join(home, '.claude', 'retry-marker')).isFile());
   assert.ok(statSync(join(home, '.codex', 'retry-marker')).isFile());
 });
@@ -248,7 +266,10 @@ test('an Agent Home that keeps changing refuses setup and asks to close the agen
 test('the Backup reads three manifests of each Agent Home, present or absent', () => {
   for (const [name, build] of [
     ['backup_manifest_bound', emptyHome],
-    ['backup_manifest_bound_absent', (home: string) => writeLock(join(home, '.agents', '.skill-lock.json'), [])],
+    [
+      'backup_manifest_bound_absent',
+      (home: string) => writeLock(join(home, '.agents', '.skill-lock.json'), []),
+    ],
   ] as const) {
     const { home, run } = setupWithFault(name, 'backup_manifest_count', build);
     assert.equal(run.status, 0, run.stderr);
@@ -259,21 +280,24 @@ test('the Backup reads three manifests of each Agent Home, present or absent', (
   }
 });
 
-test('a change inside a promoted Backup is past what setup checks: setup completes and the Agent Home is kept', () => {
-  const { home, run } = setupWithFault('backup_final_corrupt', 'backup_final_corrupt', (home) => {
-    emptyHome(home);
-    write(join(home, '.claude', '.hidden'), 'hidden\n');
-    chmodSync(join(home, '.claude', '.hidden'), 0o644);
-  });
-  assert.equal(run.status, 0, run.stderr);
-  assert.ok(statSync(join(home, '.nexus', 'skill-lock.json')).isFile());
-  assert.equal(readFileSync(join(home, '.claude', '.hidden'), 'utf8'), 'hidden\n');
-  assert.equal(readFileSync(join(home, '.claude-backup', '.hidden'), 'utf8'), 'hidden\n');
-  if (!WINDOWS) {
-    assert.equal(statSync(join(home, '.claude', '.hidden')).mode & 0o777, 0o644);
-    assert.equal(statSync(join(home, '.claude-backup', '.hidden')).mode & 0o777, 0o600);
-  }
-});
+test(
+  'a change inside a promoted Backup is past what setup checks, and setup completes',
+  () => {
+    const { home, run } = setupWithFault('backup_final_corrupt', 'backup_final_corrupt', (home) => {
+      emptyHome(home);
+      write(join(home, '.claude', '.hidden'), 'hidden\n');
+      chmodSync(join(home, '.claude', '.hidden'), 0o644);
+    });
+    assert.equal(run.status, 0, run.stderr);
+    assert.ok(statSync(join(home, '.nexus', 'skill-lock.json')).isFile());
+    assert.equal(readFileSync(join(home, '.claude', '.hidden'), 'utf8'), 'hidden\n');
+    assert.equal(readFileSync(join(home, '.claude-backup', '.hidden'), 'utf8'), 'hidden\n');
+    if (!WINDOWS) {
+      assert.equal(statSync(join(home, '.claude', '.hidden')).mode & 0o777, 0o644);
+      assert.equal(statSync(join(home, '.claude-backup', '.hidden')).mode & 0o777, 0o600);
+    }
+  },
+);
 
 /**
  * A home for the change-detection cases of the Python manifest test: in
@@ -309,23 +333,35 @@ test('a change of mode, during the Backup, is seen and copied again', { skip: PO
   assert.equal(statSync(join(home, '.claude-backup', 'payload')).mode & 0o777, 0o640);
 });
 
-test('a change of one nanosecond, during the Backup, is seen and copied again', { skip: POSIX_ONLY }, () => {
-  const { home, run } = setupWithFault('manifest_time', 'backup_source_time', (home) => {
-    changingHome(home);
-    // Node writes no nanosecond; GNU touch does.
-    const touch = spawnSync('touch', ['-d', '@1767225600.000000001', join(home, '.claude', 'payload')]);
-    assert.equal(touch.status, 0, String(touch.stderr));
-    const ns = lstatSync(join(home, '.claude', 'payload'), { bigint: true }).mtimeNs;
-    assert.equal(ns, 1767225600000000001n);
-  });
-  assertCopiedAgain(home, run);
-});
+test(
+  'a change of one nanosecond, during the Backup, is seen and copied again',
+  { skip: POSIX_ONLY },
+  () => {
+    const { home, run } = setupWithFault('manifest_time', 'backup_source_time', (home) => {
+      changingHome(home);
+      // Node writes no nanosecond; GNU touch does.
+      const touch = spawnSync('touch', [
+        '-d',
+        '@1767225600.000000001',
+        join(home, '.claude', 'payload'),
+      ]);
+      assert.equal(touch.status, 0, String(touch.stderr));
+      const ns = lstatSync(join(home, '.claude', 'payload'), { bigint: true }).mtimeNs;
+      assert.equal(ns, 1767225600000000001n);
+    });
+    assertCopiedAgain(home, run);
+  },
+);
 
-test("a change of a symlink's text, during the Backup, is seen and copied again", { skip: POSIX_ONLY }, () => {
-  const { home, run } = setupWithFault('manifest_symlink', 'backup_source_symlink', changingHome);
-  assertCopiedAgain(home, run);
-  assert.equal(linkText(join(home, '.claude-backup', 'line\nlink')), 'other\n');
-});
+test(
+  "a change of a symlink's text, during the Backup, is seen and copied again",
+  { skip: POSIX_ONLY },
+  () => {
+    const { home, run } = setupWithFault('manifest_symlink', 'backup_source_symlink', changingHome);
+    assertCopiedAgain(home, run);
+    assert.equal(linkText(join(home, '.claude-backup', 'line\nlink')), 'other\n');
+  },
+);
 
 test('a hard link broken during the Backup is seen and copied again', () => {
   const { home, run } = setupWithFault('manifest_hard_link', 'backup_source_relink', changingHome);
@@ -336,7 +372,11 @@ test('a hard link broken during the Backup is seen and copied again', () => {
 });
 
 test('a lock copy that fails its check publishes no lock and keeps the Backups', () => {
-  const { home, run, before } = setupWithFault('lock_copy_corrupt', 'lock_copy_corrupt', markedHome);
+  const { home, run, before } = setupWithFault(
+    'lock_copy_corrupt',
+    'lock_copy_corrupt',
+    markedHome,
+  );
   assert.notEqual(run.status, 0);
   assert.match(run.stderr, /atomic copy staging verification failed/);
   assert.equal(sourceTrees(home), before);
@@ -346,17 +386,24 @@ test('a lock copy that fails its check publishes no lock and keeps the Backups',
   assert.deepEqual(setupResidue(home), []);
 });
 
-test('a lock that changes after its publication keeps it and both Backups, and says to link', () => {
-  const { home, run } = setupWithFault('lock_post_publish', 'lock_post_publish_corrupt', emptyHome);
-  assertPublished(home, run);
-  for (const words of ['setup is now initialized/disabled', '/nexus-link', '$nexus-link']) {
-    assert.ok(run.stderr.includes(words), run.stderr);
-  }
-  // The advice names the CLI in the one form that works on every system.
-  const cli = join(home, '.nexus', 'src', 'nexus.js');
-  assert.ok(run.stderr.includes(`(CLI: node "${cli}" link)\n`), run.stderr);
-  assert.deepEqual(setupResidue(home), []);
-});
+test(
+  'a lock that changes after its publication keeps it and both Backups, and says to link',
+  () => {
+    const { home, run } = setupWithFault(
+      'lock_post_publish',
+      'lock_post_publish_corrupt',
+      emptyHome,
+    );
+    assertPublished(home, run);
+    for (const words of ['setup is now initialized/disabled', '/nexus-link', '$nexus-link']) {
+      assert.ok(run.stderr.includes(words), run.stderr);
+    }
+    // The advice names the CLI in the one form that works on every system.
+    const cli = join(home, '.nexus', 'src', 'nexus.js');
+    assert.ok(run.stderr.includes(`(CLI: node "${cli}" link)\n`), run.stderr);
+    assert.deepEqual(setupResidue(home), []);
+  },
+);
 
 test('setup Publishes the candidate Snapshot it read, not the candidate changed since', () => {
   const { home, run } = setupWithFault('discover_snapshot', 'discovery_mutate', (home) => {
@@ -369,7 +416,10 @@ test('setup Publishes the candidate Snapshot it read, not the candidate changed 
   assert.ok(readFileSync(join(home, '.nexus', 'skill-lock.json')).equals(expected));
   assert.match(readFileSync(join(home, '.agents', '.skill-lock.json'), 'utf8'), /beta/);
   const candidates = readdirSync(join(home, '.nexus'));
-  assert.deepEqual(candidates.filter((name) => name.startsWith('.nexus-lock-candidates.')), []);
+  assert.deepEqual(
+    candidates.filter((name) => name.startsWith('.nexus-lock-candidates.')),
+    [],
+  );
 });
 
 test('a canonical symlink that cannot be put back stays in its named recovery directory', () => {
@@ -380,7 +430,10 @@ test('a canonical symlink that cannot be put back stays in its named recovery di
   const text = WINDOWS ? join(home, '.claude', 'skills', 'alpha') : '../../.claude/skills/alpha';
   assert.equal(linkText(join(recovery, 'original')), text);
   const canonical = join(home, '.agents', 'skills');
-  assert.deepEqual(readdirSync(canonical).filter((name) => name.startsWith('.nexus-canonical-tmp.')), []);
+  assert.deepEqual(
+    readdirSync(canonical).filter((name) => name.startsWith('.nexus-canonical-tmp.')),
+    [],
+  );
   assert.ok(lstatSync(join(home, '.claude', 'skills', 'alpha')).isDirectory());
 });
 
@@ -401,7 +454,11 @@ test('a canonical copy that cannot be promoted puts the symlink back and leaves 
 });
 
 test('a file put at a canonical entry after its validation is kept', () => {
-  const { home, run } = setupWithFault('canonical_late_collision', 'canonical_late_collision', canonicalLinkHome);
+  const { home, run } = setupWithFault(
+    'canonical_late_collision',
+    'canonical_late_collision',
+    canonicalLinkHome,
+  );
   assert.notEqual(run.status, 0);
   const entry = join(home, '.agents', 'skills', 'alpha');
   assert.ok(lstatSync(entry).isFile(), run.stderr);
@@ -409,10 +466,14 @@ test('a file put at a canonical entry after its validation is kept', () => {
 });
 
 test('a canonical entry repointed after its validation is kept', () => {
-  const { home, run } = setupWithFault('canonical_late_repoint', 'canonical_late_repoint', (home) => {
-    canonicalLinkHome(home);
-    mkdirSync(join(home, 'elsewhere'));
-  });
+  const { home, run } = setupWithFault(
+    'canonical_late_repoint',
+    'canonical_late_repoint',
+    (home) => {
+      canonicalLinkHome(home);
+      mkdirSync(join(home, 'elsewhere'));
+    },
+  );
   assert.notEqual(run.status, 0);
   assertLinkText(join(home, '.agents', 'skills', 'alpha'), join(home, 'elsewhere'));
 });
@@ -431,20 +492,25 @@ for (const [what, fault] of [
   ['empty', 'backup_destination_empty'],
   ['holding a file', 'backup_destination_full'],
 ] as const) {
-  test(`a Backup path that appears ${what} just before its promotion is kept, and setup refuses`, () => {
-    const { home, run, before } = setupWithFault(fault, fault, markedHome);
-    assert.notEqual(run.status, 0, run.stderr);
-    assert.match(run.stderr, /cannot promote Claude backup/);
-    const backup = join(home, '.claude-backup');
-    assert.ok(lstatSync(backup).isDirectory(), run.stderr);
-    const held = fault === 'backup_destination_full' ? ['occupant'] : [];
-    assert.deepEqual(readdirSync(backup), held);
-    if (held.length > 0) assert.equal(readFileSync(join(backup, 'occupant'), 'utf8'), 'occupant\n');
-    assert.ok(isAbsent(join(home, '.codex-backup')));
-    assert.ok(isAbsent(join(home, '.nexus', 'skill-lock.json')));
-    assert.equal(sourceTrees(home), before);
-    assert.deepEqual(setupResidue(home), []);
-  });
+  test(
+    `a Backup path that appears ${what} just before its promotion is kept, and setup refuses`,
+    () => {
+      const { home, run, before } = setupWithFault(fault, fault, markedHome);
+      assert.notEqual(run.status, 0, run.stderr);
+      assert.match(run.stderr, /cannot promote Claude backup/);
+      const backup = join(home, '.claude-backup');
+      assert.ok(lstatSync(backup).isDirectory(), run.stderr);
+      const held = fault === 'backup_destination_full' ? ['occupant'] : [];
+      assert.deepEqual(readdirSync(backup), held);
+      if (held.length > 0) {
+        assert.equal(readFileSync(join(backup, 'occupant'), 'utf8'), 'occupant\n');
+      }
+      assert.ok(isAbsent(join(home, '.codex-backup')));
+      assert.ok(isAbsent(join(home, '.nexus', 'skill-lock.json')));
+      assert.equal(sourceTrees(home), before);
+      assert.deepEqual(setupResidue(home), []);
+    },
+  );
 }
 
 test('a directory that appears at a canonical entry just before the copy moves in is kept', () => {

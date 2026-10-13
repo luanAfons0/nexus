@@ -17,24 +17,17 @@
  * lock. `unknown` always carries a reason and never counts as `current`,
  * because unknown must never read as good news.
  *
- * Every sentence and every byte of output is the Bash CLI's (`check_skills`
- * in `scripts/lib/check.sh`): the JSON in jq's pretty form, the table as
+ * Every sentence and every byte of output is the Bash CLI's (`check_skills`):
+ * the JSON in jq's pretty form, the table as
  * jq's `@tsv` writes it.
  */
 import { randomBytes } from 'node:crypto';
-import {
-  closeSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeSync,
-} from 'node:fs';
+import { closeSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Command } from './cli.ts';
-import { HELP_TEXT } from './help.ts';
-import { compactJson, prettyJson } from './json.ts';
+import { reachesFile } from './entries.ts';
+import { usageRefusal } from './help.ts';
+import { compactJson, isObject, prettyJson } from './json.ts';
 import { lockField, type NexusLock, readLock } from './lock.ts';
 import { error } from './output.ts';
 import { type Paths, readPaths } from './paths.ts';
@@ -89,10 +82,7 @@ export const check: Command = async (args) => {
   for (const arg of args) {
     if (arg === '--json') json = true;
     else if (arg === '--last') last = true;
-    else {
-      process.stderr.write(HELP_TEXT);
-      return 2;
-    }
+    else return usageRefusal();
   }
   const paths = readPaths();
   if (last) return lastResult(paths, json);
@@ -111,7 +101,7 @@ export const check: Command = async (args) => {
 
   // A missing lock is a refusal, not an empty result: "no skills, nothing
   // behind" would be a sentence a caller acts on, and it would not be true.
-  if (!isFile(paths.lock)) {
+  if (!reachesFile(paths.lock)) {
     error(`lock is absent: ${paths.lock}`);
     return 1;
   }
@@ -148,7 +138,7 @@ export const check: Command = async (args) => {
  * exit 1, so that a caller that shows marks shows none.
  */
 function lastResult(paths: Paths, json: boolean): number {
-  if (!isFile(paths.checkResult)) {
+  if (!reachesFile(paths.checkResult)) {
     error(`no check has run yet: run nexus check to write ${paths.checkResult}`);
     return 1;
   }
@@ -391,15 +381,3 @@ function text(value: unknown): string {
   return '';
 }
 
-function isObject(value: unknown): value is Readonly<Record<string, unknown>> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-/** True when `path` is a file, following a symlink (`-f`). */
-function isFile(path: string): boolean {
-  try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-}

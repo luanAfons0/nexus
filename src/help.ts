@@ -8,24 +8,34 @@
 import type { Command } from './cli.ts';
 
 /** The help text, which is also the usage. */
-export const HELP_TEXT = `Usage: nexus <bootstrap|setup|link|install|update|remove|new|list|check|global|help>
-Run it as: node "$HOME/.nexus/src/nexus.js" <command>
-
-bootstrap    Link only the Nexus control skills.
-setup        Run one-time initialization with backups.
-link         Reconcile Claude and Codex links from the lock.
-install      Install selected skills from one source via upstream npx skills.
-update       Update one installed skill and relink.
-remove       Uninstall one installed skill and relink.
-new          Reserve a custom skill directory.
-list         Show installed, custom, and control skills: list [--json].
-check        Ask GitHub which installed skills are behind: check [--json]; the last result: check --last [--json].
-global       Show or replace the Global Instructions: global show [--json], global edit [--if-match <sha256>].
-help         Show this text.
-`;
+export const HELP_TEXT = [
+  'Usage: nexus <bootstrap|setup|link|install|update|remove|new|list|check|global|help>',
+  'Run it as: node "$HOME/.nexus/src/nexus.js" <command>',
+  '',
+  'bootstrap    Link only the Nexus control skills.',
+  'setup        Take the Backups, publish the first Nexus Lock, and link, once.',
+  'link         Make the Managed Links of Claude and Codex match the Nexus Lock.',
+  'install      Install selected skills from one source via upstream npx skills.',
+  'update       Update one installed skill and link.',
+  'remove       Uninstall one installed skill and link.',
+  'new          Reserve a custom skill directory.',
+  'list         Show installed, custom, and control skills: list [--json].',
+  'check        Ask GitHub which installed skills are behind: check [--json]; ' +
+    'the last result: check --last [--json].',
+  'global       Show or replace the Global Instructions: global show [--json], ' +
+    'global edit [--if-match <sha256>].',
+  'help         Show this text.',
+  '',
+].join('\n');
 
 /** Print the help text on stdout. */
 export const help: Command = async () => {
   process.stdout.write(HELP_TEXT);
   return 0;
 };
+
+/** Refuse a command line that is not one: the help text on stderr, and exit code 2. */
+export function usageRefusal(): number {
+  process.stderr.write(HELP_TEXT);
+  return 2;
+}

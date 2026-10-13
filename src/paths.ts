@@ -5,7 +5,7 @@
  * and macOS and `USERPROFILE` on Windows, so one test home moves all of it.
  * `NEXUS_HOME` moves the Nexus home alone; empty means unset, as the Bash
  * CLI's `${NEXUS_HOME:-$HOME/.nexus}` reads it. Each path is the Bash CLI's
- * (`nexus_init` in `scripts/lib/common.sh`), built with `node:path`.
+ * (`nexus_init`), built with `node:path`.
  */
 import { homedir } from 'node:os';
 import { join } from 'node:path';

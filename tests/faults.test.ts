@@ -158,7 +158,8 @@ test('a lock replaced after it was read changes nothing Link does with it', () =
   assertLinkTo(join(home, '.codex', 'skills', 'alpha'), join(canonical, 'alpha'));
   assert.equal(linkText(join(home, '.claude', 'skills', 'stale')), undefined);
   assert.equal(linkText(join(home, '.codex', 'skills', 'stale')), undefined);
-  for (const dir of ['.claude', '.codex', '.agents']) assert.ok(isAbsent(join(home, dir, 'escape')));
+  for (const dir of ['.claude', '.codex', '.agents'])
+    assert.ok(isAbsent(join(home, dir, 'escape')));
   assert.deepEqual(named(join(home, '.nexus'), '.nexus-lock.'), []);
   // The fault point did replace the lock: Link had read it once, before.
   assert.match(readFileSync(join(home, '.nexus', 'skill-lock.json'), 'utf8'), /escape/);
@@ -192,7 +193,10 @@ test('install scratch that cannot be removed is named and kept', () => {
 
 const WINDOWS_ONLY = process.platform !== 'win32' && 'only Windows makes Managed Copies';
 
-/** A home whose Instruction Paths hold Managed Copies of `rule one`, and GLOBAL.md now `rule two`. */
+/**
+ * A home whose Instruction Paths hold Managed Copies of `rule one`, and GLOBAL.md now
+ * `rule two`.
+ */
 function copiesHome(name: string): string {
   const home = newHome(name);
   writeLock(join(home, '.nexus', 'skill-lock.json'), []);

@@ -20,21 +20,10 @@
  * path a person must review before a retry, and exits 130 (INT) or 143
  * (TERM), as the Bash CLI's traps did.
  *
- * The sentences, their order and the exit codes are the Bash CLI's
- * (`setup` in `scripts/lib/setup.sh`).
+ * The sentences, their order and the exit codes are the Bash CLI's.
  */
 import { randomInt } from 'node:crypto';
-import {
-  closeSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmdirSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, rmdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { backupTransaction, TRANSACTION_PREFIX } from './backup.ts';
 import {
@@ -44,7 +33,8 @@ import {
 } from './canonical.ts';
 import type { Command } from './cli.ts';
 import { CONTROL_SKILLS } from './control-skills.ts';
-import { fault, pause } from './fault.ts';
+import { isPhysicalDirectory, isPresent, reachesEntry, sameBytes } from './entries.ts';
+import { fault, faultChange, pause } from './fault.ts';
 import { linkAll } from './link.ts';
 import { moveOntoNothing } from './move.ts';
 import {
@@ -55,12 +45,10 @@ import {
   SNAPSHOT_PREFIX,
   type SnapshotWatch,
 } from './lock.ts';
-import { error, info } from './output.ts';
+import { error, info, refuse } from './output.ts';
 import { type Paths, readPaths } from './paths.ts';
 import {
   type Checkpoint,
-  isPhysicalDirectory,
-  isPresent,
   newResidue,
   removeOwnedFile,
   removeTree,
@@ -77,7 +65,8 @@ const SOURCE_PREFIX = '.nexus-setup-source.';
 const BETA_LOCK = '{"version":3,"skills":{"beta":{}}}\n';
 
 /** The sentence of a Setup that finds a Nexus Lock: Link is the way on. */
-const ALREADY_INITIALIZED = 'already initialized; run /nexus-link or $nexus-link to reconcile skills';
+const ALREADY_INITIALIZED =
+  'already initialized; run /nexus-link or $nexus-link to reconcile skills';
 
 /** A signal that stopped Setup, carried out to the code that cleans up. */
 type Interruption = { readonly interruption: true; readonly signal: 'SIGINT' | 'SIGTERM' };
@@ -244,10 +233,7 @@ function publishSetupLock(run: SetupRun, source: string): boolean {
  * and check the bytes again (`atomic_copy`).
  */
 function atomicCopy(residue: Residue, source: string, destination: string): boolean {
-  if (fault('lock_copy_corrupt')) {
-    error('atomic copy staging verification failed');
-    return false;
-  }
+  if (fault('lock_copy_corrupt')) return refuse('atomic copy staging verification failed');
   const parent = dirname(destination);
   if (isPresent(destination)) {
     error(`destination already exists: ${destination}`);
@@ -284,10 +270,8 @@ function atomicCopy(residue: Residue, source: string, destination: string): bool
     error(`atomic copy post-publication verification failed: ${destination}`);
     return false;
   }
-  if (fault('lock_post_publish_corrupt')) {
-    writeFileSync(destination, 'corrupt');
-    return false;
-  }
+  if (fault('lock_post_publish_corrupt')) faultChange(destination);
+  if (fault('lock_post_publish_corrupt')) return false;
   return true;
 }
 
@@ -309,15 +293,6 @@ function reserveFile(parent: string, prefix: string): string | undefined {
     }
   }
   return undefined;
-}
-
-/** True when both files hold the same bytes; false when either cannot be read. */
-function sameBytes(a: string, b: string): boolean {
-  try {
-    return readFileSync(a).equals(readFileSync(b));
-  } catch {
-    return false;
-  }
 }
 
 /** Say that the lock and both Backups stay, and how to finish with Link. */
@@ -410,8 +385,8 @@ function failedUnexpectedly(run: SetupRun): void {
 /** True when a Backup or the Nexus Lock exists: Setup got as far as a final path. */
 function hasPublished(paths: Paths): boolean {
   return (
-    exists(join(paths.home, '.claude-backup')) ||
-    exists(join(paths.home, '.codex-backup')) ||
+    reachesEntry(join(paths.home, '.claude-backup')) ||
+    reachesEntry(join(paths.home, '.codex-backup')) ||
     isPresent(paths.lock)
   );
 }
@@ -517,14 +492,4 @@ function interruption(signal: 'SIGINT' | 'SIGTERM'): Interruption {
 
 function isInterruption(value: unknown): value is Interruption {
   return (value as Partial<Interruption> | null)?.interruption === true;
-}
-
-/** True when `path` exists, following a symlink (`-e`). */
-function exists(path: string): boolean {
-  try {
-    statSync(path);
-    return true;
-  } catch {
-    return false;
-  }
 }

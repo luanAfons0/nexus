@@ -541,7 +541,10 @@ test('the timeout sentence says the seconds as the Python server did', async (t)
 });
 
 test('a timeout that is no number, or empty, stops the server with one sentence', async () => {
-  for (const [name, value] of [['bad', 'soon'], ['empty', '']] as const) {
+  for (const [name, value] of [
+    ['bad', 'soon'],
+    ['empty', ''],
+  ] as const) {
     const server = startServer(customHome(`server-${name}-timeout`), {
       env: { NEXUS_MCP_TIMEOUT: value },
     });
@@ -571,7 +574,9 @@ test(
   'the sh launcher starts the Plugin Server from ./mcp',
   { skip: WINDOWS && 'a wsl Place alone starts ./mcp' },
   async () => {
-    const lines = readFileSync(LAUNCHER, 'utf8').split('\n').filter((line) => line !== '');
+    const lines = readFileSync(LAUNCHER, 'utf8')
+      .split('\n')
+      .filter((line) => line !== '');
     assert.equal(lines.length, 2, 'the launcher holds logic');
     assert.equal(lines[0], '#!/bin/sh');
     assert.ok((statSync(LAUNCHER).mode & 0o111) !== 0, 'the launcher is not executable');

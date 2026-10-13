@@ -16,14 +16,12 @@
  * `nvm.sh` in `bash` (in `/bin/sh` when there is no `bash`), and the PATH it
  * leaves is the PATH `npx` runs with. `dash` cannot run `nvm use`.
  *
- * Like the Bash CLI (`scripts/lib/upstream.sh`, `ensure_npx` in
- * `scripts/lib/install.sh`) this module prints its own sentences, byte for
- * byte, and `linkAll` prints its own.
+ * Like the Bash CLI (`ensure_npx` and its upstream calls) this module prints
+ * its own sentences, byte for byte, and `linkAll` prints its own.
  */
 import { randomBytes } from 'node:crypto';
 import {
   closeSync,
-  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -33,6 +31,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { isPresent } from './entries.ts';
 import { fault, seamFailure } from './fault.ts';
 import { linkAll } from './link.ts';
 import { type NexusLock, readLock } from './lock.ts';
@@ -266,14 +265,14 @@ function sameBytes(a: string, b: string): boolean {
  * there is success; a file that is still there after is named, and false.
  */
 function removeScratch(path: string): boolean {
-  if (!exists(path)) return true;
+  if (!isPresent(path)) return true;
   try {
     if (fault('install_cleanup_fail')) seamFailure('install scratch cleanup failed');
     else rmSync(path, { force: true });
   } catch {
     // The check below says whether it is gone.
   }
-  if (!exists(path)) return true;
+  if (!isPresent(path)) return true;
   error(`install scratch retained: ${path}`);
   return false;
 }
@@ -296,16 +295,6 @@ function randomName(): string {
 function isFile(path: string): boolean {
   try {
     return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-}
-
-/** True when anything is at `path`, a dangling symlink too (`-e || -L`). */
-function exists(path: string): boolean {
-  try {
-    lstatSync(path);
-    return true;
   } catch {
     return false;
   }

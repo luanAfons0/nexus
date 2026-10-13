@@ -4,7 +4,8 @@
  *
  * A test sets `NEXUS_FAULT=<name>`, and the CLI fails, corrupts or pauses at
  * the one point that the name stands for, as the Bash override did. Each
- * point is one line in the code it tests. The CLI honours `NEXUS_FAULT` only
+ * point is one line in the code it tests; what a point changes in a tree is
+ * in `fault-changes.ts`. The CLI honours `NEXUS_FAULT` only
  * when `NEXUS_TEST_MODE=1` is set and the home holds the test-home marker
  * `.nexus-test-home`; anywhere else it changes nothing, so a fault can never
  * reach a person's Agent Context.
@@ -17,9 +18,11 @@
  * as the signal would have. Either way Setup sees the signal at its next
  * checkpoint.
  */
-import { mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { reachesFile } from './entries.ts';
+import { FAULT_CHANGES } from './fault-changes.ts';
 import { error } from './output.ts';
 
 /** The file that marks a home as a test home (`newHome` in `tests/helpers/nexus.ts` writes it). */
@@ -40,10 +43,19 @@ export function fault(...names: readonly string[]): boolean {
   return name !== undefined && names.includes(name);
 }
 
-/** Say that a test seam failed, in the Bash overrides' words, and give false. */
-export function seamFailure(what: string): false {
-  error(`test seam: ${what}`);
+/**
+ * Say that a test seam failed, in the Bash overrides' words, and give false.
+ * `say` is how the caller says an error, when it also counts them.
+ */
+export function seamFailure(what: string, say: (message: string) => void = error): false {
+  say(`test seam: ${what}`);
   return false;
+}
+
+/** Say that a test seam failed, and give undefined: for a step that gives a value. */
+export function seamNothing(what: string): undefined {
+  error(`test seam: ${what}`);
+  return undefined;
 }
 
 /** The path of `name` in the home: where a fault writes, or looks for, its files. */
@@ -60,34 +72,27 @@ export function pause(window: string): void {
   held = true;
   const sleeper = new Int32Array(new SharedArrayBuffer(4));
   for (;;) {
-    if (isFile(homeFile(`${window}-stop`))) {
+    if (reachesFile(homeFile(`${window}-stop`))) {
       process.emit('SIGTERM', 'SIGTERM');
       return;
     }
-    if (isFile(homeFile(`${window}-release`))) return;
+    if (reachesFile(homeFile(`${window}-release`))) return;
     Atomics.wait(sleeper, 0, 0, POLL_MS);
   }
 }
 
 /**
- * Make one change of a fault as the shell command of the Bash override made
- * it: a change that fails stops nothing (the command's own line is not said).
+ * Make at `path` the change the fault of this run stands for
+ * (`fault-changes.ts`), on the Backup's attempt `attempt`.
  */
-export function tryChange(change: () => void): void {
-  try {
-    change();
-  } catch {
-    // As `chmod` or `rm` that failed inside the override: the override went on.
-  }
+export function faultChange(path: string, attempt = 1): void {
+  const name = activeFault();
+  if (name !== undefined) FAULT_CHANGES[name]?.(path, attempt);
 }
 
-/**
- * Put a directory at `path`, as a person or a program might put one there
- * while Nexus moves a tree to it: empty, or with `full`, holding a file.
- */
-export function occupy(path: string, full: boolean): void {
-  mkdirSync(path);
-  if (full) writeFileSync(join(path, 'occupant'), 'occupant\n');
+/** Add `line` to the file `name` in the home, where a case counts the calls a fault saw. */
+export function recordCall(name: string, line: string): void {
+  appendFileSync(homeFile(name), `${line}\n`);
 }
 
 /** True once a pause of this run has written its handshake. */
@@ -99,16 +104,8 @@ export function paused(): boolean {
 function activeFault(): string | undefined {
   if (active === null) {
     const name = process.env.NEXUS_FAULT ?? '';
-    const honoured = process.env.NEXUS_TEST_MODE === '1' && isFile(homeFile(MARKER));
+    const honoured = process.env.NEXUS_TEST_MODE === '1' && reachesFile(homeFile(MARKER));
     active = honoured && name !== '' ? name : undefined;
   }
   return active;
-}
-
-function isFile(path: string): boolean {
-  try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
 }

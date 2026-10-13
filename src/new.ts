@@ -6,12 +6,13 @@
  * written next, and `nexus link` links it once it has a `SKILL.md` (the
  * `nexus-new` Control Skill runs both). It never creates the Custom Root,
  * which is the person's Git repository (ADR 0002). The sentences and exit
- * codes are the Bash CLI's (`scripts/lib/new.sh`).
+ * codes are the Bash CLI's.
  */
-import { lstatSync, mkdirSync, statSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Command } from './cli.ts';
 import { customRootFault } from './custom.ts';
+import { isPresent, reachesDirectory, reachesFile } from './entries.ts';
 import { readLock } from './lock.ts';
 import { parseOneSkillName } from './one-skill.ts';
 import { error, info } from './output.ts';
@@ -35,14 +36,14 @@ export const newSkill: Command = async (args) => {
     error(rootFault);
     return 1;
   }
-  if (!isDirectory(paths.customRoot)) {
+  if (!reachesDirectory(paths.customRoot)) {
     error(
       `custom skill root does not exist: ${paths.customRoot} ` +
         '(create it and run git init before adding custom skills)',
     );
     return 1;
   }
-  if (isFile(paths.lock)) {
+  if (reachesFile(paths.lock)) {
     const read = readLock(paths.lock, paths.nexusHome);
     if (!read.ok) {
       for (const sentence of read.errors) error(sentence);
@@ -56,7 +57,7 @@ export const newSkill: Command = async (args) => {
     }
   }
   const target = join(paths.customRoot, name);
-  if (exists(target)) {
+  if (isPresent(target)) {
     error(`custom skill already exists: ${target}`);
     return 1;
   }
@@ -70,31 +71,3 @@ export const newSkill: Command = async (args) => {
   info(`workspace ${name}: ${join(paths.customWorkspaces, name)}`);
   return 0;
 };
-
-/** True for a directory, following a symlink (`-d`). */
-function isDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-/** True for a regular file, following a symlink (`-f`). */
-function isFile(path: string): boolean {
-  try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-}
-
-/** True when anything is at `path`, a dangling symlink too (`-e || -L`). */
-function exists(path: string): boolean {
-  try {
-    lstatSync(path);
-    return true;
-  } catch {
-    return false;
-  }
-}

@@ -9,14 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import {
-  fakeCalls,
-  fakePath,
-  installFake,
-  newHome,
-  runNexus,
-  testRoot,
-} from './helpers/nexus.ts';
+import { fakeCalls, fakePath, installFake, newHome, runNexus, testRoot } from './helpers/nexus.ts';
 
 /** Run a fake by its bare name from PATH, as a program, the way the CLI will. */
 function runFake(home: string, name: string, args: readonly string[], exit = '0') {
@@ -39,7 +32,10 @@ test('the helper refuses to run the CLI against a home outside the temporary roo
   const outside = mkdtempSync(join(tmpdir(), 'nexus-outside-'));
   try {
     writeFileSync(join(outside, '.nexus-test-home'), '');
-    assert.throws(() => runNexus(outside, ['help']), /refusing to run outside a validated test home/);
+    assert.throws(
+      () => runNexus(outside, ['help']),
+      /refusing to run outside a validated test home/,
+    );
   } finally {
     rmSync(outside, { recursive: true, force: true });
   }
@@ -48,7 +44,10 @@ test('the helper refuses to run the CLI against a home outside the temporary roo
 test('the helper refuses to run the CLI against an unmarked directory under the root', () => {
   const unmarked = join(testRoot(), 'unmarked');
   mkdirSync(unmarked);
-  assert.throws(() => runNexus(unmarked, ['help']), /refusing to run outside a validated test home/);
+  assert.throws(
+    () => runNexus(unmarked, ['help']),
+    /refusing to run outside a validated test home/,
+  );
   assert.throws(
     () => runNexus(join(testRoot(), 'missing'), ['help']),
     /refusing to run outside a validated test home/,

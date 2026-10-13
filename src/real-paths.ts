@@ -5,11 +5,12 @@
  * Node's `fs.realpath` refuses a path that does not exist, but a Stale Link
  * or a Managed Link through a moved root points at nothing, and Link must
  * still tell whose it is. `realpathMissing` is `realpath -m`: it follows
- * every link it meets, even a dangling one, and takes each missing component
+ * every link it meets, even one that reaches nothing, and takes each missing component
  * as written. `path.resolve` is `realpath -m -s`, the lexical form.
  */
-import { lstatSync, readlinkSync } from 'node:fs';
+import { readlinkSync } from 'node:fs';
 import { dirname, isAbsolute, join, parse, sep } from 'node:path';
+import { isSymlink } from './entries.ts';
 
 /** How many links one path may pass through before it counts as a loop. */
 const MAX_LINKS = 40;
@@ -74,13 +75,4 @@ export function isWithin(candidate: string, root: string): boolean {
 /** The components of a path without its root; Windows takes both slashes. */
 function components(path: string): string[] {
   return path.split(sep === '\\' ? /[\\/]/ : '/');
-}
-
-/** True when `path` is a symlink (or a junction), without following it. */
-function isSymlink(path: string): boolean {
-  try {
-    return lstatSync(path).isSymbolicLink();
-  } catch {
-    return false;
-  }
 }

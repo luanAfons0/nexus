@@ -12,35 +12,24 @@
  * that it is still the entry that was validated (`identity.ts`, #67): an
  * entry that a person or a program put there meanwhile is a Foreign Entry,
  * and it is kept. Every failure leaves the symlink in place, or names the
- * recovery directory that holds it. The sentences are the Bash CLI's
- * (`scripts/lib/setup.sh`).
+ * recovery directory that holds it. The sentences are the Bash CLI's.
  */
-import {
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  rmdirSync,
-  symlinkSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmdirSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join, sep } from 'node:path';
-import { fault, homeFile, occupy, pause, seamFailure } from './fault.ts';
+import {
+  isPhysicalDirectory,
+  isPresent,
+  isRegularFile,
+  isSymlink,
+  reachesDirectory,
+} from './entries.ts';
+import { fault, faultChange, homeFile, pause, seamFailure, seamNothing } from './fault.ts';
 import { entryIdentity, reachedIdentity } from './identity.ts';
 import { moveOntoNothing } from './move.ts';
 import { error } from './output.ts';
 import type { Paths } from './paths.ts';
 import { isWithin, realpathMissing } from './real-paths.ts';
-import {
-  type Checkpoint,
-  isDirectory,
-  isPhysicalDirectory,
-  isPresent,
-  isRegularFile,
-  removeOwnedDir,
-  type Residue,
-} from './residue.ts';
+import { type Checkpoint, removeOwnedDir, type Residue } from './residue.ts';
 import { listInSystemOrder, skillTreeFault } from './skill-tree.ts';
 import { copyTree } from './tree-copy.ts';
 
@@ -88,7 +77,10 @@ export async function materializeCanonicalLinks(
   return true;
 }
 
-/** Turn the symlink at one Canonical Root entry into a physical copy (`materialize_canonical_link`). */
+/**
+ * Turn the symlink at one Canonical Root entry into a physical copy
+ * (`materialize_canonical_link`).
+ */
 function materializeCanonicalLink(paths: Paths, name: string, residue: Residue): boolean {
   const root = paths.canonicalRoot;
   const current = join(root, name);
@@ -164,7 +156,7 @@ function materializeCanonicalLink(paths: Paths, name: string, residue: Residue):
   if (!canonicalMove(temp, current) || !isPhysicalSkill(current)) {
     const sameTree =
       isPhysicalDirectory(current) &&
-      isDirectory(temp) &&
+      reachesDirectory(temp) &&
       reachedIdentity(current) === reachedIdentity(temp);
     if (sameTree) {
       if (!cleanupCanonicalTemp(root, current)) {
@@ -177,7 +169,7 @@ function materializeCanonicalLink(paths: Paths, name: string, residue: Residue):
       );
       return false;
     }
-    if (isDirectory(temp) && !cleanupCanonicalTemp(root, temp)) {
+    if (reachesDirectory(temp) && !cleanupCanonicalTemp(root, temp)) {
       residue.forget(temp);
       residue.recovery(temp);
       error(`canonical temp retained: ${temp}`);
@@ -224,15 +216,8 @@ function canonicalMove(source: string, destination: string, expected?: string): 
     return seamFailure('canonical restore failed');
   }
   if (fault('canonical_cleanup') && original) return seamFailure('canonical restore failed');
-  if (fault('canonical_late_collision') && live) {
-    unlinkSync(source);
-    writeFileSync(source, 'late collision\n');
-  }
-  if (fault('canonical_late_repoint') && live) {
-    unlinkSync(source);
-    symlinkSync(homeFile('elsewhere'), source, 'junction');
-  }
-  if (fault('canonical_destination_empty') && temp) occupy(destination, false);
+  if (fault('canonical_late_collision', 'canonical_late_repoint') && live) faultChange(source);
+  if (fault('canonical_destination_empty') && temp) faultChange(destination);
   if (expected !== undefined && entryIdentity(source, true) !== expected) return false;
   if (!moveOntoNothing(source, destination)) return false;
   if (expected !== undefined && entryIdentity(destination, true) !== expected) {
@@ -293,10 +278,7 @@ function validateCanonicalSkill(paths: Paths, skill: string): boolean {
 function symlinksUnder(dir: string): readonly string[] | undefined {
   const scanned = dir === homeFile(join('.agents', 'skills', 'alpha'));
   if (fault('canonical_scan_window') && scanned) pause('scan');
-  if (fault('canonical_find_fail') && scanned) {
-    seamFailure('canonical symlink scan failed');
-    return undefined;
-  }
+  if (fault('canonical_find_fail') && scanned) return seamNothing('canonical symlink scan failed');
   const links: string[] = [];
   const visit = (path: string): boolean => {
     const entries = listInSystemOrder(Buffer.from(path));
@@ -325,7 +307,7 @@ function defaultRealpath(path: string): string | undefined {
   } catch {
     return undefined;
   }
-  return isDirectory(dirname(resolved)) && realpathOf(dirname(resolved)) === dirname(resolved)
+  return reachesDirectory(dirname(resolved)) && realpathOf(dirname(resolved)) === dirname(resolved)
     ? resolved
     : undefined;
 }
@@ -346,14 +328,6 @@ function realpathOf(path: string): string | undefined {
  */
 function isPhysicalSkill(path: string): boolean {
   return isPhysicalDirectory(path) && isRegularFile(join(path, 'SKILL.md'));
-}
-
-function isSymlink(path: string): boolean {
-  try {
-    return lstatSync(path).isSymbolicLink();
-  } catch {
-    return false;
-  }
 }
 
 function tryRmdir(dir: string): boolean {

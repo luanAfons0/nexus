@@ -95,7 +95,8 @@ test('reset deletes only a sandbox the command marked as its own', () => {
   assert.equal(refused.status, 1);
   assert.equal(
     refused.stderr,
-    `dev-home: error: ${sandbox} has no .nexus-dev-home marker, so it is not a sandbox this script made\n`,
+    `dev-home: error: ${sandbox} has no .nexus-dev-home marker, ` +
+      'so it is not a sandbox this script made\n',
   );
   assert.equal(readFileSync(join(sandbox, 'keep'), 'utf8'), 'mine\n');
 
@@ -134,7 +135,8 @@ test('an empty NEXUS_DEV_HOME means the default sandbox in the repository', () =
   assert.equal(result.status, 1);
   assert.equal(
     result.stderr,
-    `dev-home: error: the sandbox home may not hold your real home: ${join(physicalRepo(), '.scratch', 'home')}\n`,
+    'dev-home: error: the sandbox home may not hold your real home: ' +
+      `${join(physicalRepo(), '.scratch', 'home')}\n`,
   );
   assert.ok(!existsSync(real));
 });

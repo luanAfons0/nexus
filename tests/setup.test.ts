@@ -53,7 +53,10 @@ function write(path: string, text: string): void {
   writeFileSync(path, text);
 }
 
-/** Write the lock at `from` again at `to`, every key sorted: the same lock, other bytes (`jq -S`). */
+/**
+ * Write the lock at `from` again at `to`, every key sorted: the same lock, other bytes
+ * (`jq -S`).
+ */
 function writeSortedCopy(from: string, to: string): void {
   const sort = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(sort);
@@ -332,19 +335,22 @@ test('a lock that names a Control Skill refuses setup and changes nothing', () =
   }
 });
 
-test('a broken Canonical Root symlink fails after publication and keeps the lock and both Backups', () => {
-  const { home, run } = runSetup('setup_broken_canonical', brokenCanonicalHome);
-  assert.equal(run.status, 1);
-  assert.match(run.stderr, /broken symlink/);
-  assert.match(run.stderr, /setup is now initialized\/disabled/);
-  assert.ok(run.stderr.includes('/nexus-link') && run.stderr.includes('$nexus-link'));
-  assert.ok(statSync(join(home, '.nexus', 'skill-lock.json')).isFile());
-  assert.ok(statSync(join(home, '.claude-backup')).isDirectory());
-  assert.ok(statSync(join(home, '.codex-backup')).isDirectory());
-  assert.ok(statSync(join(home, '.claude', 'skills', 'alpha')).isDirectory());
-  assert.ok(statSync(join(home, '.codex', 'skills', 'alpha')).isDirectory());
-  assert.deepEqual(setupResidue(home), []);
-});
+test(
+  'a broken Canonical Root symlink fails after publication and keeps the lock and both Backups',
+  () => {
+    const { home, run } = runSetup('setup_broken_canonical', brokenCanonicalHome);
+    assert.equal(run.status, 1);
+    assert.match(run.stderr, /broken symlink/);
+    assert.match(run.stderr, /setup is now initialized\/disabled/);
+    assert.ok(run.stderr.includes('/nexus-link') && run.stderr.includes('$nexus-link'));
+    assert.ok(statSync(join(home, '.nexus', 'skill-lock.json')).isFile());
+    assert.ok(statSync(join(home, '.claude-backup')).isDirectory());
+    assert.ok(statSync(join(home, '.codex-backup')).isDirectory());
+    assert.ok(statSync(join(home, '.claude', 'skills', 'alpha')).isDirectory());
+    assert.ok(statSync(join(home, '.codex', 'skills', 'alpha')).isDirectory());
+    assert.deepEqual(setupResidue(home), []);
+  },
+);
 
 test('a symlinked ~/.agents refuses setup before anything changes', () => {
   const home = newHome('setup_canonical_root_symlink');
@@ -358,34 +364,44 @@ test('a symlinked ~/.agents refuses setup before anything changes', () => {
   assert.ok(isAbsent(join(home, '.nexus', 'skill-lock.json')));
 });
 
-test('a Canonical Root SKILL.md that is a symlink fails after publication and keeps the agents', () => {
-  const { home, run } = runSetup('setup_skill_md_symlink', symlinkedSkillFileHome);
-  assert.equal(run.status, 1);
-  assert.match(run.stderr, /physical SKILL\.md/);
-  assert.ok(statSync(join(home, '.nexus', 'skill-lock.json')).isFile());
-  assert.ok(statSync(join(home, '.claude-backup')).isDirectory());
-  assert.ok(statSync(join(home, '.codex-backup')).isDirectory());
-  assert.ok(lstatSync(join(home, '.claude', 'skills', 'alpha')).isDirectory());
-});
+test(
+  'a Canonical Root SKILL.md that is a symlink fails after publication and keeps the agents',
+  () => {
+    const { home, run } = runSetup('setup_skill_md_symlink', symlinkedSkillFileHome);
+    assert.equal(run.status, 1);
+    assert.match(run.stderr, /physical SKILL\.md/);
+    assert.ok(statSync(join(home, '.nexus', 'skill-lock.json')).isFile());
+    assert.ok(statSync(join(home, '.claude-backup')).isDirectory());
+    assert.ok(statSync(join(home, '.codex-backup')).isDirectory());
+    assert.ok(lstatSync(join(home, '.claude', 'skills', 'alpha')).isDirectory());
+  },
+);
 
-test('a nested symlink that escapes, breaks or loops keeps the Canonical Root symlink', { skip: NESTED }, () => {
-  const cases = [
-    ['nested_escape', nestedEscape],
-    ['nested_broken', nestedBroken],
-    ['nested_cyclic', nestedCyclic],
-  ] as const;
-  for (const [name, build] of cases) {
-    const { home, run } = runSetup(name, build);
-    assert.equal(run.status, 1, name);
-    assert.match(run.stderr, /nested source symlink/, name);
-    assert.ok(run.stderr.includes('/nexus-link') && run.stderr.includes('$nexus-link'), name);
-    assert.equal(linkText(join(home, '.agents', 'skills', 'alpha')), '../../.claude/skills/alpha');
-    assert.ok(statSync(join(home, '.nexus', 'skill-lock.json')).isFile(), name);
-    assert.ok(statSync(join(home, '.claude-backup')).isDirectory(), name);
-    assert.ok(statSync(join(home, '.codex-backup')).isDirectory(), name);
-  }
-  assert.equal(readFileSync(join(testRoot(), 'nested-secret'), 'utf8'), 'secret\n');
-});
+test(
+  'a nested symlink that escapes, breaks or loops keeps the Canonical Root symlink',
+  { skip: NESTED },
+  () => {
+    const cases = [
+      ['nested_escape', nestedEscape],
+      ['nested_broken', nestedBroken],
+      ['nested_cyclic', nestedCyclic],
+    ] as const;
+    for (const [name, build] of cases) {
+      const { home, run } = runSetup(name, build);
+      assert.equal(run.status, 1, name);
+      assert.match(run.stderr, /nested source symlink/, name);
+      assert.ok(run.stderr.includes('/nexus-link') && run.stderr.includes('$nexus-link'), name);
+      assert.equal(
+        linkText(join(home, '.agents', 'skills', 'alpha')),
+        '../../.claude/skills/alpha',
+      );
+      assert.ok(statSync(join(home, '.nexus', 'skill-lock.json')).isFile(), name);
+      assert.ok(statSync(join(home, '.claude-backup')).isDirectory(), name);
+      assert.ok(statSync(join(home, '.codex-backup')).isDirectory(), name);
+    }
+    assert.equal(readFileSync(join(testRoot(), 'nested-secret'), 'utf8'), 'secret\n');
+  },
+);
 
 test('a nested symlink inside the skill is copied as the file it reaches', { skip: NESTED }, () => {
   const { home, run } = runSetup('nested_internal', nestedInternal);
@@ -430,33 +446,39 @@ test('setup ends with both Instruction Paths linked to GLOBAL.md', () => {
   assertLinkTo(join(home, '.claude', 'skills', 'alpha'), join(home, '.agents', 'skills', 'alpha'));
 });
 
-test('setup replaces a Foreign Entry at a skill path and keeps an unrelated recovery container', () => {
-  const { home, run } = runSetup('force_directory', (home) => {
-    writeLock(join(home, '.agents', '.skill-lock.json'), []);
+test(
+  'setup replaces a Foreign Entry at a skill path and keeps an unrelated recovery container',
+  () => {
+    const { home, run } = runSetup('force_directory', (home) => {
+      writeLock(join(home, '.agents', '.skill-lock.json'), []);
+      const parent = join(home, '.claude', 'skills');
+      write(join(parent, 'nexus-setup', 'marker'), 'directory-marker\n');
+      write(join(parent, '.nexus-backup.fixed', 'marker'), 'sibling-marker\n');
+    });
+    assert.equal(run.status, 0, run.stderr);
     const parent = join(home, '.claude', 'skills');
-    write(join(parent, 'nexus-setup', 'marker'), 'directory-marker\n');
-    write(join(parent, '.nexus-backup.fixed', 'marker'), 'sibling-marker\n');
-  });
-  assert.equal(run.status, 0, run.stderr);
-  const parent = join(home, '.claude', 'skills');
-  assertLinkTo(join(parent, 'nexus-setup'), join(home, '.nexus', 'skills', 'nexus-setup'));
-  assert.equal(readFileSync(join(parent, '.nexus-backup.fixed', 'marker'), 'utf8'), 'sibling-marker\n');
-  const containers = readdirSync(parent).filter((name) => name.startsWith('.nexus-backup.'));
-  assert.deepEqual(containers, ['.nexus-backup.fixed']);
-  // The replaced directory is in the Backup.
-  const kept = join(home, '.claude-backup', 'skills', 'nexus-setup', 'marker');
-  assert.equal(readFileSync(kept, 'utf8'), 'directory-marker\n');
+    assertLinkTo(join(parent, 'nexus-setup'), join(home, '.nexus', 'skills', 'nexus-setup'));
+    assert.equal(
+      readFileSync(join(parent, '.nexus-backup.fixed', 'marker'), 'utf8'),
+      'sibling-marker\n',
+    );
+    const containers = readdirSync(parent).filter((name) => name.startsWith('.nexus-backup.'));
+    assert.deepEqual(containers, ['.nexus-backup.fixed']);
+    // The replaced directory is in the Backup.
+    const kept = join(home, '.claude-backup', 'skills', 'nexus-setup', 'marker');
+    assert.equal(readFileSync(kept, 'utf8'), 'directory-marker\n');
 
-  const file = runSetup('force_file', (home) => {
-    writeLock(join(home, '.agents', '.skill-lock.json'), []);
-    write(join(home, '.claude', 'skills', 'nexus-setup'), 'file-marker\n');
-  });
-  assert.equal(file.run.status, 0, file.run.stderr);
-  assertLinkTo(
-    join(file.home, '.claude', 'skills', 'nexus-setup'),
-    join(file.home, '.nexus', 'skills', 'nexus-setup'),
-  );
-});
+    const file = runSetup('force_file', (home) => {
+      writeLock(join(home, '.agents', '.skill-lock.json'), []);
+      write(join(home, '.claude', 'skills', 'nexus-setup'), 'file-marker\n');
+    });
+    assert.equal(file.run.status, 0, file.run.stderr);
+    assertLinkTo(
+      join(file.home, '.claude', 'skills', 'nexus-setup'),
+      join(file.home, '.nexus', 'skills', 'nexus-setup'),
+    );
+  },
+);
 
 test('a setup that removed its lock cannot run again over its Backups', () => {
   const { home, run } = runSetup('setup_rerun', (home) => {
@@ -483,4 +505,3 @@ test('setup with absent Agent Homes makes two empty Backups', () => {
     assert.deepEqual(readdirSync(join(home, backup)), []);
   }
 });
-

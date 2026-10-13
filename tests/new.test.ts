@@ -74,7 +74,10 @@ test('new makes one empty directory, names its workspace, and links nothing', ()
 
   const again = runNexus(home, ['new', 'mine']);
   assert.equal(again.status, 1);
-  assert.equal(again.stderr, `nexus: error: custom skill already exists: ${join(custom, 'mine')}\n`);
+  assert.equal(
+    again.stderr,
+    `nexus: error: custom skill already exists: ${join(custom, 'mine')}\n`,
+  );
 });
 
 test('new works with no Nexus Lock, and refuses one that is invalid', () => {

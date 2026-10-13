@@ -5,16 +5,15 @@
  * Reading only. An Instruction Path is in one of four states: `linked` (a
  * Managed Link that reaches the Owner: a symlink on Linux and macOS, a
  * Managed Copy on Windows, as the Link primitive reads it), `foreign`
- * (anything else there),
- * `absent` (nothing there, Agent Home present) or `no home` (the Agent Home
- * is absent). The words and the JSON shape are the Bash CLI's
- * (`instruction_path_state` in `scripts/lib/list.sh`, `global_instructions_json`
- * in `scripts/lib/global.sh`), which `list --json`, `global show --json` and
- * the Plugin Page read.
+ * (anything else there), `absent` (nothing there, Agent Home present) or
+ * `no home` (the Agent Home is absent). The words and the JSON shape are the
+ * Bash CLI's (`instruction_path_state`, `global_instructions_json`), which
+ * `list --json`, `global show --json` and the Plugin Page read.
  */
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, statSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { reachesDirectory } from './entries.ts';
 import { type LinkPrimitive, linkPrimitive } from './link-primitive.ts';
 import type { Paths } from './paths.ts';
 
@@ -59,7 +58,7 @@ export function instructionPathState(
   path: string,
   owner: string,
 ): InstructionPathState {
-  if (!isDirectory(dirname(path))) return 'no home';
+  if (!reachesDirectory(dirname(path))) return 'no home';
   try {
     lstatSync(path);
   } catch {
@@ -88,21 +87,10 @@ export function readGlobalInstructions(paths: Paths, withContent: boolean): Glob
 
 /** The last line of `nexus list`: the Owner and both Instruction Paths. */
 export function globalInstructionsLine(paths: Paths): string {
-  const owner = globalInstructionsPresent(paths)
-    ? paths.globalInstructions
-    : `absent (${paths.globalInstructions})`;
+  const owner = paths.globalInstructions;
+  const shown = globalInstructionsPresent(paths) ? owner : `absent (${owner})`;
   const primitive = linkPrimitive(paths);
-  const global = paths.globalInstructions;
-  const claude = instructionPathState(primitive, paths.claudeInstructions, global);
-  const codex = instructionPathState(primitive, paths.codexInstructions, global);
-  return `global instructions: ${owner} (claude: ${claude}, codex: ${codex})`;
-}
-
-/** True when `path` is a directory, following a symlink (`-d`). */
-function isDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
+  const claude = instructionPathState(primitive, paths.claudeInstructions, owner);
+  const codex = instructionPathState(primitive, paths.codexInstructions, owner);
+  return `global instructions: ${shown} (claude: ${claude}, codex: ${codex})`;
 }

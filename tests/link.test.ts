@@ -94,7 +94,8 @@ test('link with no lock refuses with the lock sentence and exits 1', () => {
   assert.equal(run.stdout, '');
   assert.equal(
     run.stderr,
-    `nexus: error: invalid version-3 lock: expected regular file at ${join(home, '.nexus', 'skill-lock.json')}\n`,
+    'nexus: error: invalid version-3 lock: expected regular file at ' +
+      `${join(home, '.nexus', 'skill-lock.json')}\n`,
   );
 });
 
@@ -175,7 +176,9 @@ test(
     for (const path of [join(claude, 'stale'), join(codex, 'stale')]) assert.ok(isAbsent(path));
     for (const path of [join(claude, 'missing'), join(codex, 'missing')]) assert.ok(isAbsent(path));
     assert.ok(run.stdout.includes(`nexus: removed stale managed link: ${join(claude, 'stale')}\n`));
-    assert.ok(run.stdout.includes(`nexus: removed missing managed link: ${join(codex, 'missing')}\n`));
+    assert.ok(
+      run.stdout.includes(`nexus: removed missing managed link: ${join(codex, 'missing')}\n`),
+    );
     assert.equal(sha256(join(canonical, 'stale', 'marker')), staleBefore);
     assert.equal(readFileSync(join(claude, 'unrelated-file'), 'utf8'), 'physical\n');
     assert.equal(readFileSync(join(codex, '.system', 'marker'), 'utf8'), 'keep\n');
@@ -233,7 +236,9 @@ test('a Foreign Entry at a desired link path is a Collision and is kept', () => 
 
   const run = runNexus(home, ['link']);
   assert.equal(run.status, 1);
-  assert.ok(run.stderr.includes(`nexus: error: collision at ${join(home, '.claude', 'skills', 'alpha')}\n`));
+  assert.ok(
+    run.stderr.includes(`nexus: error: collision at ${join(home, '.claude', 'skills', 'alpha')}\n`),
+  );
   assert.ok(
     run.stderr.includes(
       `nexus: error: collision at ${join(home, '.codex', 'skills', 'alpha')} (external symlink)\n`,
@@ -245,7 +250,7 @@ test('a Foreign Entry at a desired link path is a Collision and is kept', () => 
 });
 
 test(
-  'Custom Skills are linked, lose their links when they leave the Custom Root, and an absent root is no error',
+  'Custom Skills are linked and unlinked with the Custom Root, and its absence is no error',
   () => {
     const home = customHome('custom_link');
     const custom = join(home, '.custom-skills');
@@ -263,7 +268,10 @@ test(
       assertLinkTo(join(home, '.codex', 'skills', name), join(custom, name));
     }
     assertLinkTo(join(home, '.claude', 'skills', 'installed'), join(canonical, 'installed'));
-    assertLinkTo(join(home, '.codex', 'skills', 'nexus-new'), join(home, '.nexus', 'skills', 'nexus-new'));
+    assertLinkTo(
+      join(home, '.codex', 'skills', 'nexus-new'),
+      join(home, '.nexus', 'skills', 'nexus-new'),
+    );
 
     rmSync(join(custom, 'other'), { recursive: true });
     run = runNexus(home, ['link']);
@@ -280,57 +288,55 @@ test(
   },
 );
 
-test(
-  'a Custom Root fault is a Preflight failure that names it and changes nothing',
-  () => {
-    const home = customHome('custom_validation');
-    const custom = join(home, '.custom-skills');
-    writeSkill(join(home, '.agents', 'skills'), 'installed');
-    writeLock(join(home, '.nexus', 'skill-lock.json'), ['installed']);
-    writeSkill(custom, 'mine');
-    mkdirSync(join(custom, '.git'));
-    mkdirSync(join(custom, '.workspaces', 'mine'), { recursive: true });
-    writeFileSync(join(custom, 'README.md'), 'notes\n');
+test('a Custom Root fault is a Preflight failure that names it and changes nothing', () => {
+  const home = customHome('custom_validation');
+  const custom = join(home, '.custom-skills');
+  writeSkill(join(home, '.agents', 'skills'), 'installed');
+  writeLock(join(home, '.nexus', 'skill-lock.json'), ['installed']);
+  writeSkill(custom, 'mine');
+  mkdirSync(join(custom, '.git'));
+  mkdirSync(join(custom, '.workspaces', 'mine'), { recursive: true });
+  writeFileSync(join(custom, 'README.md'), 'notes\n');
 
-    let run = runNexus(home, ['link']);
-    assert.equal(run.status, 0, run.stderr);
-    for (const name of ['.git', '.workspaces', 'README.md']) {
-      assert.ok(isAbsent(join(home, '.claude', 'skills', name)));
-    }
-    const trees = ['.claude', '.codex', '.agents'];
-    const before = agentTrees(home, trees);
-    const refused = (sentence: string) => {
-      run = runNexus(home, ['link']);
-      assert.equal(run.status, 1);
-      assert.equal(run.stdout, '');
-      assert.equal(
-        run.stderr,
-        `nexus: error: ${sentence}\nnexus: error: link failed with 1 error(s); no changes were made\n`,
-      );
-      assert.equal(agentTrees(home, trees), before);
-    };
+  let run = runNexus(home, ['link']);
+  assert.equal(run.status, 0, run.stderr);
+  for (const name of ['.git', '.workspaces', 'README.md']) {
+    assert.ok(isAbsent(join(home, '.claude', 'skills', name)));
+  }
+  const trees = ['.claude', '.codex', '.agents'];
+  const before = agentTrees(home, trees);
+  const refused = (sentence: string) => {
+    run = runNexus(home, ['link']);
+    assert.equal(run.status, 1);
+    assert.equal(run.stdout, '');
+    assert.equal(
+      run.stderr,
+      `nexus: error: ${sentence}\n` +
+        'nexus: error: link failed with 1 error(s); no changes were made\n',
+    );
+    assert.equal(agentTrees(home, trees), before);
+  };
 
-    mkdirSync(join(custom, 'mine-workspace'));
-    refused(`custom skill is missing SKILL.md: ${join(custom, 'mine-workspace', 'SKILL.md')}`);
-    rmSync(join(custom, 'mine-workspace'), { recursive: true });
+  mkdirSync(join(custom, 'mine-workspace'));
+  refused(`custom skill is missing SKILL.md: ${join(custom, 'mine-workspace', 'SKILL.md')}`);
+  rmSync(join(custom, 'mine-workspace'), { recursive: true });
 
-    makeLink(join(home, '.agents', 'skills', 'installed'), join(custom, 'aliased'));
-    refused(`custom skill entry must not be a symlink: ${join(custom, 'aliased')}`);
-    unlinkSync(join(custom, 'aliased'));
+  makeLink(join(home, '.agents', 'skills', 'installed'), join(custom, 'aliased'));
+  refused(`custom skill entry must not be a symlink: ${join(custom, 'aliased')}`);
+  unlinkSync(join(custom, 'aliased'));
 
-    renameSync(custom, join(home, '.custom-real'));
-    makeLink(join(home, '.custom-real'), custom);
-    refused(`custom skill root must be a physical directory: ${custom}`);
-    unlinkSync(custom);
-    renameSync(join(home, '.custom-real'), custom);
+  renameSync(custom, join(home, '.custom-real'));
+  makeLink(join(home, '.custom-real'), custom);
+  refused(`custom skill root must be a physical directory: ${custom}`);
+  unlinkSync(custom);
+  renameSync(join(home, '.custom-real'), custom);
 
-    writeSkill(custom, 'nexus-link');
-    refused(`reserved control skill name in custom skill root: ${join(custom, 'nexus-link')}`);
-  },
-);
+  writeSkill(custom, 'nexus-link');
+  refused(`reserved control skill name in custom skill root: ${join(custom, 'nexus-link')}`);
+});
 
 test(
-  'a Custom Skill that shadows an Installed Skill, or is reached through the Canonical Root, changes nothing',
+  'a Custom Skill that shadows an Installed Skill, or is in the Canonical Root, changes nothing',
   () => {
     const home = customHome('custom_collision');
     const custom = join(home, '.custom-skills');
@@ -437,30 +443,32 @@ test('an absent GLOBAL.md is one notice, and a file at an Instruction Path is ke
   assert.equal(readFileSync(join(home, '.claude', 'CLAUDE.md'), 'utf8'), 'hand written\n');
   assert.ok(isAbsent(join(home, '.codex', 'AGENTS.md')));
   assertLinkTo(join(home, '.claude', 'skills', 'mine'), join(home, '.custom-skills', 'mine'));
-  assertLinkTo(join(home, '.codex', 'skills', 'installed'), join(home, '.agents', 'skills', 'installed'));
+  assertLinkTo(
+    join(home, '.codex', 'skills', 'installed'),
+    join(home, '.agents', 'skills', 'installed'),
+  );
 });
 
-test(
-  'when GLOBAL.md goes, link removes its Managed Link and keeps an unrelated symlink',
-  () => {
-    const home = globalHome('global_absent_stale');
-    writeFileSync(join(home, '.custom-skills', 'GLOBAL.md'), 'rule one\n');
-    assert.equal(runNexus(home, ['link']).status, 0);
-    assertInstructionLink(home, join(home, '.claude', 'CLAUDE.md'));
-    unlinkSync(join(home, '.custom-skills', 'GLOBAL.md'));
-    unlinkSync(join(home, '.codex', 'AGENTS.md'));
-    makeLink('/unrelated/AGENTS.md', join(home, '.codex', 'AGENTS.md'));
+test('when GLOBAL.md goes, link removes its Managed Link and keeps an unrelated symlink', () => {
+  const home = globalHome('global_absent_stale');
+  writeFileSync(join(home, '.custom-skills', 'GLOBAL.md'), 'rule one\n');
+  assert.equal(runNexus(home, ['link']).status, 0);
+  assertInstructionLink(home, join(home, '.claude', 'CLAUDE.md'));
+  unlinkSync(join(home, '.custom-skills', 'GLOBAL.md'));
+  unlinkSync(join(home, '.codex', 'AGENTS.md'));
+  makeLink('/unrelated/AGENTS.md', join(home, '.codex', 'AGENTS.md'));
 
-    const run = runNexus(home, ['link']);
-    assert.equal(run.status, 0, run.stderr);
-    assert.ok(isAbsent(join(home, '.claude', 'CLAUDE.md')));
-    assert.ok(
-      run.stdout.includes(`nexus: removed stale managed link: ${join(home, '.claude', 'CLAUDE.md')}\n`),
-    );
-    assertLinkText(join(home, '.codex', 'AGENTS.md'), '/unrelated/AGENTS.md');
-    assert.ok(!run.stdout.includes(join(home, '.codex', 'AGENTS.md')));
-  },
-);
+  const run = runNexus(home, ['link']);
+  assert.equal(run.status, 0, run.stderr);
+  assert.ok(isAbsent(join(home, '.claude', 'CLAUDE.md')));
+  assert.ok(
+    run.stdout.includes(
+      `nexus: removed stale managed link: ${join(home, '.claude', 'CLAUDE.md')}\n`,
+    ),
+  );
+  assertLinkText(join(home, '.codex', 'AGENTS.md'), '/unrelated/AGENTS.md');
+  assert.ok(!run.stdout.includes(join(home, '.codex', 'AGENTS.md')));
+});
 
 test('a file at an Instruction Path is a Foreign Entry: kept, with a hint, and no error', () => {
   const home = globalHome('global_foreign_file');
@@ -474,7 +482,8 @@ test('a file at an Instruction Path is a Foreign Entry: kept, with a hint, and n
   assert.equal(run.stderr, '');
   assert.ok(
     run.stdout.includes(
-      `nexus: foreign entry at ${claude}: preserved; to manage it, run: mv ${claude} ${global}, then rerun link\n`,
+      `nexus: foreign entry at ${claude}: preserved; ` +
+        `to manage it, run: mv ${claude} ${global}, then rerun link\n`,
     ),
   );
   assert.equal(linkText(claude), undefined);
@@ -494,7 +503,8 @@ test('an unrelated symlink at an Instruction Path is a Foreign Entry and is kept
   assert.equal(run.status, 0, run.stderr);
   assert.ok(
     run.stdout.includes(
-      `nexus: foreign entry at ${codex}: preserved; to manage it, run: mv ${codex} ${global}, then rerun link\n`,
+      `nexus: foreign entry at ${codex}: preserved; ` +
+        `to manage it, run: mv ${codex} ${global}, then rerun link\n`,
     ),
   );
   assertLinkText(codex, '/unrelated/AGENTS.md');
@@ -571,7 +581,8 @@ test('every Preflight fault is named before the count, and nothing changes', () 
       `global instructions must be a regular file, not a symlink: ${join(custom, 'GLOBAL.md')}`,
       `custom skill entry must not be a symlink: ${join(custom, 'GLOBAL.md')}`,
       `custom skill is missing SKILL.md: ${join(custom, 'no-skill', 'SKILL.md')}`,
-      `custom skill link in canonical root: ${join(canonical, 'mine')} -> ${join(custom, 'mine')} ` +
+      `custom skill link in canonical root: ${join(canonical, 'mine')} ` +
+        `-> ${join(custom, 'mine')} ` +
         `(remove it; custom skills are owned by ${custom})`,
       `custom skill collides with an installed skill: installed ` +
         `(${join(custom, 'installed')} and ${join(canonical, 'installed')})`,
@@ -628,7 +639,7 @@ test(
 );
 
 test(
-  'on Windows a hand-edited Managed Copy is a Foreign Entry: kept, while the other follows GLOBAL.md',
+  'on Windows a hand-edited Managed Copy is a kept Foreign Entry; the other follows GLOBAL.md',
   { skip: WINDOWS_ONLY },
   () => {
     const home = globalHome('windows_hand_edit');
@@ -645,7 +656,8 @@ test(
     assert.equal(run.stderr, '');
     assert.equal(
       run.stdout,
-      `nexus: foreign entry at ${claude}: preserved; to manage it, run: mv ${claude} ${global}, then rerun link\n` +
+      `nexus: foreign entry at ${claude}: preserved; ` +
+        `to manage it, run: mv ${claude} ${global}, then rerun link\n` +
         'nexus: link complete: skills reconciled\n',
     );
     assert.equal(readFileSync(claude, 'utf8'), 'rule one\nmy own rule\n');
@@ -724,7 +736,8 @@ test(
     assert.equal(run.status, 0, run.stderr);
     assert.equal(
       run.stderr,
-      `nexus: cannot read the Managed Copies file: ${record}; each copy is kept as a Foreign Entry\n`,
+      `nexus: cannot read the Managed Copies file: ${record}; ` +
+        'each copy is kept as a Foreign Entry\n',
     );
     for (const path of [claude, codex]) {
       assert.ok(run.stdout.includes(`nexus: foreign entry at ${path}: preserved;`), run.stdout);

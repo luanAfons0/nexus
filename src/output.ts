@@ -22,3 +22,9 @@ export function note(message: string): void {
 export function error(message: string): void {
   process.stderr.write(`nexus: error: ${message}\n`);
 }
+
+/** Say one error on stderr, and give false: the end of a step that failed. */
+export function refuse(message: string): false {
+  error(message);
+  return false;
+}
