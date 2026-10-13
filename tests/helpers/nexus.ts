@@ -134,6 +134,18 @@ export function fakePath(home: string, path: string): string {
   return [join(testHome(home), FAKE_BIN), path].filter((part) => part !== '').join(delimiter);
 }
 
+/**
+ * The environment a run against a test home gets, as `runNexus` builds it:
+ * the home's fake programs first on PATH, and HOME and the Nexus home moved
+ * into the test home. It refuses a home that is not a marked test home.
+ */
+export function homeEnvironment(
+  home: string,
+  extra: Readonly<Record<string, string>> = {},
+): NodeJS.ProcessEnv {
+  return environment(testHome(home), extra);
+}
+
 /** The resolved home, or a refusal when it is not a marked home under the root. */
 function testHome(home: string): string {
   let resolved: string;

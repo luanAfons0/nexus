@@ -2,6 +2,9 @@
 # fake HOME, with a fake `gh` on PATH as the GitHub seam. No case reaches the
 # network: the fake answers every call, and the one case that proves the
 # refusal without `gh` runs on a PATH that holds nothing else.
+#
+# The Plugin Server cases moved to tests/plugin-server.test.ts with the
+# server itself, which is mcp.ts now and needs Node 24 (#83).
 
 check_fake_gh() {
   local dir="$1"
@@ -71,14 +74,6 @@ run_nexus_on_path() {
   local home="$1" path="$2"
   shift 2
   HOME="$home" NEXUS_HOME="$home/.nexus" PATH="$path" bash "$REPO_ROOT/scripts/nexus" "$@"
-}
-
-# One request to the Plugin Server, answered and gone. Every call is its own
-# server, as a caller on the Tool Bus is.
-check_ask_server() {
-  local home="$1" path="$2" request="$3"
-  printf '%s\n' "$request" | HOME="$home" NEXUS_HOME="$home/.nexus" PATH="$path" \
-    python3 "$REPO_ROOT/mcp" 2>/dev/null
 }
 
 test_check_reports_current_behind_and_unknown() {
@@ -195,39 +190,6 @@ test_check_refuses_without_a_lock() {
   if (( failed == 0 )); then pass check_refuses_without_a_lock; else fail check_refuses_without_a_lock; fi
 }
 
-# The Plugin Server offers the check to the Tool Bus, and a failed check is a
-# JSON-RPC error there rather than a result carrying a non-zero exit, because
-# a caller has to be able to decide an Outcome from it.
-test_check_tool_reports_a_failure_as_a_tool_error() {
-  local failed=0 home fake bin request response
-  home="$(custom_home check_tool)"
-  fake="$home/fakebin"
-  bin="$home/nogh"
-  check_fake_gh "$fake"
-  check_bin_without_gh "$bin" || { fail check_tool_reports_a_failure_as_a_tool_error; return; }
-  check_write_lock "$home/.nexus/skill-lock.json"
-
-  request='{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
-  response="$(check_ask_server "$home" "$fake:$PATH" "$request")"
-  printf '%s\n' "$response" | jq -e '.result.tools | any(.name == "check_skills")' >/dev/null ||
-    { printf '  the plugin server does not offer check_skills\n%s\n' "$response" >&2; failed=1; }
-
-  request='{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"check_skills","arguments":{}}}'
-  response="$(check_ask_server "$home" "$fake:$PATH" "$request")"
-  [[ "$(printf '%s\n' "$response" | jq -r '.result.structuredContent.exit')" == 0 ]] ||
-    { printf '  a check that worked is not a result\n%s\n' "$response" >&2; failed=1; }
-  printf '%s\n' "$response" | jq -e '.result.structuredContent.json.counts.behind == 2' >/dev/null ||
-    { printf '  the result carries no counts\n%s\n' "$response" >&2; failed=1; }
-
-  response="$(check_ask_server "$home" "$bin" "$request")"
-  printf '%s\n' "$response" | jq -e 'has("result") | not' >/dev/null ||
-    { printf '  a failed check came back as a result\n%s\n' "$response" >&2; failed=1; }
-  [[ "$(printf '%s\n' "$response" | jq -r '.error.message')" == *'gh auth login'* ]] ||
-    { printf '  the tool error is not a sentence about gh\n%s\n' "$response" >&2; failed=1; }
-
-  if (( failed == 0 )); then pass check_tool_reports_a_failure_as_a_tool_error; else fail check_tool_reports_a_failure_as_a_tool_error; fi
-}
-
 # The Plugin Page marks its rows from the Check Result every time somebody
 # opens it, so reading the last result has to cost nothing: no `gh`, no
 # network and no lock. The proof is that it works on a PATH with no `gh` on
@@ -312,84 +274,7 @@ test_check_last_refuses_what_it_cannot_read() {
   else fail check_last_refuses_what_it_cannot_read; fi
 }
 
-# The page reads the Check Result and never asks for a Check, so the Plugin
-# Server offers the reading road too. Its refusals stay envelopes: nobody has
-# to decide an Outcome from them, and the page shows what the command line
-# shows (ADR 0008).
-test_check_result_tool_reads_the_last_check() {
-  local failed=0 home fake bin request response output status
-  home="$(custom_home check_result_tool)"
-  fake="$home/fakebin"
-  bin="$home/nogh"
-  check_fake_gh "$fake"
-  check_bin_without_gh "$bin" || { fail check_result_tool_reads_the_last_check; return; }
-  check_write_lock "$home/.nexus/skill-lock.json"
-
-  request='{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
-  response="$(check_ask_server "$home" "$bin" "$request")"
-  printf '%s\n' "$response" | jq -e '.result.tools | any(.name == "show_check_result")' >/dev/null ||
-    { printf '  the plugin server does not offer show_check_result\n%s\n' "$response" >&2; failed=1; }
-
-  request='{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"show_check_result","arguments":{}}}'
-  response="$(check_ask_server "$home" "$bin" "$request")"
-  printf '%s\n' "$response" | jq -e 'has("result")' >/dev/null ||
-    { printf '  a check nobody has run came back as a tool error\n%s\n' "$response" >&2; failed=1; }
-  [[ "$(printf '%s\n' "$response" | jq -r '.result.structuredContent.exit')" == 1 ]] ||
-    { printf '  the refusal is not an exit code\n%s\n' "$response" >&2; failed=1; }
-  [[ "$(printf '%s\n' "$response" | jq -r '.result.structuredContent.stderr')" == *'no check has run yet'* ]] ||
-    { printf '  the refusal is not a sentence a person can act on\n%s\n' "$response" >&2; failed=1; }
-  printf '%s\n' "$response" | jq -e '.result.content[0].text | fromjson | .exit == 1' >/dev/null ||
-    { printf '  this tool stopped answering with its envelope\n%s\n' "$response" >&2; failed=1; }
-
-  output="$(PATH="$fake:$PATH" run_nexus "$home" check 2>&1)"; status=$?
-  [[ "$status" -eq 0 ]] || { printf '%s\n' "$output" >&2; failed=1; }
-  response="$(check_ask_server "$home" "$bin" "$request")"
-  printf '%s\n' "$response" | jq -e '.result.structuredContent
-    | .exit == 0 and .json.counts == { current: 1, behind: 2, unknown: 1 }
-      and (.json.checkedAt | type) == "string"' >/dev/null ||
-    { printf '  the last check did not come back whole\n%s\n' "$response" >&2; failed=1; }
-
-  if (( failed == 0 )); then pass check_result_tool_reads_the_last_check
-  else fail check_result_tool_reads_the_last_check; fi
-}
-
-# A caller on the Tool Bus shows one sentence of what a tool answered, and how
-# many Installed Skills are Behind is the whole question the check exists to
-# answer. So the check's text half is that sentence; every other tool's text
-# half is still the envelope, and so is the check's structured half.
-test_check_tool_answers_with_one_sentence() {
-  local failed=0 home fake request response text moment
-  home="$(custom_home check_sentence)"
-  fake="$home/fakebin"
-  check_fake_gh "$fake"
-  check_write_lock "$home/.nexus/skill-lock.json"
-
-  request='{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"check_skills","arguments":{}}}'
-  response="$(check_ask_server "$home" "$fake:$PATH" "$request")"
-  text="$(printf '%s\n' "$response" | jq -r '.result.content[0].text')"
-  moment="$(printf '%s\n' "$response" | jq -r '.result.structuredContent.json.checkedAt')"
-  [[ "$text" == "4 Installed Skills: 1 current, 2 Behind, 1 unknown. Checked $moment." ]] ||
-    { printf '  the check does not answer with a sentence: %s\n' "$text" >&2; failed=1; }
-
-  printf '%s\n' "$response" | jq -e '.result.structuredContent
-    | has("command") and has("exit") and has("stdout") and has("stderr")
-      and (.json.skills | length == 4)' >/dev/null ||
-    { printf '  the structured half is no longer the whole envelope\n%s\n' "$response" >&2; failed=1; }
-
-  request='{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_skills","arguments":{}}}'
-  response="$(check_ask_server "$home" "$fake:$PATH" "$request")"
-  printf '%s\n' "$response" | jq -e '.result.content[0].text | fromjson
-    | has("command") and has("exit") and has("stdout") and has("stderr")' >/dev/null ||
-    { printf '  another tool stopped answering with its envelope\n%s\n' "$response" >&2; failed=1; }
-
-  if (( failed == 0 )); then pass check_tool_answers_with_one_sentence
-  else fail check_tool_answers_with_one_sentence; fi
-}
-
 CASE_TESTS+=(test_check_reports_current_behind_and_unknown test_check_refuses_without_gh
   test_check_refuses_when_gh_is_not_logged_in test_check_refuses_without_a_lock
   test_check_last_prints_the_result_without_asking_github
-  test_check_last_refuses_what_it_cannot_read
-  test_check_tool_reports_a_failure_as_a_tool_error
-  test_check_result_tool_reads_the_last_check
-  test_check_tool_answers_with_one_sentence)
+  test_check_last_refuses_what_it_cannot_read)

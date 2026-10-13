@@ -458,8 +458,8 @@ the page does those through the same CLI, so the same refusals apply.
 
 ## The page
 
-Nexus ships a page in `web/` and an executable `mcp` beside it, and the
-FirstMate Host does the rest: it runs `mcp` as the Nexus Plugin Server, serves
+Nexus ships a page in `web/` and a Plugin Server, `mcp.ts`, beside it, and the
+FirstMate Host does the rest: it runs `mcp.ts` with its own Node, serves
 `web/` byte for byte at `http://127.0.0.1:4747/p/nexus/`, and admits the
 browser with a cookie it sets on the first navigation. Nexus opens no
 listener, mints no token, and records no run.
@@ -473,8 +473,10 @@ renderer is vendored in `~/.nexus`; the page makes no network fetch.
 The contract is recorded in
 `docs/adr/0008-nexus-is-a-firstmate-plugin.md`:
 
-- Nexus is a directory holding a `web/` folder and an executable `mcp`, and
-  asks nothing else of anyone.
+- Nexus is a directory holding a `web/` folder and a Plugin Server, `mcp.ts`,
+  and asks nothing else of anyone. The Host starts it with its own Node, on
+  Linux and on Windows. In a FirstMate `wsl` Place the Host starts `./mcp`
+  instead, a two-line `sh` launcher that hands `mcp.ts` to the `node` on PATH.
 - The Plugin Server never touches `GLOBAL.md`, the Nexus Lock, or any skill
   root. Every tool is a subprocess call to the CLI: `list --json`, `check
   --json`, `check --last --json`, `global show --json`, `global edit
@@ -525,8 +527,8 @@ each one is a CLI command:
 | `remove_skill` with `{name}` | `nexus remove <name>` |
 | `edit_global_instructions` with `{content, ifMatch}` | `nexus global edit --if-match <ifMatch>`, `content` on standard input |
 
-Every answer carries one JSON object: `command` (the argv the server ran),
-`exit`, `stdout`, and `stderr`, plus `json` with the parsed standard output
+Every answer carries one JSON object: `command` (`nexus` and the arguments the
+CLI ran with), `exit`, `stdout`, and `stderr`, plus `json` with the parsed standard output
 when `exit` is 0 and the output parses. A CLI refusal is `exit` 1 in the
 envelope with the CLI's own message, not an error, so the page shows exactly
 what the command line shows.
@@ -553,6 +555,10 @@ to decide an outcome, and an outcome cannot be read out of a successful result
 (ADR 0009). One change runs at a
 time; reads are never locked, so a slow update cannot stop the page from
 listing skills.
+
+A CLI run that takes longer than `NEXUS_MCP_TIMEOUT` seconds (300 by default)
+is stopped with every program it started, and answers `exit` 124 with
+`nexus: command killed after 300.0 seconds (timeout)` at the end of `stderr`.
 
 The Host answers its own refusals with a status and no envelope: 403 for a
 request that is not this page's, 404 for an unknown Plugin, and 503 when the
@@ -763,9 +769,10 @@ which the tests use with a short value.
 - **The page does not open:** the Host is not running. Check it with
   `systemctl --user status firstmate`, and read it with `journalctl --user -u
   firstmate`. The Plugin Server's own output is in the same journal.
-- **The Index Page shows nexus as Stopped:** the Host could not run `mcp`, or
-  it exited. `journalctl --user -u firstmate` names the reason. Check that
-  `~/.nexus/mcp` is executable and that `python3` is there.
+- **The Index Page shows nexus as Stopped:** the Host could not run `mcp.ts`,
+  or it exited. `journalctl --user -u firstmate` names the reason. In a `wsl`
+  Place, check that `~/.nexus/mcp` is executable and that the `node` on PATH
+  is Node 24 or newer.
 - **The page says "Connection lost":** the Host stopped. Start it with
   `systemctl --user start firstmate` and reload; the address does not change.
 - **403 with `token`, `host`, or `origin`:** the request did not carry the
@@ -813,7 +820,7 @@ land there. It refuses to run if the sandbox would hold your real home, and it
 deletes only a directory it marked as its own. `NEXUS_DEV_HOME` moves the
 sandbox elsewhere.
 
-Changes to `web/` or `mcp` need a running FirstMate Host, which serves the
+Changes to `web/` or `mcp.ts` need a running FirstMate Host, which serves the
 page and runs the Plugin Server (ADR 0008). Register your clone as a Plugin
 from the FirstMate repository with
 `node src/cli.ts add nexus /absolute/path/to/your/clone`, then open
