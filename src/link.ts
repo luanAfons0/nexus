@@ -34,7 +34,7 @@ import {
   readCustomSkills,
 } from './custom.ts';
 import { globalInstructionsPresent } from './instructions.ts';
-import { type LinkPrimitive, linkPrimitive, unsupportedSystem } from './link-primitive.ts';
+import { type LinkPrimitive, linkPrimitive } from './link-primitive.ts';
 import { readLock } from './lock.ts';
 import { error, info } from './output.ts';
 import { type Paths, readPaths } from './paths.ts';
@@ -56,11 +56,6 @@ export const link: Command = async () => linkAll(readPaths(), false);
 
 /** `nexus bootstrap`: link the Control Skills, and nothing else. */
 export const bootstrap: Command = async () => {
-  const unsupported = unsupportedSystem('bootstrap');
-  if (unsupported !== undefined) {
-    error(unsupported);
-    return 1;
-  }
   const paths = readPaths();
   const primitive = linkPrimitive(paths);
   const tally = newTally();
@@ -84,11 +79,6 @@ export const bootstrap: Command = async () => {
  * is verified. Install, Update, Remove and `global edit` call this too.
  */
 export function linkAll(paths: Paths, force: boolean): number {
-  const unsupported = unsupportedSystem('link');
-  if (unsupported !== undefined) {
-    error(unsupported);
-    return 1;
-  }
   const read = readLock(paths.lock, paths.nexusHome);
   if (!read.ok) {
     for (const sentence of read.errors) error(sentence);
