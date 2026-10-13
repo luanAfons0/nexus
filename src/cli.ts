@@ -7,6 +7,7 @@
  * prints the usage on stderr and exits 2 before any command runs. Every other
  * argument is the command's own to read.
  */
+import { check } from './check.ts';
 import { help, HELP_TEXT } from './help.ts';
 import { bootstrap, link } from './link.ts';
 import { list } from './list.ts';
@@ -42,7 +43,7 @@ const COMMANDS: ReadonlyMap<string, Entry> = new Map<string, Entry>([
   ['update', { run: notPorted('update'), takesArguments: true }],
   ['remove', { run: notPorted('remove'), takesArguments: true }],
   ['list', { run: list, takesArguments: true }],
-  ['check', { run: notPorted('check'), takesArguments: true }],
+  ['check', { run: check, takesArguments: true }],
   ['link', { run: link, takesArguments: false }],
   ['global', { run: notPorted('global'), takesArguments: true }],
   ['help', { run: help, takesArguments: false }],
