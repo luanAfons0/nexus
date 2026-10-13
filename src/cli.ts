@@ -9,10 +9,14 @@
  */
 import { check } from './check.ts';
 import { help, HELP_TEXT } from './help.ts';
+import { install } from './install.ts';
 import { bootstrap, link } from './link.ts';
 import { list } from './list.ts';
+import { newSkill } from './new.ts';
 import { error } from './output.ts';
+import { remove } from './remove.ts';
 import { setup } from './setup.ts';
+import { update } from './update.ts';
 
 /** One command: it gets the arguments after its name and gives the exit code. */
 export type Command = (args: readonly string[]) => Promise<number>;
@@ -39,10 +43,10 @@ function notPorted(name: string): Command {
 const COMMANDS: ReadonlyMap<string, Entry> = new Map<string, Entry>([
   ['bootstrap', { run: bootstrap, takesArguments: false }],
   ['setup', { run: setup, takesArguments: false }],
-  ['install', { run: notPorted('install'), takesArguments: true }],
-  ['new', { run: notPorted('new'), takesArguments: true }],
-  ['update', { run: notPorted('update'), takesArguments: true }],
-  ['remove', { run: notPorted('remove'), takesArguments: true }],
+  ['install', { run: install, takesArguments: true }],
+  ['new', { run: newSkill, takesArguments: true }],
+  ['update', { run: update, takesArguments: true }],
+  ['remove', { run: remove, takesArguments: true }],
   ['list', { run: list, takesArguments: true }],
   ['check', { run: check, takesArguments: true }],
   ['link', { run: link, takesArguments: false }],

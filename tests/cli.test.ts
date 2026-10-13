@@ -91,10 +91,6 @@ test('below Node 24 the CLI refuses with one sentence that names the version it 
 test('a command not yet in the Node CLI says so and exits 1', () => {
   const home = newHome('not-ported');
   const commands: readonly (readonly string[])[] = [
-    ['install'],
-    ['update'],
-    ['remove'],
-    ['new'],
     ['global'],
   ];
   for (const args of commands) {

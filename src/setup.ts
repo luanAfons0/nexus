@@ -45,7 +45,6 @@ import {
 } from './canonical.ts';
 import type { Command } from './cli.ts';
 import { CONTROL_SKILLS } from './control-skills.ts';
-import { unsupportedSystem } from './link-primitive.ts';
 import { linkAll } from './link.ts';
 import {
   CANDIDATES_PREFIX,
@@ -98,11 +97,6 @@ async function runSetup(paths: Paths): Promise<number> {
   if (isPresent(paths.lock)) {
     info(ALREADY_INITIALIZED);
     return 0;
-  }
-  const unsupported = unsupportedSystem('setup');
-  if (unsupported !== undefined) {
-    error(unsupported);
-    return 1;
   }
   const mutex = join(paths.nexusHome, '.nexus-setup.lock');
   try {

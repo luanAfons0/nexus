@@ -1,6 +1,6 @@
 /**
  * `nexus link`: the one reconcile of both Native Skill Roots and both
- * Instruction Paths, with Managed Links as relative symlinks.
+ * Instruction Paths into Managed Links to their Owners.
  *
  * These are the link cases of `tests/run.sh` and of
  * `tests/cases/global-instructions.sh`, carried over. The cases that need a
@@ -9,18 +9,18 @@
  * homes also run through the Bash CLI, and the bytes and the trees are
  * compared, because the Bash CLI is the specification.
  *
- * On Windows Link needs junctions and Managed Copies (#76); until then it
- * refuses with one sentence, and these cases skip.
+ * Every other case runs on Windows too, where a Managed Link to a skill is a
+ * junction and each Instruction Path is a Managed Copy of `GLOBAL.md`
+ * (ADR 0010). The links a case starts with are junctions there as well. The
+ * cases at the end are about Managed Copies, which only Windows makes.
  */
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import {
   mkdirSync,
   readFileSync,
   readdirSync,
   renameSync,
   rmSync,
-  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -29,16 +29,23 @@ import { test } from 'node:test';
 import { customHome, writeLock, writeSkill } from './helpers/homes.ts';
 import {
   agentTrees,
+  assertLinkText,
   assertLinkTo,
+  assertManagedCopy,
   isAbsent,
+  isJunction,
   linkText,
+  makeLink,
+  managedCopies,
   runBash,
+  sha256,
+  WINDOWS,
   withoutToolNoise,
 } from './helpers/links.ts';
 import { newHome, runNexus } from './helpers/nexus.ts';
 
-const WINDOWS = process.platform === 'win32';
-const ON_WINDOWS = WINDOWS && 'Link on Windows makes junctions and Managed Copies, which is #76';
+const LINUX_ONLY = WINDOWS && 'the Bash CLI runs on Linux alone';
+const WINDOWS_ONLY = !WINDOWS && 'only Windows makes Managed Copies';
 
 const CONTROL_SKILLS = [
   'nexus-setup',
@@ -50,10 +57,6 @@ const CONTROL_SKILLS = [
   'nexus-remove',
   'nexus',
 ];
-
-function sha256(path: string): string {
-  return createHash('sha256').update(readFileSync(path)).digest('hex');
-}
 
 /** The names in `dir` that a staged link or a recovery container left. */
 function residue(dir: string): readonly string[] {
@@ -72,9 +75,14 @@ function globalHome(name: string): string {
   return home;
 }
 
-/** Assert an Instruction Path is the relative Managed Link `../.custom-skills/GLOBAL.md`. */
+/**
+ * Assert an Instruction Path is the relative Managed Link
+ * `../.custom-skills/GLOBAL.md`, or on Windows a Managed Copy of it.
+ */
 function assertInstructionLink(home: string, path: string): void {
-  assertLinkTo(path, join(home, '.custom-skills', 'GLOBAL.md'));
+  const owner = join(home, '.custom-skills', 'GLOBAL.md');
+  if (WINDOWS) return assertManagedCopy(home, path, owner);
+  assertLinkTo(path, owner);
   assert.equal(linkText(path), '../.custom-skills/GLOBAL.md');
 }
 
@@ -85,7 +93,7 @@ function assertNoInstructionOutput(output: string): void {
   }
 }
 
-test('link with no lock refuses with the lock sentence and exits 1', { skip: ON_WINDOWS }, () => {
+test('link with no lock refuses with the lock sentence and exits 1', () => {
   const home = newHome('link_no_lock');
   const run = runNexus(home, ['link']);
   assert.equal(run.status, 1);
@@ -96,13 +104,13 @@ test('link with no lock refuses with the lock sentence and exits 1', { skip: ON_
   );
 });
 
-test('an invalid lock of any kind is refused and no Agent Home changes', { skip: ON_WINDOWS }, () => {
+test('an invalid lock of any kind is refused and no Agent Home changes', () => {
   const home = newHome('link_invalid_locks');
   const lock = join(home, '.nexus', 'skill-lock.json');
   mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
   mkdirSync(join(home, '.codex', 'skills'), { recursive: true });
-  symlinkSync('../../.nexus/skills/nexus-setup', join(home, '.claude', 'skills', 'existing'));
-  symlinkSync('../../.nexus/skills/nexus-link', join(home, '.codex', 'skills', 'existing'));
+  makeLink('../../.nexus/skills/nexus-setup', join(home, '.claude', 'skills', 'existing'));
+  makeLink('../../.nexus/skills/nexus-link', join(home, '.codex', 'skills', 'existing'));
   const withName = (name: string) => JSON.stringify({ version: 3, skills: { [name]: {} } });
   const cases: readonly (string | undefined)[] = [
     undefined,
@@ -127,7 +135,6 @@ test('an invalid lock of any kind is refused and no Agent Home changes', { skip:
 
 test(
   'link reconciles every desired skill, removes Stale Links, and keeps every Foreign Entry',
-  { skip: ON_WINDOWS },
   () => {
     const home = newHome('link_reconciliation');
     const canonical = join(home, '.agents', 'skills');
@@ -142,14 +149,14 @@ test(
     mkdirSync(claude, { recursive: true });
     mkdirSync(join(codex, '.system'), { recursive: true });
     writeFileSync(join(codex, '.system', 'marker'), 'keep\n');
-    symlinkSync('../../.agents/skills/beta', join(claude, 'alpha'));
-    symlinkSync('../../.agents/skills/stale', join(claude, 'stale'));
-    symlinkSync('../../.agents/skills/stale', join(codex, 'stale'));
-    symlinkSync('../../.agents/skills/missing', join(claude, 'missing'));
-    symlinkSync('../../.agents/skills/missing', join(codex, 'missing'));
+    makeLink('../../.agents/skills/beta', join(claude, 'alpha'));
+    makeLink('../../.agents/skills/stale', join(claude, 'stale'));
+    makeLink('../../.agents/skills/stale', join(codex, 'stale'));
+    makeLink('../../.agents/skills/missing', join(claude, 'missing'));
+    makeLink('../../.agents/skills/missing', join(codex, 'missing'));
     mkdirSync(join(home, '.agents', 'skills-elsewhere'));
-    symlinkSync('../../.agents/skills-elsewhere/keep', join(claude, 'prefix-lookalike'));
-    symlinkSync('/external/keep', join(codex, 'external-link'));
+    makeLink('../../.agents/skills-elsewhere/keep', join(claude, 'prefix-lookalike'));
+    makeLink('/external/keep', join(codex, 'external-link'));
     writeFileSync(join(claude, 'unrelated-file'), 'physical\n');
     mkdirSync(join(codex, 'unrelated-dir'));
 
@@ -179,8 +186,8 @@ test(
     assert.equal(readFileSync(join(claude, 'unrelated-file'), 'utf8'), 'physical\n');
     assert.equal(readFileSync(join(codex, '.system', 'marker'), 'utf8'), 'keep\n');
     assert.ok(readdirSync(join(codex, 'unrelated-dir')).length === 0);
-    assert.equal(linkText(join(claude, 'prefix-lookalike')), '../../.agents/skills-elsewhere/keep');
-    assert.equal(linkText(join(codex, 'external-link')), '/external/keep');
+    assertLinkText(join(claude, 'prefix-lookalike'), '../../.agents/skills-elsewhere/keep');
+    assertLinkText(join(codex, 'external-link'), '/external/keep');
     assert.deepEqual([...residue(claude), ...residue(codex)], []);
 
     const before = agentTrees(home);
@@ -193,23 +200,22 @@ test(
 
 test(
   'a Stale Link is removed whether it reaches its Owner lexically or resolved, with an empty lock',
-  { skip: ON_WINDOWS },
   () => {
     const home = newHome('link_stale_ownership');
     const canonical = join(home, '.agents', 'skills');
     mkdirSync(join(home, '.agents', 'skills-real'), { recursive: true });
-    symlinkSync('skills-real', canonical);
+    makeLink('skills-real', canonical);
     writeSkill(canonical, 'stale');
     writeFileSync(join(canonical, 'stale', 'marker'), 'stale-marker\n');
     const staleBefore = sha256(join(canonical, 'stale', 'marker'));
-    symlinkSync('/external/target', join(canonical, 'alias'));
+    makeLink('/external/target', join(canonical, 'alias'));
     writeLock(join(home, '.nexus', 'skill-lock.json'), []);
     mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
     mkdirSync(join(home, '.codex', 'skills'), { recursive: true });
     const lexical = join(home, '.claude', 'skills', 'lexical-stale');
     const resolved = join(home, '.codex', 'skills', 'resolved-stale');
-    symlinkSync('../../.agents/skills/alias/stale', lexical);
-    symlinkSync(join(home, '.agents', 'skills-real', 'stale'), resolved);
+    makeLink('../../.agents/skills/alias/stale', lexical);
+    makeLink(join(home, '.agents', 'skills-real', 'stale'), resolved);
 
     const run = runNexus(home, ['link']);
     assert.equal(run.status, 0, run.stderr);
@@ -222,14 +228,14 @@ test(
   },
 );
 
-test('a Foreign Entry at a desired link path is a Collision and is kept', { skip: ON_WINDOWS }, () => {
+test('a Foreign Entry at a desired link path is a Collision and is kept', () => {
   const home = newHome('link_desired_collisions');
   writeSkill(join(home, '.agents', 'skills'), 'alpha');
   writeLock(join(home, '.nexus', 'skill-lock.json'), ['alpha']);
   mkdirSync(join(home, '.claude', 'skills', 'alpha'), { recursive: true });
   mkdirSync(join(home, '.codex', 'skills'), { recursive: true });
   writeFileSync(join(home, '.claude', 'skills', 'alpha', 'marker'), 'keep\n');
-  symlinkSync('/external/alpha', join(home, '.codex', 'skills', 'alpha'));
+  makeLink('/external/alpha', join(home, '.codex', 'skills', 'alpha'));
 
   const run = runNexus(home, ['link']);
   assert.equal(run.status, 1);
@@ -241,12 +247,11 @@ test('a Foreign Entry at a desired link path is a Collision and is kept', { skip
   );
   assert.ok(run.stderr.endsWith('nexus: error: link failed with 2 error(s)\n'));
   assert.equal(readFileSync(join(home, '.claude', 'skills', 'alpha', 'marker'), 'utf8'), 'keep\n');
-  assert.equal(linkText(join(home, '.codex', 'skills', 'alpha')), '/external/alpha');
+  assertLinkText(join(home, '.codex', 'skills', 'alpha'), '/external/alpha');
 });
 
 test(
   'Custom Skills are linked, lose their links when they leave the Custom Root, and an absent root is no error',
-  { skip: ON_WINDOWS },
   () => {
     const home = customHome('custom_link');
     const custom = join(home, '.custom-skills');
@@ -283,7 +288,6 @@ test(
 
 test(
   'a Custom Root fault is a Preflight failure that names it and changes nothing',
-  { skip: ON_WINDOWS },
   () => {
     const home = customHome('custom_validation');
     const custom = join(home, '.custom-skills');
@@ -316,12 +320,12 @@ test(
     refused(`custom skill is missing SKILL.md: ${join(custom, 'mine-workspace', 'SKILL.md')}`);
     rmSync(join(custom, 'mine-workspace'), { recursive: true });
 
-    symlinkSync(join(home, '.agents', 'skills', 'installed'), join(custom, 'aliased'));
+    makeLink(join(home, '.agents', 'skills', 'installed'), join(custom, 'aliased'));
     refused(`custom skill entry must not be a symlink: ${join(custom, 'aliased')}`);
     unlinkSync(join(custom, 'aliased'));
 
     renameSync(custom, join(home, '.custom-real'));
-    symlinkSync(join(home, '.custom-real'), custom);
+    makeLink(join(home, '.custom-real'), custom);
     refused(`custom skill root must be a physical directory: ${custom}`);
     unlinkSync(custom);
     renameSync(join(home, '.custom-real'), custom);
@@ -333,7 +337,6 @@ test(
 
 test(
   'a Custom Skill that shadows an Installed Skill, or is reached through the Canonical Root, changes nothing',
-  { skip: ON_WINDOWS },
   () => {
     const home = customHome('custom_collision');
     const custom = join(home, '.custom-skills');
@@ -356,7 +359,7 @@ test(
     assert.equal(agentTrees(home), before);
     rmSync(join(custom, 'installed'), { recursive: true });
 
-    symlinkSync(join(custom, 'mine'), join(canonical, 'mine'));
+    makeLink(join(custom, 'mine'), join(canonical, 'mine'));
     run = runNexus(home, ['link']);
     assert.equal(run.status, 1);
     assert.equal(
@@ -370,7 +373,7 @@ test(
   },
 );
 
-test('link makes both Instruction Paths relative Managed Links to GLOBAL.md', { skip: ON_WINDOWS }, () => {
+test('link makes both Instruction Paths Managed Links to GLOBAL.md', () => {
   const home = globalHome('global_create');
   writeFileSync(join(home, '.custom-skills', 'GLOBAL.md'), 'rule one\n');
 
@@ -384,7 +387,7 @@ test('link makes both Instruction Paths relative Managed Links to GLOBAL.md', { 
   assert.equal(linkText(join(home, '.custom-skills', 'GLOBAL.md')), undefined);
 });
 
-test('a second link changes nothing and says nothing about the Instruction Paths', { skip: ON_WINDOWS }, () => {
+test('a second link changes nothing and says nothing about the Instruction Paths', () => {
   const home = globalHome('global_idempotent');
   writeFileSync(join(home, '.custom-skills', 'GLOBAL.md'), 'rule one\n');
   assert.equal(runNexus(home, ['link']).status, 0);
@@ -397,11 +400,11 @@ test('a second link changes nothing and says nothing about the Instruction Paths
   assert.equal(agentTrees(home), before);
 });
 
-test('link repoints a Managed Link at an Instruction Path that reaches the wrong Owner', { skip: ON_WINDOWS }, () => {
+test('link repoints a Managed Link at an Instruction Path that reaches the wrong Owner', () => {
   const home = globalHome('global_repair');
   writeFileSync(join(home, '.custom-skills', 'GLOBAL.md'), 'rule one\n');
-  symlinkSync('../.custom-skills/mine/SKILL.md', join(home, '.claude', 'CLAUDE.md'));
-  symlinkSync('../.agents/skills/installed/SKILL.md', join(home, '.codex', 'AGENTS.md'));
+  makeLink('../.custom-skills/mine/SKILL.md', join(home, '.claude', 'CLAUDE.md'));
+  makeLink('../.agents/skills/installed/SKILL.md', join(home, '.codex', 'AGENTS.md'));
 
   const run = runNexus(home, ['link']);
   assert.equal(run.status, 0, run.stderr);
@@ -411,7 +414,7 @@ test('link repoints a Managed Link at an Instruction Path that reaches the wrong
   assert.ok(!isAbsent(join(home, '.agents', 'skills', 'installed', 'SKILL.md')));
 });
 
-test('an empty GLOBAL.md is linked and says nothing', { skip: ON_WINDOWS }, () => {
+test('an empty GLOBAL.md is linked and says nothing', () => {
   const home = globalHome('global_empty');
   writeFileSync(join(home, '.custom-skills', 'GLOBAL.md'), '');
 
@@ -423,7 +426,7 @@ test('an empty GLOBAL.md is linked and says nothing', { skip: ON_WINDOWS }, () =
   assert.equal(readFileSync(join(home, '.custom-skills', 'GLOBAL.md'), 'utf8'), '');
 });
 
-test('an absent GLOBAL.md is one notice, and a file at an Instruction Path is kept', { skip: ON_WINDOWS }, () => {
+test('an absent GLOBAL.md is one notice, and a file at an Instruction Path is kept', () => {
   const home = globalHome('global_absent_owner');
   writeFileSync(join(home, '.claude', 'CLAUDE.md'), 'hand written\n');
 
@@ -445,7 +448,6 @@ test('an absent GLOBAL.md is one notice, and a file at an Instruction Path is ke
 
 test(
   'when GLOBAL.md goes, link removes its Managed Link and keeps an unrelated symlink',
-  { skip: ON_WINDOWS },
   () => {
     const home = globalHome('global_absent_stale');
     writeFileSync(join(home, '.custom-skills', 'GLOBAL.md'), 'rule one\n');
@@ -453,7 +455,7 @@ test(
     assertInstructionLink(home, join(home, '.claude', 'CLAUDE.md'));
     unlinkSync(join(home, '.custom-skills', 'GLOBAL.md'));
     unlinkSync(join(home, '.codex', 'AGENTS.md'));
-    symlinkSync('/unrelated/AGENTS.md', join(home, '.codex', 'AGENTS.md'));
+    makeLink('/unrelated/AGENTS.md', join(home, '.codex', 'AGENTS.md'));
 
     const run = runNexus(home, ['link']);
     assert.equal(run.status, 0, run.stderr);
@@ -461,12 +463,12 @@ test(
     assert.ok(
       run.stdout.includes(`nexus: removed stale managed link: ${join(home, '.claude', 'CLAUDE.md')}\n`),
     );
-    assert.equal(linkText(join(home, '.codex', 'AGENTS.md')), '/unrelated/AGENTS.md');
+    assertLinkText(join(home, '.codex', 'AGENTS.md'), '/unrelated/AGENTS.md');
     assert.ok(!run.stdout.includes(join(home, '.codex', 'AGENTS.md')));
   },
 );
 
-test('a file at an Instruction Path is a Foreign Entry: kept, with a hint, and no error', { skip: ON_WINDOWS }, () => {
+test('a file at an Instruction Path is a Foreign Entry: kept, with a hint, and no error', () => {
   const home = globalHome('global_foreign_file');
   const global = join(home, '.custom-skills', 'GLOBAL.md');
   const claude = join(home, '.claude', 'CLAUDE.md');
@@ -487,12 +489,12 @@ test('a file at an Instruction Path is a Foreign Entry: kept, with a hint, and n
   assert.deepEqual(residue(join(home, '.claude')), []);
 });
 
-test('an unrelated symlink at an Instruction Path is a Foreign Entry and is kept', { skip: ON_WINDOWS }, () => {
+test('an unrelated symlink at an Instruction Path is a Foreign Entry and is kept', () => {
   const home = globalHome('global_foreign_symlink');
   const global = join(home, '.custom-skills', 'GLOBAL.md');
   const codex = join(home, '.codex', 'AGENTS.md');
   writeFileSync(global, 'rule one\n');
-  symlinkSync('/unrelated/AGENTS.md', codex);
+  makeLink('/unrelated/AGENTS.md', codex);
 
   const run = runNexus(home, ['link']);
   assert.equal(run.status, 0, run.stderr);
@@ -501,11 +503,11 @@ test('an unrelated symlink at an Instruction Path is a Foreign Entry and is kept
       `nexus: foreign entry at ${codex}: preserved; to manage it, run: mv ${codex} ${global}, then rerun link\n`,
     ),
   );
-  assert.equal(linkText(codex), '/unrelated/AGENTS.md');
+  assertLinkText(codex, '/unrelated/AGENTS.md');
   assertInstructionLink(home, join(home, '.claude', 'CLAUDE.md'));
 });
 
-test('an absent Agent Home is no error, and no file appears at its Instruction Path', { skip: ON_WINDOWS }, () => {
+test('an absent Agent Home is no error, and no file appears at its Instruction Path', () => {
   const home = globalHome('global_no_codex');
   writeFileSync(join(home, '.custom-skills', 'GLOBAL.md'), 'rule one\n');
   rmSync(join(home, '.codex'), { recursive: true });
@@ -523,7 +525,7 @@ test('an absent Agent Home is no error, and no file appears at its Instruction P
 for (const [kind, make, scan] of [
   [
     'symlink',
-    (global: string) => symlinkSync('mine/SKILL.md', global),
+    (global: string) => makeLink('mine/SKILL.md', global),
     (global: string) => `custom skill entry must not be a symlink: ${global}`,
   ],
   [
@@ -532,11 +534,11 @@ for (const [kind, make, scan] of [
     (global: string) => `custom skill is missing SKILL.md: ${join(global, 'SKILL.md')}`,
   ],
 ] as const) {
-  test(`a GLOBAL.md that is a ${kind} is a Preflight fault that changes nothing`, { skip: ON_WINDOWS }, () => {
+  test(`a GLOBAL.md that is a ${kind} is a Preflight fault that changes nothing`, () => {
     const home = globalHome(`global_invalid_${kind}`);
     const global = join(home, '.custom-skills', 'GLOBAL.md');
     writeFileSync(join(home, '.claude', 'CLAUDE.md'), 'hand written\n');
-    symlinkSync('../.custom-skills/mine/SKILL.md', join(home, '.codex', 'AGENTS.md'));
+    makeLink('../.custom-skills/mine/SKILL.md', join(home, '.codex', 'AGENTS.md'));
     make(global);
     const before = agentTrees(home);
 
@@ -554,7 +556,7 @@ for (const [kind, make, scan] of [
   });
 }
 
-test('every Preflight fault is named before the count, and nothing changes', { skip: ON_WINDOWS }, () => {
+test('every Preflight fault is named before the count, and nothing changes', () => {
   const home = customHome('link_preflight_all');
   const custom = join(home, '.custom-skills');
   const canonical = join(home, '.agents', 'skills');
@@ -563,8 +565,8 @@ test('every Preflight fault is named before the count, and nothing changes', { s
   writeSkill(custom, 'installed');
   writeSkill(custom, 'mine');
   mkdirSync(join(custom, 'no-skill'));
-  symlinkSync(join(custom, 'mine'), join(canonical, 'mine'));
-  symlinkSync('mine/SKILL.md', join(custom, 'GLOBAL.md'));
+  makeLink(join(custom, 'mine'), join(canonical, 'mine'));
+  makeLink('mine/SKILL.md', join(custom, 'GLOBAL.md'));
   const before = agentTrees(home);
 
   const run = runNexus(home, ['link']);
@@ -589,7 +591,7 @@ test('every Preflight fault is named before the count, and nothing changes', { s
 
 test(
   'link says the same bytes and leaves the same trees as the Bash CLI',
-  { skip: WINDOWS && 'the Bash CLI runs on Linux alone' },
+  { skip: LINUX_ONLY },
   () => {
     const scenes: Record<string, (home: string) => void> = {
       reconcile: (home) => {
@@ -599,19 +601,19 @@ test(
         writeSkill(join(home, '.custom-skills'), 'mine');
         writeLock(join(home, '.nexus', 'skill-lock.json'), ['alpha', 'missing']);
         mkdirSync(join(home, '.codex', 'skills', '.system'), { recursive: true });
-        symlinkSync('../../.agents/skills/stale', join(home, '.claude', 'skills', 'stale'));
-        symlinkSync('../../.agents/skills/missing', join(home, '.codex', 'skills', 'missing'));
-        symlinkSync('../../.agents/skills/stale', join(home, '.codex', 'skills', 'alpha'));
-        symlinkSync('/external/keep', join(home, '.codex', 'skills', 'external'));
+        makeLink('../../.agents/skills/stale', join(home, '.claude', 'skills', 'stale'));
+        makeLink('../../.agents/skills/missing', join(home, '.codex', 'skills', 'missing'));
+        makeLink('../../.agents/skills/stale', join(home, '.codex', 'skills', 'alpha'));
+        makeLink('/external/keep', join(home, '.codex', 'skills', 'external'));
         mkdirSync(join(home, '.claude', 'skills', 'nexus-new'));
-        symlinkSync('/external/link', join(home, '.codex', 'skills', 'nexus-help'));
+        makeLink('/external/link', join(home, '.codex', 'skills', 'nexus-help'));
         writeFileSync(join(home, '.custom-skills', 'GLOBAL.md'), 'rule one\n');
         writeFileSync(join(home, '.codex', 'AGENTS.md'), 'mine\n');
       },
       'no-owner': (home) => {
         writeLock(join(home, '.nexus', 'skill-lock.json'), []);
-        symlinkSync('../.custom-skills/GLOBAL.md', join(home, '.claude', 'CLAUDE.md'));
-        symlinkSync('/unrelated/AGENTS.md', join(home, '.codex', 'AGENTS.md'));
+        makeLink('../.custom-skills/GLOBAL.md', join(home, '.claude', 'CLAUDE.md'));
+        makeLink('/unrelated/AGENTS.md', join(home, '.codex', 'AGENTS.md'));
       },
       'no-homes': (home) => {
         writeLock(join(home, '.nexus', 'skill-lock.json'), []);
@@ -624,8 +626,8 @@ test(
         writeLock(join(home, '.nexus', 'skill-lock.json'), ['installed']);
         writeSkill(custom, 'installed');
         mkdirSync(join(custom, 'bad name'));
-        symlinkSync(join(home, '.agents'), join(custom, 'aliased'));
-        symlinkSync(join(custom, 'installed'), join(home, '.agents', 'skills', '.hidden'));
+        makeLink(join(home, '.agents'), join(custom, 'aliased'));
+        makeLink(join(custom, 'installed'), join(home, '.agents', 'skills', '.hidden'));
         mkdirSync(join(custom, 'GLOBAL.md'));
       },
       'custom-root-file': (home) => {
@@ -636,14 +638,14 @@ test(
       'stale-ownership': (home) => {
         const canonical = join(home, '.agents', 'skills');
         renameSync(canonical, join(home, '.agents', 'skills-real'));
-        symlinkSync('skills-real', canonical);
+        makeLink('skills-real', canonical);
         writeSkill(canonical, 'stale');
-        symlinkSync('/external/target', join(canonical, 'alias'));
+        makeLink('/external/target', join(canonical, 'alias'));
         writeLock(join(home, '.nexus', 'skill-lock.json'), []);
-        symlinkSync('../../.agents/skills/alias/stale', join(home, '.claude', 'skills', 'lexical'));
-        symlinkSync(join(home, '.agents', 'skills-real', 'stale'), join(home, '.codex', 'skills', 'resolved'));
-        symlinkSync('../../.nexus/skills/alias/nexus-setup', join(home, '.claude', 'skills', 'nexus-setup'));
-        symlinkSync('../../.agents/skills-elsewhere/x', join(home, '.claude', 'skills', 'lookalike'));
+        makeLink('../../.agents/skills/alias/stale', join(home, '.claude', 'skills', 'lexical'));
+        makeLink(join(home, '.agents', 'skills-real', 'stale'), join(home, '.codex', 'skills', 'resolved'));
+        makeLink('../../.nexus/skills/alias/nexus-setup', join(home, '.claude', 'skills', 'nexus-setup'));
+        makeLink('../../.agents/skills-elsewhere/x', join(home, '.claude', 'skills', 'lookalike'));
       },
       'no-lock': () => undefined,
       'bad-lock': (home) => writeFileSync(join(home, '.nexus', 'skill-lock.json'), '{"version":3,"skills":{"../x":{}}}'),
@@ -667,19 +669,101 @@ test(
   },
 );
 
+test('after GLOBAL.md changes, link brings both Instruction Paths back in step', () => {
+  const home = globalHome('global_changed');
+  const global = join(home, '.custom-skills', 'GLOBAL.md');
+  writeFileSync(global, 'rule one\n');
+  assert.equal(runNexus(home, ['link']).status, 0);
+  // As `nexus global edit` writes it: a whole new file renamed over the old.
+  writeFileSync(`${global}.new`, 'rule two\n');
+  renameSync(`${global}.new`, global);
+
+  const run = runNexus(home, ['link']);
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stdout, 'nexus: link complete: skills reconciled\n');
+  assert.equal(run.stderr, '');
+  for (const path of [join(home, '.claude', 'CLAUDE.md'), join(home, '.codex', 'AGENTS.md')]) {
+    assertInstructionLink(home, path);
+    assert.equal(readFileSync(path, 'utf8'), 'rule two\n');
+    assert.deepEqual(residue(join(path, '..')), []);
+  }
+  if (!WINDOWS) assert.ok(isAbsent(join(home, '.nexus', 'managed-copies.json')));
+});
+
 test(
-  'on Windows link refuses with one sentence until it has junctions and Managed Copies',
-  { skip: !WINDOWS && 'the refusal is for Windows alone' },
+  'on Windows every skill link is a junction and each Instruction Path a recorded Managed Copy',
+  { skip: WINDOWS_ONLY },
   () => {
-    const home = customHome('link_windows');
-    const before = agentTrees(home);
+    const home = globalHome('windows_forms');
+    const global = join(home, '.custom-skills', 'GLOBAL.md');
+    writeFileSync(global, 'rule one\n');
+
     const run = runNexus(home, ['link']);
-    assert.equal(run.status, 1);
-    assert.equal(run.stdout, '');
+    assert.equal(run.status, 0, run.stderr);
+    for (const root of ['.claude', '.codex']) {
+      for (const name of ['installed', 'mine', ...CONTROL_SKILLS]) {
+        assert.ok(isJunction(join(home, root, 'skills', name)), `${root} ${name}`);
+      }
+    }
+    const claude = join(home, '.claude', 'CLAUDE.md');
+    const codex = join(home, '.codex', 'AGENTS.md');
+    assert.equal(linkText(claude), undefined);
+    assert.equal(linkText(codex), undefined);
+    assert.deepEqual(managedCopies(home), { [claude]: sha256(global), [codex]: sha256(global) });
+  },
+);
+
+test(
+  'on Windows a hand-edited Managed Copy is a Foreign Entry: kept, while the other follows GLOBAL.md',
+  { skip: WINDOWS_ONLY },
+  () => {
+    const home = globalHome('windows_hand_edit');
+    const global = join(home, '.custom-skills', 'GLOBAL.md');
+    const claude = join(home, '.claude', 'CLAUDE.md');
+    const codex = join(home, '.codex', 'AGENTS.md');
+    writeFileSync(global, 'rule one\n');
+    assert.equal(runNexus(home, ['link']).status, 0);
+    writeFileSync(claude, 'rule one\nmy own rule\n');
+    writeFileSync(global, 'rule two\n');
+
+    const run = runNexus(home, ['link']);
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stderr, '');
     assert.equal(
-      run.stderr,
-      'nexus: error: link does not run on Windows yet; run Nexus inside WSL for now\n',
+      run.stdout,
+      `nexus: foreign entry at ${claude}: preserved; to manage it, run: mv ${claude} ${global}, then rerun link\n` +
+        'nexus: link complete: skills reconciled\n',
     );
-    assert.equal(agentTrees(home), before);
+    assert.equal(readFileSync(claude, 'utf8'), 'rule one\nmy own rule\n');
+    assertManagedCopy(home, codex, global);
+    assert.equal(readFileSync(codex, 'utf8'), 'rule two\n');
+    assert.deepEqual(residue(join(home, '.claude')), []);
+
+    // GLOBAL.md gone: the Managed Copy goes, the hand edit stays.
+    unlinkSync(global);
+    const gone = runNexus(home, ['link']);
+    assert.equal(gone.status, 0, gone.stderr);
+    assert.ok(gone.stdout.includes(`nexus: removed stale managed link: ${codex}\n`));
+    assert.ok(isAbsent(codex));
+    assert.equal(managedCopies(home)[codex], undefined);
+    assert.equal(readFileSync(claude, 'utf8'), 'rule one\nmy own rule\n');
+  },
+);
+
+test(
+  'on Windows a file Nexus did not write is a Foreign Entry, even with the bytes of GLOBAL.md',
+  { skip: WINDOWS_ONLY },
+  () => {
+    const home = globalHome('windows_unrecorded');
+    const global = join(home, '.custom-skills', 'GLOBAL.md');
+    const claude = join(home, '.claude', 'CLAUDE.md');
+    writeFileSync(global, 'rule one\n');
+    writeFileSync(claude, 'rule one\n');
+
+    const run = runNexus(home, ['link']);
+    assert.equal(run.status, 0, run.stderr);
+    assert.ok(run.stdout.includes(`nexus: foreign entry at ${claude}: preserved;`));
+    assert.equal(managedCopies(home)[claude], undefined);
+    assertManagedCopy(home, join(home, '.codex', 'AGENTS.md'), global);
   },
 );
