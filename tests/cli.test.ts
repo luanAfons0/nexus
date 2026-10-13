@@ -95,7 +95,6 @@ test('a command not yet in the Node CLI says so and exits 1', () => {
     ['update'],
     ['remove'],
     ['new'],
-    ['global'],
   ];
   for (const args of commands) {
     const run = runNexus(home, args);

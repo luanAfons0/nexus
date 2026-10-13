@@ -3,7 +3,9 @@
  * `GLOBAL.md`, is present, and the state of each Instruction Path.
  *
  * Reading only. An Instruction Path is in one of four states: `linked` (a
- * Managed Link that resolves to the Owner), `foreign` (anything else there),
+ * Managed Link that reaches the Owner: a symlink on Linux and macOS, a
+ * Managed Copy on Windows, as the Link primitive reads it), `foreign`
+ * (anything else there),
  * `absent` (nothing there, Agent Home present) or `no home` (the Agent Home
  * is absent). The words and the JSON shape are the Bash CLI's
  * (`instruction_path_state` in `scripts/lib/list.sh`, `global_instructions_json`
@@ -11,8 +13,9 @@
  * the Plugin Page read.
  */
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { lstatSync, readFileSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { type LinkPrimitive, linkPrimitive } from './link-primitive.ts';
 import type { Paths } from './paths.ts';
 
 /** The state of one Instruction Path. */
@@ -43,16 +46,24 @@ export function globalInstructionsPresent(paths: Paths): boolean {
   }
 }
 
-/** The state of the Instruction Path `path`, whose Owner is `owner`. */
-export function instructionPathState(path: string, owner: string): InstructionPathState {
+/**
+ * The state of the Instruction Path `path`, whose Owner is `owner`. It is
+ * `linked` when the Link primitive says the entry already reaches the Owner
+ * (`links_exactly_to`), so a Managed Copy on Windows reads as a symlink does
+ * on Linux, and a copy edited by hand reads `foreign`, as Link treats it.
+ */
+export function instructionPathState(
+  primitive: LinkPrimitive,
+  path: string,
+  owner: string,
+): InstructionPathState {
   if (!isDirectory(dirname(path))) return 'no home';
-  let isLink: boolean;
   try {
-    isLink = lstatSync(path).isSymbolicLink();
+    lstatSync(path);
   } catch {
     return 'absent';
   }
-  return isLink && resolvesTo(path, owner) ? 'linked' : 'foreign';
+  return primitive.reaches(path, owner) ? 'linked' : 'foreign';
 }
 
 /**
@@ -64,8 +75,9 @@ export function readGlobalInstructions(paths: Paths, withContent: boolean): Glob
   const bytes = globalInstructionsPresent(paths) ? readFileSync(paths.globalInstructions) : null;
   const sha256 = bytes === null ? null : createHash('sha256').update(bytes).digest('hex');
   const owner = paths.globalInstructions;
-  const claude = instructionPathState(paths.claudeInstructions, owner);
-  const codex = instructionPathState(paths.codexInstructions, owner);
+  const primitive = linkPrimitive(paths);
+  const claude = instructionPathState(primitive, paths.claudeInstructions, owner);
+  const codex = instructionPathState(primitive, paths.codexInstructions, owner);
   if (!withContent) return { owner, present: bytes !== null, sha256, claude, codex };
   // Invalid UTF-8 becomes U+FFFD, as `jq -Rs` reads it.
   const content = bytes === null ? null : bytes.toString('utf8');
@@ -77,8 +89,10 @@ export function globalInstructionsLine(paths: Paths): string {
   const owner = globalInstructionsPresent(paths)
     ? paths.globalInstructions
     : `absent (${paths.globalInstructions})`;
-  const claude = instructionPathState(paths.claudeInstructions, paths.globalInstructions);
-  const codex = instructionPathState(paths.codexInstructions, paths.globalInstructions);
+  const primitive = linkPrimitive(paths);
+  const global = paths.globalInstructions;
+  const claude = instructionPathState(primitive, paths.claudeInstructions, global);
+  const codex = instructionPathState(primitive, paths.codexInstructions, global);
   return `global instructions: ${owner} (claude: ${claude}, codex: ${codex})`;
 }
 
@@ -86,15 +100,6 @@ export function globalInstructionsLine(paths: Paths): string {
 function isDirectory(path: string): boolean {
   try {
     return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-/** True when both paths exist and resolve to the same place (`realpath -e`). */
-function resolvesTo(path: string, target: string): boolean {
-  try {
-    return realpathSync.native(path) === realpathSync.native(target);
   } catch {
     return false;
   }

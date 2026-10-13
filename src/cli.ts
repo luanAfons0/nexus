@@ -8,6 +8,7 @@
  * argument is the command's own to read.
  */
 import { check } from './check.ts';
+import { global } from './global.ts';
 import { help, HELP_TEXT } from './help.ts';
 import { install } from './install.ts';
 import { bootstrap, link } from './link.ts';
@@ -46,7 +47,7 @@ const COMMANDS: ReadonlyMap<string, Entry> = new Map<string, Entry>([
   ['list', { run: list, takesArguments: true }],
   ['check', { run: check, takesArguments: true }],
   ['link', { run: link, takesArguments: false }],
-  ['global', { run: notPorted('global'), takesArguments: true }],
+  ['global', { run: global, takesArguments: true }],
   ['help', { run: help, takesArguments: false }],
   ['-h', { run: help, takesArguments: false }],
   ['--help', { run: help, takesArguments: false }],

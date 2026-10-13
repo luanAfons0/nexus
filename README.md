@@ -167,8 +167,11 @@ including any foreign entry notice, so both instruction paths become managed
 links at once. That link run has the same needs as `nexus link`: with no
 Nexus lock yet it reports the missing lock and exits 1, the new `GLOBAL.md`
 stays in place, and setup followed by link finishes the job. When the file
-existed, link does not run and nothing is printed. Exit codes: 0 success, 1 refusal or fault, 2 usage (unknown flag,
-extra argument, or `--if-match` without a hex sha256).
+existed, link does not run and nothing is printed. On Windows, `global edit`
+then brings each managed copy in step with the new `GLOBAL.md`, so both
+agents read it at once; a copy you edited by hand stays a foreign entry, and
+`list` and `global show --json` call it `foreign`. Exit codes: 0 success,
+1 refusal or fault, 2 usage (unknown flag, extra argument, or `--if-match` without a hex sha256).
 
 The owner is named `GLOBAL.md`, not `AGENTS.md`, because Codex loads an
 `AGENTS.md` found in the working tree as project instructions. A file named
