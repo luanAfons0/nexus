@@ -17,7 +17,7 @@
  * as the signal would have. Either way Setup sees the signal at its next
  * checkpoint.
  */
-import { statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { error } from './output.ts';
@@ -79,6 +79,15 @@ export function tryChange(change: () => void): void {
   } catch {
     // As `chmod` or `rm` that failed inside the override: the override went on.
   }
+}
+
+/**
+ * Put a directory at `path`, as a person or a program might put one there
+ * while Nexus moves a tree to it: empty, or with `full`, holding a file.
+ */
+export function occupy(path: string, full: boolean): void {
+  mkdirSync(path);
+  if (full) writeFileSync(join(path, 'occupant'), 'occupant\n');
 }
 
 /** True once a pause of this run has written its handshake. */

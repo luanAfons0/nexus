@@ -35,6 +35,7 @@ import {
 } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fault } from './fault.ts';
+import { note } from './output.ts';
 import type { Paths } from './paths.ts';
 import { isWithin, realpathMissing, resolvedLinkTarget } from './real-paths.ts';
 
@@ -185,7 +186,7 @@ function windowsPrimitive(paths: Paths): LinkPrimitive {
   const record = managedCopies(join(paths.nexusHome, MANAGED_COPIES_FILE));
   const isManagedCopy = (path: string): boolean => {
     const hash = sha256(path);
-    return hash !== undefined && record.read()[path] === hash;
+    return hash !== undefined && record.hashes(path).includes(hash);
   };
   return {
     read(path) {
@@ -217,21 +218,9 @@ function windowsPrimitive(paths: Paths): LinkPrimitive {
       return { ok: true, path: staged };
     },
     promote(staged, path) {
-      const copy = isFile(staged);
-      // A copy renames over a copy in one step; anything else moves aside.
-      const aside = exists(path) && !(copy && isFile(path)) ? stagedName(path) : undefined;
-      if (aside !== undefined && !move(path, aside)) return false;
-      if (!move(staged, path)) {
-        if (aside !== undefined) move(aside, path);
-        return false;
-      }
-      if (aside !== undefined) discardLink(aside);
-      if (!copy) return record.forget(path);
-      const hash = sha256(path);
-      if (hash !== undefined && record.remember(path, hash)) return true;
-      // An unrecorded copy would read as a Foreign Entry: take it back.
-      discardLink(path);
-      return false;
+      if (isFile(staged)) return promoteCopy(record, staged, path);
+      if (!moveInPlace(staged, path, false)) return false;
+      return record.set(path, []);
     },
     remove(path) {
       try {
@@ -239,10 +228,48 @@ function windowsPrimitive(paths: Paths): LinkPrimitive {
       } catch {
         return false;
       }
-      return record.forget(path);
+      return record.set(path, []);
     },
     discard: discardLink,
   };
+}
+
+/**
+ * Put the staged copy `staged` at `path` so that no moment loses Nexus's
+ * claim to it. The record first accepts the new hash beside the old one,
+ * then the copy is renamed in, and only then is the old hash dropped. A run
+ * that stops at any point leaves at `path` a file whose hash is recorded; a
+ * record that cannot be written stops the promotion before `path` changes.
+ */
+function promoteCopy(record: ManagedCopies, staged: string, path: string): boolean {
+  const hash = sha256(staged);
+  if (hash === undefined) return false;
+  const before = record.hashes(path);
+  if (!record.set(path, [...before.filter((known) => known !== hash), hash])) return false;
+  if (!moveInPlace(staged, path, true)) {
+    record.set(path, before);
+    return false;
+  }
+  if (fault('copy_promote_crash')) process.kill(process.pid, 'SIGKILL');
+  // A record that keeps the old hash as well still names this copy.
+  record.set(path, [hash]);
+  return true;
+}
+
+/**
+ * Rename `staged` to `path`. A copy renames over a copy in one step;
+ * anything else at `path` is moved aside first, and put back when the staged
+ * entry cannot take its place.
+ */
+function moveInPlace(staged: string, path: string, copy: boolean): boolean {
+  const aside = exists(path) && !(copy && isFile(path)) ? stagedName(path) : undefined;
+  if (aside !== undefined && !move(path, aside)) return false;
+  if (!move(staged, path)) {
+    if (aside !== undefined) move(aside, path);
+    return false;
+  }
+  if (aside !== undefined) discardLink(aside);
+  return true;
 }
 
 /** Stage a copy of the Owner file `owner` beside `path`, and verify its bytes. */
@@ -261,31 +288,50 @@ function stageCopy(owner: string, path: string): Staged {
   return { ok: true, path: staged };
 }
 
-/** The Managed Copies file, read fresh each time and replaced whole. */
+/**
+ * The Managed Copies file, read fresh each time and replaced whole. Each
+ * path holds one hash, or two while a promotion moves a copy in.
+ */
 type ManagedCopies = {
-  /** The recorded hash of each Managed Copy, by its path. */
-  readonly read: () => Readonly<Record<string, string>>;
-  /** Record `hash` for `path`. False when the file could not be written. */
-  readonly remember: (path: string, hash: string) => boolean;
-  /** Drop the record of `path`. False when the file could not be written. */
-  readonly forget: (path: string) => boolean;
+  /** The hashes recorded for the Managed Copy at `path`; empty when none. */
+  readonly hashes: (path: string) => readonly string[];
+  /** Record `hashes` for `path`, or drop it when empty. False when the file could not be written. */
+  readonly set: (path: string, hashes: readonly string[]) => boolean;
 };
 
+/** True once this run has said that the Managed Copies file cannot be read. */
+let unreadableSaid = false;
+
 function managedCopies(file: string): ManagedCopies {
-  // A missing or unreadable file records nothing, so every copy reads as a
-  // Foreign Entry and is kept: the safe side of not knowing.
-  const read = (): Record<string, string> => {
+  // A missing file records nothing, and so does an unreadable one, after one
+  // sentence: every copy then reads as a Foreign Entry and is kept, the safe
+  // side of not knowing (ADR 0010).
+  const read = (): Record<string, string | readonly string[]> => {
+    let text: string;
     try {
-      const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
-      return Object.fromEntries(
-        Object.entries(parsed).filter((pair): pair is [string, string] => typeof pair[1] === 'string'),
-      );
-    } catch {
+      text = readFileSync(file, 'utf8');
+    } catch (failure) {
+      if ((failure as { code?: unknown }).code !== 'ENOENT') unreadable();
       return {};
     }
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        return parsed as Record<string, string | readonly string[]>;
+      }
+    } catch {
+      // Said below.
+    }
+    unreadable();
+    return {};
   };
-  const write = (copies: Record<string, string>): boolean => {
+  const unreadable = (): void => {
+    if (unreadableSaid) return;
+    unreadableSaid = true;
+    note(`cannot read the Managed Copies file: ${file}; each copy is kept as a Foreign Entry`);
+  };
+  const write = (copies: Record<string, string | readonly string[]>): boolean => {
+    if (fault('copy_record_fail')) return false;
     const staged = stagedName(file);
     try {
       writeFileSync(staged, `${JSON.stringify(copies, null, 2)}\n`, { flag: 'wx' });
@@ -296,18 +342,22 @@ function managedCopies(file: string): ManagedCopies {
       return false;
     }
   };
+  const hashesOf = (copies: Record<string, unknown>, path: string): readonly string[] => {
+    const value = Object.hasOwn(copies, path) ? copies[path] : undefined;
+    if (typeof value === 'string') return [value];
+    if (!Array.isArray(value)) return [];
+    return value.filter((hash): hash is string => typeof hash === 'string');
+  };
   return {
-    read,
-    remember(path, hash) {
+    hashes: (path) => hashesOf(read(), path),
+    set(path, hashes) {
       const copies = read();
-      if (copies[path] === hash) return true;
-      copies[path] = hash;
-      return write(copies);
-    },
-    forget(path) {
-      const copies = read();
-      if (!(path in copies)) return true;
-      delete copies[path];
+      const known = hashesOf(copies, path);
+      if (known.length === hashes.length && known.every((hash, i) => hash === hashes[i])) {
+        return true;
+      }
+      if (hashes.length === 0) delete copies[path];
+      else copies[path] = hashes.length === 1 ? (hashes[0] as string) : [...hashes];
       return write(copies);
     },
   };

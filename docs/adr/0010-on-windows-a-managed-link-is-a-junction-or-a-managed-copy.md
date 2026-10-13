@@ -64,7 +64,12 @@ nothing, managed, a foreign link, or a Foreign Entry.
 - A Managed Copy follows `GLOBAL.md` only when Link or `nexus global edit`
   runs. A hand edit to `GLOBAL.md` reaches the agents on the next `nexus link`.
 - A lost or unreadable Managed Copies file records nothing, so every copy
-  reads as a Foreign Entry and is kept: the safe side of not knowing.
+  reads as a Foreign Entry and is kept: the safe side of not knowing. An
+  unreadable one is said in one sentence.
+- A new Managed Copy is renamed in only after the record accepts its hash
+  beside the old one, and the old hash is dropped after the rename. A run
+  stopped at any point leaves a file whose hash is recorded, and a record
+  that cannot be written stops the change before the Instruction Path moves.
 - Windows cannot rename over a directory or a junction, so a junction is
   replaced by moving the old entry aside under a staged name first, and
   putting it back if the new one cannot take its place. A Managed Copy is

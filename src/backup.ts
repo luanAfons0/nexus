@@ -34,8 +34,9 @@ import {
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { type Manifest, readManifest, sameManifest } from './backup-manifest.ts';
-import { fault, homeFile, seamFailure, tryChange } from './fault.ts';
+import { fault, homeFile, occupy, seamFailure, tryChange } from './fault.ts';
 import { entryIdentity } from './identity.ts';
+import { moveOntoNothing } from './move.ts';
 import { error } from './output.ts';
 import {
   type Checkpoint,
@@ -279,10 +280,9 @@ function makeDirectory(path: string): boolean {
 
 /**
  * Move a verified tree to `destination`, which must be free, and check that
- * `source` is gone (`backup_move`, `mv -Tn`). Node has no rename that
- * refuses to replace, so `destination` is checked first; a POSIX rename
- * would replace an empty directory, and this check is what keeps a Backup
- * that appeared in between.
+ * `source` is gone (`backup_move`, `mv -Tn`). The move refuses anything at
+ * `destination`, even an empty directory that appeared a moment before, so a
+ * Backup is never replaced (`move.ts`).
  */
 function backupMove(source: string, destination: string): boolean {
   const codex = basename(destination) === '.codex-backup';
@@ -290,12 +290,9 @@ function backupMove(source: string, destination: string): boolean {
   const rollback = basename(source) === '.claude-backup';
   if (fault('backup_promote_second') && codex) return seamFailure('second backup promotion failed');
   if (fault('backup_rollback') && (codex || rollback)) return seamFailure('backup rollback failed');
-  if (isPresent(destination)) return false;
-  try {
-    renameSync(source, destination);
-  } catch {
-    return false;
-  }
+  if (fault('backup_destination_empty') && claude) occupy(destination, false);
+  if (fault('backup_destination_full') && claude) occupy(destination, true);
+  if (!moveOntoNothing(source, destination)) return false;
   if (isPresent(source)) return false;
   if (fault('backup_final_corrupt') && codex) {
     tryChange(() => chmodSync(join(dirname(destination), '.claude-backup', '.hidden'), 0o600));

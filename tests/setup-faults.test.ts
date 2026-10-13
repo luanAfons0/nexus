@@ -426,3 +426,38 @@ test('a canonical symlink scan that fails is said and fails setup', () => {
   assert.notEqual(run.status, 0);
   assert.match(run.stderr, /cannot scan canonical skill symlinks/);
 });
+
+for (const [what, fault] of [
+  ['empty', 'backup_destination_empty'],
+  ['holding a file', 'backup_destination_full'],
+] as const) {
+  test(`a Backup path that appears ${what} just before its promotion is kept, and setup refuses`, () => {
+    const { home, run, before } = setupWithFault(fault, fault, markedHome);
+    assert.notEqual(run.status, 0, run.stderr);
+    assert.match(run.stderr, /cannot promote Claude backup/);
+    const backup = join(home, '.claude-backup');
+    assert.ok(lstatSync(backup).isDirectory(), run.stderr);
+    const held = fault === 'backup_destination_full' ? ['occupant'] : [];
+    assert.deepEqual(readdirSync(backup), held);
+    if (held.length > 0) assert.equal(readFileSync(join(backup, 'occupant'), 'utf8'), 'occupant\n');
+    assert.ok(isAbsent(join(home, '.codex-backup')));
+    assert.ok(isAbsent(join(home, '.nexus', 'skill-lock.json')));
+    assert.equal(sourceTrees(home), before);
+    assert.deepEqual(setupResidue(home), []);
+  });
+}
+
+test('a directory that appears at a canonical entry just before the copy moves in is kept', () => {
+  const { home, run } = setupWithFault(
+    'canonical_destination_empty',
+    'canonical_destination_empty',
+    canonicalLinkHome,
+  );
+  assert.notEqual(run.status, 0, run.stderr);
+  const entry = join(home, '.agents', 'skills', 'alpha');
+  assert.ok(lstatSync(entry).isDirectory(), run.stderr);
+  assert.deepEqual(readdirSync(entry), []);
+  assert.match(run.stderr, /canonical promotion is ambiguous; retained current/);
+  const recovery = lastNamed(run.stderr, 'recovery');
+  assert.notEqual(linkText(join(recovery, 'original')), undefined);
+});

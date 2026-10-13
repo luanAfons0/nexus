@@ -20,15 +20,15 @@ import {
   mkdirSync,
   mkdtempSync,
   realpathSync,
-  renameSync,
   rmdirSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, sep } from 'node:path';
-import { fault, homeFile, pause, seamFailure } from './fault.ts';
+import { fault, homeFile, occupy, pause, seamFailure } from './fault.ts';
 import { entryIdentity, reachedIdentity } from './identity.ts';
+import { moveOntoNothing } from './move.ts';
 import { error } from './output.ts';
 import type { Paths } from './paths.ts';
 import { isWithin, realpathMissing } from './real-paths.ts';
@@ -232,6 +232,7 @@ function canonicalMove(source: string, destination: string, expected?: string): 
     unlinkSync(source);
     symlinkSync(homeFile('elsewhere'), source, 'junction');
   }
+  if (fault('canonical_destination_empty') && temp) occupy(destination, false);
   if (expected !== undefined && entryIdentity(source, true) !== expected) return false;
   if (!moveOntoNothing(source, destination)) return false;
   if (expected !== undefined && entryIdentity(destination, true) !== expected) {
@@ -239,17 +240,6 @@ function canonicalMove(source: string, destination: string, expected?: string): 
     return false;
   }
   return !isPresent(source);
-}
-
-/** Rename `source` to `destination` when nothing is at `destination`; false otherwise. */
-function moveOntoNothing(source: string, destination: string): boolean {
-  if (isPresent(destination)) return false;
-  try {
-    renameSync(source, destination);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /** Remove a materialization temp in the Canonical Root (`cleanup_canonical_temp`). */

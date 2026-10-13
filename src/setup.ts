@@ -26,7 +26,6 @@
 import { randomInt } from 'node:crypto';
 import {
   closeSync,
-  linkSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -47,6 +46,7 @@ import type { Command } from './cli.ts';
 import { CONTROL_SKILLS } from './control-skills.ts';
 import { fault, pause } from './fault.ts';
 import { linkAll } from './link.ts';
+import { moveOntoNothing } from './move.ts';
 import {
   CANDIDATES_PREFIX,
   cleanupDiscoveredLockSnapshots,
@@ -274,7 +274,7 @@ function atomicCopy(residue: Residue, source: string, destination: string): bool
     error(`atomic copy staging verification failed: ${destination}`);
     return false;
   }
-  if (!moveFileOntoNothing(temp, destination) || isPresent(temp)) {
+  if (!moveOntoNothing(temp, destination) || isPresent(temp)) {
     discard();
     error(`cannot promote copied file: ${destination}`);
     return false;
@@ -287,31 +287,6 @@ function atomicCopy(residue: Residue, source: string, destination: string): bool
   if (fault('lock_post_publish_corrupt')) {
     writeFileSync(destination, 'corrupt');
     return false;
-  }
-  return true;
-}
-
-/**
- * Put the file `source` at `destination` only if nothing is there (`mv -Tn`).
- * A hard link refuses an existing name in one step; where the file system
- * has none, a check and a rename do it.
- */
-function moveFileOntoNothing(source: string, destination: string): boolean {
-  try {
-    linkSync(source, destination);
-  } catch (failure) {
-    if ((failure as { code?: unknown }).code === 'EEXIST' || isPresent(destination)) return false;
-    try {
-      renameSync(source, destination);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  try {
-    unlinkSync(source);
-  } catch {
-    // The name stays; the caller sees it and cleans it up.
   }
   return true;
 }

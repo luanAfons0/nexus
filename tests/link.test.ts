@@ -681,3 +681,55 @@ test(
     assertManagedCopy(home, join(home, '.codex', 'AGENTS.md'), global);
   },
 );
+
+test(
+  'on Windows a lost Managed Copies file makes each copy a Foreign Entry, kept as it is',
+  { skip: WINDOWS_ONLY },
+  () => {
+    const home = globalHome('windows_record_lost');
+    const global = join(home, '.custom-skills', 'GLOBAL.md');
+    const claude = join(home, '.claude', 'CLAUDE.md');
+    const codex = join(home, '.codex', 'AGENTS.md');
+    writeFileSync(global, 'rule one\n');
+    assert.equal(runNexus(home, ['link']).status, 0);
+    rmSync(join(home, '.nexus', 'managed-copies.json'));
+    writeFileSync(global, 'rule two\n');
+
+    const run = runNexus(home, ['link']);
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stderr, '');
+    for (const path of [claude, codex]) {
+      assert.ok(run.stdout.includes(`nexus: foreign entry at ${path}: preserved;`), run.stdout);
+      assert.equal(readFileSync(path, 'utf8'), 'rule one\n');
+    }
+    assert.deepEqual(managedCopies(home), {});
+  },
+);
+
+test(
+  'on Windows an unreadable Managed Copies file is said once, and each copy is kept',
+  { skip: WINDOWS_ONLY },
+  () => {
+    const home = globalHome('windows_record_unreadable');
+    const global = join(home, '.custom-skills', 'GLOBAL.md');
+    const record = join(home, '.nexus', 'managed-copies.json');
+    const claude = join(home, '.claude', 'CLAUDE.md');
+    const codex = join(home, '.codex', 'AGENTS.md');
+    writeFileSync(global, 'rule one\n');
+    assert.equal(runNexus(home, ['link']).status, 0);
+    writeFileSync(record, '{ not json');
+    writeFileSync(global, 'rule two\n');
+
+    const run = runNexus(home, ['link']);
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(
+      run.stderr,
+      `nexus: cannot read the Managed Copies file: ${record}; each copy is kept as a Foreign Entry\n`,
+    );
+    for (const path of [claude, codex]) {
+      assert.ok(run.stdout.includes(`nexus: foreign entry at ${path}: preserved;`), run.stdout);
+      assert.equal(readFileSync(path, 'utf8'), 'rule one\n');
+    }
+    assert.equal(readFileSync(record, 'utf8'), '{ not json');
+  },
+);

@@ -15,6 +15,7 @@
  * On Windows a home's links are junctions, as `makeLink` makes them.
  */
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -188,3 +189,61 @@ test('install scratch that cannot be removed is named and kept', () => {
   assert.match(run.stderr, /install scratch retained: /);
   assert.notDeepEqual(named(join(home, '.nexus'), '.nexus-install-'), []);
 });
+
+const WINDOWS_ONLY = process.platform !== 'win32' && 'only Windows makes Managed Copies';
+
+/** A home whose Instruction Paths hold Managed Copies of `rule one`, and GLOBAL.md now `rule two`. */
+function copiesHome(name: string): string {
+  const home = newHome(name);
+  writeLock(join(home, '.nexus', 'skill-lock.json'), []);
+  mkdirSync(join(home, '.claude'));
+  mkdirSync(join(home, '.codex'));
+  write(join(home, '.custom-skills', 'GLOBAL.md'), 'rule one\n');
+  assert.equal(runNexus(home, ['link']).status, 0);
+  writeFileSync(join(home, '.custom-skills', 'GLOBAL.md'), 'rule two\n');
+  return home;
+}
+
+test(
+  'on Windows a Managed Copies file that cannot be written leaves each Instruction Path as it was',
+  { skip: WINDOWS_ONLY },
+  () => {
+    const home = copiesHome('copy_record_fail');
+    const record = readFileSync(join(home, '.nexus', 'managed-copies.json'), 'utf8');
+    const run = runFault(home, 'copy_record_fail', ['link']);
+    assert.equal(run.status, 1, run.stderr);
+    for (const path of [join(home, '.claude', 'CLAUDE.md'), join(home, '.codex', 'AGENTS.md')]) {
+      assert.match(run.stderr, new RegExp(`cannot install link: ${path.replaceAll('\\', '\\\\')}`));
+      assert.equal(readFileSync(path, 'utf8'), 'rule one\n');
+      assert.deepEqual(named(dirname(path), '.nexus-'), []);
+    }
+    assert.equal(readFileSync(join(home, '.nexus', 'managed-copies.json'), 'utf8'), record);
+    assert.equal(runNexus(home, ['link']).status, 0);
+    assert.equal(readFileSync(join(home, '.claude', 'CLAUDE.md'), 'utf8'), 'rule two\n');
+  },
+);
+
+test(
+  'on Windows a run killed just after a Managed Copy moved in leaves it a Managed Copy',
+  { skip: WINDOWS_ONLY },
+  () => {
+    const home = copiesHome('copy_promote_crash');
+    const claude = join(home, '.claude', 'CLAUDE.md');
+    const crash = runFault(home, 'copy_promote_crash', ['link']);
+    assert.notEqual(crash.status, 0);
+    assert.equal(readFileSync(claude, 'utf8'), 'rule two\n');
+    const state = JSON.parse(runNexus(home, ['global', 'show', '--json']).stdout);
+    assert.equal(state.claude, 'linked');
+
+    const run = runNexus(home, ['link']);
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stdout, 'nexus: link complete: skills reconciled\n');
+    // The killed run's record still accepts the old hash beside the new one,
+    // until the next change of GLOBAL.md moves a copy in again.
+    const record = JSON.parse(readFileSync(join(home, '.nexus', 'managed-copies.json'), 'utf8'));
+    const hash = createHash('sha256').update('rule two\n').digest('hex');
+    assert.ok([record[claude]].flat().includes(hash), JSON.stringify(record));
+    assert.equal(record[join(home, '.codex', 'AGENTS.md')], hash);
+    assert.equal(readFileSync(join(home, '.codex', 'AGENTS.md'), 'utf8'), 'rule two\n');
+  },
+);
