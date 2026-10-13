@@ -11,9 +11,8 @@
  * homes also run through the Bash CLI, and the bytes are compared, because
  * the Bash CLI is the specification.
  *
- * A case that ends in a link skips on Windows until Link has junctions and
- * Managed Copies (#76). Every refusal before the link runs on Windows too,
- * and there the fake is found as `npx.cmd`.
+ * Every case but the NVM fallback and the Bash parity runs on Windows too,
+ * where the fake is found as `npx.cmd` and Link makes junctions (ADR 0010).
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -43,7 +42,6 @@ import {
 } from './helpers/nexus.ts';
 
 const WINDOWS = process.platform === 'win32';
-const UNTIL_JUNCTIONS = WINDOWS && 'link refuses on Windows until it has junctions (#76)';
 
 /** The arguments `npx` gets for `install source --skill alpha --skill beta`. */
 const ADD_ALPHA_BETA = [
@@ -95,7 +93,6 @@ function onPath(name: string): string | undefined {
 
 test(
   'install runs npx skills add with every skill, publishes the Upstream Lock and links',
-  { skip: UNTIL_JUNCTIONS },
   () => {
     const home = installHome('install-cli');
     const run = runNexus(home, ['install', 'source', '--skill', 'alpha', '--skill', 'beta'], {
