@@ -18,7 +18,7 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, readlinkSync, realpathSync, symlinkSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { snapshotTree } from './homes.ts';
-import { REPO_ROOT, type Run } from './nexus.ts';
+import { fakePath, REPO_ROOT, type Run } from './nexus.ts';
 
 /** True when nothing at all is at `path`, not even a dangling symlink. */
 export function isAbsent(path: string): boolean {
@@ -117,6 +117,30 @@ export function runBash(home: string, args: readonly string[]): Run {
   const result = spawnSync('bash', [join(REPO_ROOT, 'scripts', 'nexus'), ...args], {
     cwd: home,
     env: { ...process.env, HOME: home, NEXUS_HOME: join(home, '.nexus'), LC_ALL: 'C' },
+    encoding: 'utf8',
+  });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+/**
+ * Run the Bash CLI on a test home as `runBash` does, with the home's fake
+ * programs first on PATH and `extra` in its environment.
+ */
+export function runBashWithFakes(
+  home: string,
+  args: readonly string[],
+  extra: Readonly<Record<string, string>> = {},
+): Run {
+  const result = spawnSync('bash', [join(REPO_ROOT, 'scripts', 'nexus'), ...args], {
+    cwd: home,
+    env: {
+      ...process.env,
+      ...extra,
+      PATH: fakePath(home, process.env.PATH ?? ''),
+      HOME: home,
+      NEXUS_HOME: join(home, '.nexus'),
+      LC_ALL: 'C',
+    },
     encoding: 'utf8',
   });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };

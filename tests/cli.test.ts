@@ -92,9 +92,6 @@ test('a command not yet in the Node CLI says so and exits 1', () => {
   const home = newHome('not-ported');
   const commands: readonly (readonly string[])[] = [
     ['setup'],
-    ['update'],
-    ['remove'],
-    ['new'],
   ];
   for (const args of commands) {
     const run = runNexus(home, args);
