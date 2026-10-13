@@ -9,7 +9,7 @@
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { REPO_ROOT, type Run, testRoot } from './helpers/nexus.ts';
@@ -119,3 +119,27 @@ test('with no CLI arguments the sandbox home command names the sandbox and shows
   assert.equal(help.status, 0);
   assert.equal(help.stdout, run.stderr);
 });
+
+test('an empty NEXUS_DEV_HOME means the default sandbox in the repository', () => {
+  // A real home inside the default sandbox makes the command refuse it by
+  // name, so the case proves the default without building anything there.
+  const real = join(REPO_ROOT, '.scratch', 'home', 'a-home-that-is-not-there');
+  const result = spawnSync(process.execPath, [DEV_HOME, 'list'], {
+    cwd: testRoot(),
+    env: { ...process.env, HOME: real, USERPROFILE: real, NEXUS_DEV_HOME: '' },
+    encoding: 'utf8',
+    shell: false,
+    windowsHide: true,
+  });
+  assert.equal(result.status, 1);
+  assert.equal(
+    result.stderr,
+    `dev-home: error: the sandbox home may not hold your real home: ${join(physicalRepo(), '.scratch', 'home')}\n`,
+  );
+  assert.ok(!existsSync(real));
+});
+
+/** The repository's physical path, as the command resolves it. */
+function physicalRepo(): string {
+  return realpathSync.native(REPO_ROOT);
+}

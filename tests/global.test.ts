@@ -14,7 +14,16 @@
  * it, and that `list` and `global show --json` call a Managed Copy linked.
  */
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { customHome, snapshotTree, writeLock, writeSkill } from './helpers/homes.ts';
@@ -456,5 +465,39 @@ test(
     writeFileSync(join(home, '.claude', 'CLAUDE.md'), 'my own rule\n');
     assert.equal(state().claude, 'foreign');
     assert.equal(line(), `global instructions: ${owner(home)} (claude: foreign, codex: linked)`);
+  },
+);
+
+test(
+  'global edit of an existing GLOBAL.md leaves a Managed Link to another Owner file where it points',
+  { skip: POSIX_ONLY },
+  () => {
+    const home = globalHome('global_edit_other_owner_file');
+    writeFileSync(owner(home), 'rule one\n');
+    writeFileSync(join(home, '.custom-skills', 'OTHER.md'), 'other rules\n');
+    symlinkSync('../.custom-skills/OTHER.md', join(home, '.claude', 'CLAUDE.md'));
+
+    const run = edit(home, 'rule two\n');
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stdout + run.stderr, '');
+    assert.equal(linkText(join(home, '.claude', 'CLAUDE.md')), '../.custom-skills/OTHER.md');
+    assert.ok(isAbsent(join(home, '.codex', 'AGENTS.md')));
+  },
+);
+
+test(
+  'on Windows a hand edit of GLOBAL.md leaves both Managed Copies linked until the next link',
+  { skip: WINDOWS_ONLY },
+  () => {
+    const home = globalHome('windows_global_hand_edit');
+    writeFileSync(owner(home), 'rule one\n');
+    assert.equal(runNexus(home, ['link']).status, 0);
+    writeFileSync(owner(home), 'rule two\n');
+
+    const state = JSON.parse(runNexus(home, ['global', 'show', '--json']).stdout);
+    assert.equal(state.claude, 'linked');
+    assert.equal(state.codex, 'linked');
+    const line = runNexus(home, ['list']).stdout.trimEnd().split('\n').at(-1);
+    assert.equal(line, `global instructions: ${owner(home)} (claude: linked, codex: linked)`);
   },
 );

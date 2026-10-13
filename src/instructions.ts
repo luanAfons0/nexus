@@ -49,8 +49,10 @@ export function globalInstructionsPresent(paths: Paths): boolean {
 /**
  * The state of the Instruction Path `path`, whose Owner is `owner`. It is
  * `linked` when the Link primitive says the entry already reaches the Owner
- * (`links_exactly_to`), so a Managed Copy on Windows reads as a symlink does
- * on Linux, and a copy edited by hand reads `foreign`, as Link treats it.
+ * (`links_exactly_to`), or when it is a Managed Copy (ADR 0010): one that a
+ * hand edit of `GLOBAL.md` left behind is still Nexus's own, and the next
+ * Link brings it in step. A copy edited by hand reads `foreign`, as Link
+ * treats it.
  */
 export function instructionPathState(
   primitive: LinkPrimitive,
@@ -63,7 +65,7 @@ export function instructionPathState(
   } catch {
     return 'absent';
   }
-  return primitive.reaches(path, owner) ? 'linked' : 'foreign';
+  return primitive.reaches(path, owner) || primitive.isManagedCopy(path) ? 'linked' : 'foreign';
 }
 
 /**

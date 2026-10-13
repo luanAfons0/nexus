@@ -65,6 +65,11 @@ export type LinkPrimitive = {
    */
   readonly reaches: (path: string, owner: string) => boolean;
   /**
+   * True when the entry at `path` is a Managed Copy: a regular file whose
+   * hash is the record, whatever the Owner holds now. Only Windows makes one.
+   */
+  readonly isManagedCopy: (path: string) => boolean;
+  /**
    * Make a Managed Link to `owner` beside `path`, under a temporary name
    * `.nexus-tmp.*`, and verify that it reaches `owner`. The parent of `path`
    * must exist. A refused stage leaves nothing behind.
@@ -100,17 +105,18 @@ export function linkPrimitive(paths: Paths): LinkPrimitive {
 /**
  * Bring every Managed Copy at an Instruction Path back in step with
  * `GLOBAL.md`, and give the sentence of each failure. `nexus global edit`
- * calls it right after it replaces `GLOBAL.md` (#77). A Managed Link that
- * already reaches the Owner, which every symlink does, is left alone, so on
- * Linux and macOS it does nothing. A Foreign Entry, and an absent path, are
- * left alone everywhere: making a missing link is Link's work.
+ * calls it right after it replaces `GLOBAL.md` (#77). Only a Managed Copy is
+ * touched, so on Linux and macOS it does nothing: a symlink already reads the
+ * new file, and one that points elsewhere is Link's to judge. A Foreign
+ * Entry, and an absent path, are left alone everywhere: making a missing
+ * link is Link's work.
  */
 export function refreshManagedCopies(paths: Paths): readonly string[] {
   const primitive = linkPrimitive(paths);
   const owner = paths.globalInstructions;
   const errors: string[] = [];
   for (const path of [paths.claudeInstructions, paths.codexInstructions]) {
-    if (primitive.read(path) !== 'managed' || primitive.reaches(path, owner)) continue;
+    if (!primitive.isManagedCopy(path) || primitive.reaches(path, owner)) continue;
     const staged = primitive.stage(owner, path);
     if (!staged.ok) {
       errors.push(staged.error);
@@ -133,6 +139,7 @@ function posixPrimitive(paths: Paths): LinkPrimitive {
   return {
     read: (path) => readLinkOrEntry(path, isManagedLink),
     reaches,
+    isManagedCopy: () => false,
     stage(owner, path) {
       const parent = dirname(path);
       let text: string;
@@ -185,18 +192,19 @@ function windowsPrimitive(paths: Paths): LinkPrimitive {
   const isManagedLink = managedLinkRule(paths);
   const record = managedCopies(join(paths.nexusHome, MANAGED_COPIES_FILE));
   const isManagedCopy = (path: string): boolean => {
-    const hash = sha256(path);
+    const hash = isFile(path) ? sha256(path) : undefined;
     return hash !== undefined && record.hashes(path).includes(hash);
   };
   return {
     read(path) {
       const entry = readLinkOrEntry(path, isManagedLink);
-      return entry === 'foreign' && isFile(path) && isManagedCopy(path) ? 'managed' : entry;
+      return entry === 'foreign' && isManagedCopy(path) ? 'managed' : entry;
     },
     reaches(path, owner) {
       if (isDirectory(owner)) return isLinkTo(path, owner);
-      return isFile(path) && sameBytes(path, owner) && isManagedCopy(path);
+      return sameBytes(path, owner) && isManagedCopy(path);
     },
+    isManagedCopy,
     stage(owner, path) {
       if (!isDirectory(owner)) return stageCopy(owner, path);
       let target: string;

@@ -540,15 +540,20 @@ test('the timeout sentence says the seconds as the Python server did', async (t)
   );
 });
 
-test('a timeout that is no number stops the server with one sentence', async () => {
-  const server = startServer(customHome('server-bad-timeout'), {
-    env: { NEXUS_MCP_TIMEOUT: 'soon' },
-  });
+test('a timeout that is no number, or empty, stops the server with one sentence', async () => {
+  for (const [name, value] of [['bad', 'soon'], ['empty', '']] as const) {
+    const server = startServer(customHome(`server-${name}-timeout`), {
+      env: { NEXUS_MCP_TIMEOUT: value },
+    });
 
-  const status = await server.close();
+    const status = await server.close();
 
-  assert.equal(status, 1);
-  assert.equal(server.stderr(), 'nexus: NEXUS_MCP_TIMEOUT must be a number of seconds: soon\n');
+    assert.equal(status, 1, value);
+    assert.equal(
+      server.stderr(),
+      `nexus: NEXUS_MCP_TIMEOUT must be a number of seconds: ${value}\n`,
+    );
+  }
 });
 
 test('closing stdin ends the server once every call in flight is answered', async () => {

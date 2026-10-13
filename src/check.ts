@@ -247,15 +247,34 @@ function firstLine(stderr: string): string {
   return lines.find((line) => line !== '') ?? '';
 }
 
+/** A moment that names its zone: a `Z`, an offset, or the name of a zone. */
+const ZONED = /(?:\dZ|[+-]\d{2}:?\d{2}|\b(?:UTC|GMT|UT|[ECMP][SD]T)\b.*)$/i;
+
+/** A date with no time, which `Date.parse` already reads as UTC. */
+const DATE_ONLY = /^[+-]?\d{4,6}(?:-\d{2}){0,2}$/;
+
 /**
  * A moment as whole seconds since the epoch, as `date -u -d <moment> +%s`
- * gives it: a moment with no offset is UTC, and a fraction is cut off.
+ * gives it: a moment that names no zone is UTC, whatever zone the machine is
+ * in, and a fraction is cut off.
  */
 function epoch(moment: string): number | undefined {
-  const local = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(moment);
-  const utc = local ? `${moment}Z` : moment;
-  const ms = Date.parse(utc);
-  return Number.isNaN(ms) ? undefined : Math.floor(ms / 1000);
+  const given = moment.trim();
+  const ms = Date.parse(given);
+  if (Number.isNaN(ms)) return undefined;
+  if (DATE_ONLY.test(given) || ZONED.test(given)) return Math.floor(ms / 1000);
+  // `Date.parse` read the wall time in the local zone: read it again as UTC.
+  const wall = new Date(ms);
+  const utc = Date.UTC(
+    wall.getFullYear(),
+    wall.getMonth(),
+    wall.getDate(),
+    wall.getHours(),
+    wall.getMinutes(),
+    wall.getSeconds(),
+    wall.getMilliseconds(),
+  );
+  return Math.floor(utc / 1000);
 }
 
 /**

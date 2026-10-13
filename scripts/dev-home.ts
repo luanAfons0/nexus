@@ -71,10 +71,6 @@ function samePath(a: string, b: string): boolean {
  * cannot reach the Agent Context you use.
  */
 function sandboxPath(chosen: string): string | undefined {
-  if (chosen === '') {
-    fail('the sandbox home is empty');
-    return undefined;
-  }
   const sandbox = physical(chosen);
   const real = physical(homedir());
   const holdsReal =
@@ -135,7 +131,8 @@ function main(args: readonly string[]): number {
     return 0;
   }
 
-  const sandbox = sandboxPath(process.env.NEXUS_DEV_HOME ?? join(REPO, '.scratch', 'home'));
+  // An empty NEXUS_DEV_HOME is unset, as `${NEXUS_DEV_HOME:-...}` read it.
+  const sandbox = sandboxPath(process.env.NEXUS_DEV_HOME || join(REPO, '.scratch', 'home'));
   if (sandbox === undefined) return 1;
   if (reset && !removeSandbox(sandbox)) return 1;
   if (!buildSandbox(sandbox)) return 1;

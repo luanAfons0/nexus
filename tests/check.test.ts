@@ -421,3 +421,20 @@ test('check --last refuses a result that is not there, or not a result', () => {
     }
   }
 });
+
+test('a moment with no zone is read as UTC, whatever zone the machine is in', () => {
+  // owner/moved last changed at 2026-06-01T10:00:00Z.
+  const skills = {
+    'early-skill': skill('owner/moved', 'skills/early-skill/SKILL.md', 'aaaa', '2026-06-01 09:00:00'),
+    'late-skill': skill('owner/moved', 'skills/late-skill/SKILL.md', 'bbbb', '2026-06-01 11:00:00'),
+  };
+  for (const zone of ['America/Sao_Paulo', 'Asia/Tokyo']) {
+    const home = customHome(`check-utc-${zone.replace('/', '-')}`);
+    installFake(home, 'gh', 'gh-check.ts');
+    writeCheckLock(home, skills);
+    const run = runNexus(home, ['check'], { env: { TZ: zone } });
+    assert.equal(run.status, 0, run.stderr);
+    const states = readResult(home).skills.map((row) => [row.name, row.state]);
+    assert.deepEqual(states, [['early-skill', 'behind'], ['late-skill', 'current']], zone);
+  }
+});

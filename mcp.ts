@@ -75,7 +75,7 @@ const BUSY = -32000;
 /** The exit code an Envelope carries for a child stopped by the timeout. */
 const TIMED_OUT = 124;
 
-/** The timeout in seconds when `NEXUS_MCP_TIMEOUT` is unset or empty. */
+/** The timeout in seconds when `NEXUS_MCP_TIMEOUT` is unset. */
 const DEFAULT_TIMEOUT = '300';
 
 /**
@@ -84,7 +84,10 @@ const DEFAULT_TIMEOUT = '300';
  */
 const DRAIN_MS = 2000;
 
-/** The longest delay `setTimeout` keeps; a longer one would fire at once. */
+/**
+ * The longest delay `setTimeout` keeps, about 24.8 days; a longer one would
+ * fire at once. A longer timeout waits this long instead.
+ */
 const LONGEST_TIMER_MS = 2 ** 31 - 1;
 
 const WINDOWS = process.platform === 'win32';
@@ -326,17 +329,17 @@ function runCli(tail: readonly string[], input?: string): Promise<Envelope> {
     let timedOut = false;
     let drain: NodeJS.Timeout | undefined;
     const seconds = timeout;
-    const timer =
-      seconds * 1000 <= LONGEST_TIMER_MS
-        ? setTimeout(() => {
-            timedOut = true;
-            stopTree(child);
-            drain = setTimeout(() => {
-              child.stdout?.destroy();
-              child.stderr?.destroy();
-            }, DRAIN_MS);
-          }, Math.max(0, seconds * 1000))
-        : undefined;
+    const timer = setTimeout(
+      () => {
+        timedOut = true;
+        stopTree(child);
+        drain = setTimeout(() => {
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+        }, DRAIN_MS);
+      },
+      Math.min(LONGEST_TIMER_MS, Math.max(0, seconds * 1000)),
+    );
 
     child.on('error', (fault) => {
       clearTimeout(timer);
@@ -400,11 +403,12 @@ function stopTree(child: ChildProcess): void {
 }
 
 /**
- * `NEXUS_MCP_TIMEOUT` as Python's `float()` reads it: a decimal number, or
- * `inf` for no timeout. Undefined when it is no number at all.
+ * `NEXUS_MCP_TIMEOUT` as Python's `float()` read it: a decimal number, or
+ * `inf` for the longest wait there is. Undefined when it is no number at all,
+ * and when it is empty, which the Python server refused at start too.
  */
 function readTimeout(value: string | undefined): number | undefined {
-  const given = value === undefined || value === '' ? DEFAULT_TIMEOUT : value.trim();
+  const given = value === undefined ? DEFAULT_TIMEOUT : value.trim();
   if (/^[+-]?(?:inf|infinity)$/i.test(given)) {
     return given.startsWith('-') ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
   }
