@@ -199,7 +199,7 @@ export function homeEnvironment(
   home: string,
   extra: Readonly<Record<string, string>> = {},
 ): NodeJS.ProcessEnv {
-  return environment(testHome(home), extra);
+  return environment(testHome(home), { env: extra });
 }
 
 /** The resolved home, or a refusal when it is not a marked home under the root. */
