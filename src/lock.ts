@@ -21,9 +21,11 @@ import {
   rmdirSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { isControlSkill } from './control-skills.ts';
+import { fault, pause, paused, seamFailure } from './fault.ts';
 import { sortedJson } from './json.ts';
 import { byteOrder, isSafeSkillName } from './skill-names.ts';
 
@@ -83,6 +85,7 @@ export type Discovery =
  * Snapshot that Install or Setup validates before it Publishes.
  */
 export function readLock(file: string, nexusHome: string, watch?: SnapshotWatch): LockRead {
+  if (fault('lock_extract')) return refused('test seam: lock key extraction failed');
   if (!isRegularFile(file)) {
     return refused(`invalid version-3 lock: expected regular file at ${file}`);
   }
@@ -93,6 +96,9 @@ export function readLock(file: string, nexusHome: string, watch?: SnapshotWatch)
     return refused(`cannot create lock snapshot directory under ${nexusHome}`);
   }
   watch?.held(dir);
+  if (watch !== undefined && fault('term_pre', 'term_pre_cleanup_fail')) pause('pre');
+  const post = watch !== undefined && fault('term_post', 'term_post_cleanup_fail');
+  if (post && isPresent(join(nexusHome, 'skill-lock.json'))) pause('post');
   const errors: string[] = [];
   const snapshot = join(dir, 'lock.json');
   let lock: NexusLock | undefined;
@@ -113,6 +119,7 @@ export function readLock(file: string, nexusHome: string, watch?: SnapshotWatch)
   if (cleanup === undefined) watch?.released(dir);
   else errors.push(cleanup);
   if (lock === undefined || errors.length > 0) return { ok: false, errors };
+  if (fault('lock_replace')) writeFileSync(file, '{"version":3,"skills":{"../escape":{}}}\n');
   return { ok: true, lock };
 }
 
@@ -295,7 +302,9 @@ function removeSnapshot(dir: string, nexusHome: string): string | undefined {
     return `invalid lock snapshot directory: ${dir}`;
   }
   try {
-    rmSync(join(dir, 'lock.json'), { force: true });
+    const seam = fault('term_pre_cleanup_fail', 'term_post_cleanup_fail') && paused();
+    if (seam) seamFailure('lock snapshot cleanup failed');
+    else rmSync(join(dir, 'lock.json'), { force: true });
     rmdirSync(dir);
     return undefined;
   } catch {

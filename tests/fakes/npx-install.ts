@@ -6,6 +6,7 @@
  * `NEXUS_FAKE_NPX_MODE` picks what it does:
  * - unset: installs `alpha` and `beta`, and writes a lock that names both;
  * - `failure`: leaves an untracked `alpha` directory and exits 42;
+ * - `alpha`: installs `alpha`, and writes a lock that names it alone;
  * - `empty`: writes a valid lock that selects no skills;
  * - `invalid`: writes a version-2 lock;
  * - `bad`: writes `{bad`, which is no JSON;
@@ -41,6 +42,9 @@ if (mode === 'failure') {
   mkdirSync(join(agents, 'skills', 'alpha'), { recursive: true });
   writeFileSync(join(agents, 'skills', 'alpha', 'marker'), 'untracked');
   process.exitCode = 42;
+} else if (mode === 'alpha') {
+  skill('alpha');
+  lock('{"version":3,"skills":{"alpha":{}}}');
 } else if (mode === 'empty') {
   lock('{"version":3,"skills":{}}');
 } else if (mode === 'invalid') {

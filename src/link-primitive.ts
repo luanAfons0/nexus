@@ -34,6 +34,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
+import { fault } from './fault.ts';
 import type { Paths } from './paths.ts';
 import { isWithin, realpathMissing, resolvedLinkTarget } from './real-paths.ts';
 
@@ -359,6 +360,7 @@ function within(candidate: string, root: string): boolean {
 
 /** True when `path` is a link whose physical form is `owner`'s. */
 function isLinkTo(path: string, owner: string): boolean {
+  if (fault('verify')) return false;
   try {
     return (
       lstatSync(path).isSymbolicLink() && realpathSync.native(path) === realpathSync.native(owner)

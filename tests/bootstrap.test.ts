@@ -5,9 +5,10 @@
  *
  * These are the bootstrap cases of `tests/run.sh` and of
  * `tests/cases/global-instructions.sh`, carried over. The case that needs a
- * fault point (`bootstrap_staging_failure`) waits for #82, and the cases of
- * the forced replacement only Setup uses (`force_replacement`,
- * `force_recovery`) wait for #81 and #82. On Linux the same homes also run
+ * fault point (`bootstrap_staging_failure`) is in `faults.test.ts`, and the
+ * forced replacement only Setup makes is in `setup.test.ts`
+ * (`force_replacement`) and `faults.test.ts` (`force_recovery`). On Linux
+ * the same homes also run
  * through the Bash CLI, and the bytes and the trees are compared.
  *
  * Every other case runs on Windows too, where each Managed Link is a junction

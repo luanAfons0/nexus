@@ -5,8 +5,9 @@
  * These are the setup cases of `tests/run.sh` and
  * `tests/cases/global-instructions.sh` that need no fault point, carried
  * over. The cases that need one (a failed or corrupt copy, a failed
- * promotion, a late collision, a signal in a held window) wait for #82; the
- * Backup's own cases are in `backup.test.ts`. On Linux the same homes also
+ * promotion, a late collision) are in `setup-faults.test.ts`, and a signal
+ * in a held window in `interruption.test.ts`; the Backup's own cases are in
+ * `backup.test.ts`. On Linux the same homes also
  * run through the Bash CLI, and the bytes and the trees are compared,
  * because the Bash CLI is the specification.
  *

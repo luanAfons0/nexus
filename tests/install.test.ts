@@ -6,7 +6,7 @@
  * (`install_cli_and_nvm_fallback`, `install_rejects_custom_collision`),
  * carried over, with more refusals of the Publish flow. The two cases that
  * need a fault point (`install_snapshot_mutate`, `install_cleanup_fail`)
- * wait for #82. No case reaches the network: the fake `npx` writes the
+ * are in `faults.test.ts`. No case reaches the network: the fake `npx` writes the
  * Canonical Root and the Upstream Lock as upstream would. On Linux the same
  * homes also run through the Bash CLI, and the bytes are compared, because
  * the Bash CLI is the specification.

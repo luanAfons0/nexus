@@ -10,7 +10,7 @@
  * physical directory) refuses Setup and changes nothing. The other half of
  * that file, that a manifest sees a change of content, mode, time, symlink
  * target or hard-link group, needs a change made in the middle of a Setup:
- * those are fault cases, and wait for #82.
+ * those are fault cases, in `setup-faults.test.ts`.
  *
  * On Windows a copy's time is exact to ten microseconds, and a home has no
  * FIFO, no newline in a link and no name that is not UTF-8, so those parts

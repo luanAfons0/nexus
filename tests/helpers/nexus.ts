@@ -13,7 +13,7 @@
  * `sh` launcher and as a `.cmd` launcher for Windows. It records every call,
  * then runs a behaviour script from `tests/fakes/`.
  */
-import { spawnSync } from 'node:child_process';
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   cpSync,
@@ -22,6 +22,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -67,6 +68,21 @@ export type RunOptions = {
   readonly node?: readonly string[];
   /** Bytes for the CLI's stdin. */
   readonly input?: string;
+  /** False to run without `NEXUS_TEST_MODE=1`, which the fault points need. */
+  readonly testMode?: boolean;
+  /**
+   * True to hide the test-home marker for this one run, after the home was
+   * checked, so that the CLI sees a home that is not marked.
+   */
+  readonly unmarked?: boolean;
+};
+
+/** A run of the CLI that goes on while the test acts on it. */
+export type Started = {
+  /** The CLI's process: a test may send it a signal. */
+  readonly child: ChildProcess;
+  /** What the run left, once the CLI has ended. */
+  readonly done: Promise<Run>;
 };
 
 /** The temporary root every test home lives under. */
@@ -89,17 +105,57 @@ export function newHome(name: string): string {
 /** Run the CLI against a test home, with its fake programs first on PATH. */
 export function runNexus(home: string, args: readonly string[], options: RunOptions = {}): Run {
   const resolved = testHome(home);
-  const env = environment(resolved, options.env ?? {});
-  const result = spawnSync(process.execPath, [...(options.node ?? []), CLI, ...args], {
+  const env = environment(resolved, options);
+  const marker = join(resolved, MARKER);
+  const hidden = `${marker}.hidden`;
+  if (options.unmarked === true) renameSync(marker, hidden);
+  try {
+    const result = spawnSync(process.execPath, [...(options.node ?? []), CLI, ...args], {
+      cwd: resolved,
+      env,
+      encoding: 'utf8',
+      input: options.input,
+      shell: false,
+      windowsHide: true,
+    });
+    if (result.error !== undefined) throw result.error;
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  } finally {
+    if (options.unmarked === true) renameSync(hidden, marker);
+  }
+}
+
+/**
+ * Start the CLI against a test home, as `runNexus` runs it, and give it back
+ * while it runs: a test waits for a fault point's handshake, then signals or
+ * releases it (`start_nexus_overridden` in `tests/run.sh`).
+ */
+export function startNexus(
+  home: string,
+  args: readonly string[],
+  options: Pick<RunOptions, 'env'> = {},
+): Started {
+  const resolved = testHome(home);
+  const child = spawn(process.execPath, [CLI, ...args], {
     cwd: resolved,
-    env,
-    encoding: 'utf8',
-    input: options.input,
+    env: environment(resolved, options),
     shell: false,
+    stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
-  if (result.error !== undefined) throw result.error;
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  let stdout = '';
+  let stderr = '';
+  child.stdout?.setEncoding('utf8').on('data', (chunk: string) => {
+    stdout += chunk;
+  });
+  child.stderr?.setEncoding('utf8').on('data', (chunk: string) => {
+    stderr += chunk;
+  });
+  const done = new Promise<Run>((resolve, reject) => {
+    child.on('error', reject);
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+  });
+  return { child, done };
 }
 
 /**
@@ -149,14 +205,15 @@ function testHome(home: string): string {
 }
 
 /** The environment of one run: the inherited one, moved to the test home. */
-function environment(home: string, extra: Readonly<Record<string, string>>): NodeJS.ProcessEnv {
+function environment(home: string, options: RunOptions): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const [name, value] of Object.entries(extra)) set(env, name, value);
+  for (const [name, value] of Object.entries(options.env ?? {})) set(env, name, value);
   set(env, 'PATH', fakePath(home, read(env, 'PATH') ?? ''));
   set(env, 'HOME', home);
   set(env, 'USERPROFILE', home);
   set(env, 'NEXUS_HOME', join(home, '.nexus'));
   set(env, 'NEXUS_TEST_MODE', '1');
+  if (options.testMode === false) unset(env, 'NEXUS_TEST_MODE');
   return env;
 }
 
@@ -170,6 +227,11 @@ function read(env: NodeJS.ProcessEnv, name: string): string | undefined {
 function set(env: NodeJS.ProcessEnv, name: string, value: string): void {
   for (const key of Object.keys(env)) if (same(key, name)) delete env[key];
   env[name] = value;
+}
+
+/** Remove a variable, every spelling of it on Windows. */
+function unset(env: NodeJS.ProcessEnv, name: string): void {
+  for (const key of Object.keys(env)) if (same(key, name)) delete env[key];
 }
 
 function same(a: string, b: string): boolean {

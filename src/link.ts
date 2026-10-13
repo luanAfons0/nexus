@@ -33,9 +33,10 @@ import {
   globalInstructionsFault,
   readCustomSkills,
 } from './custom.ts';
+import { fault } from './fault.ts';
 import { globalInstructionsPresent } from './instructions.ts';
 import { type LinkPrimitive, linkPrimitive } from './link-primitive.ts';
-import { readLock } from './lock.ts';
+import { readLock, type SnapshotWatch } from './lock.ts';
 import { error, info } from './output.ts';
 import { type Paths, readPaths } from './paths.ts';
 import { byteOrder, isSafeSkillName } from './skill-names.ts';
@@ -77,9 +78,10 @@ export const bootstrap: Command = async () => {
  * exit code. `force` is Setup's alone: it replaces a Foreign Entry at a
  * desired skill path, keeping it in a recovery container until the new link
  * is verified. Install, Update, Remove and `global edit` call this too.
+ * Setup passes `watch`, so that a signal names the lock Snapshot as Residue.
  */
-export function linkAll(paths: Paths, force: boolean): number {
-  const read = readLock(paths.lock, paths.nexusHome);
+export function linkAll(paths: Paths, force: boolean, watch?: SnapshotWatch): number {
+  const read = readLock(paths.lock, paths.nexusHome, watch);
   if (!read.ok) {
     for (const sentence of read.errors) error(sentence);
     return 1;
@@ -90,8 +92,8 @@ export function linkAll(paths: Paths, force: boolean): number {
   // configuration fault, not a failed link, so nothing changes until every
   // check has passed, and every fault is named in one run.
   const tally = newTally();
-  for (const fault of [customRootFault(paths), globalInstructionsFault(paths)]) {
-    if (fault !== undefined) tally.error(fault);
+  for (const refusal of [customRootFault(paths), globalInstructionsFault(paths)]) {
+    if (refusal !== undefined) tally.error(refusal);
   }
   const custom = readCustomSkills(paths);
   for (const sentence of custom.errors) tally.error(sentence);
@@ -238,7 +240,7 @@ function putLink(
   const staged = primitive.stage(owner, path);
   if (!staged.ok) return fail(staged.error);
   if (entry === 'foreign') return replaceForeign(primitive, tally, owner, path, staged.path);
-  if (!primitive.promote(staged.path, path)) {
+  if (!promote(primitive, tally, staged.path, path)) {
     primitive.discard(staged.path);
     return fail(`cannot install link: ${path}`);
   }
@@ -283,8 +285,8 @@ function replaceForeign(
     if (!tryRmdir(container)) tally.error(retained);
     return fail(`cannot stage existing collision: ${path}`);
   }
-  if (!primitive.promote(staged, path)) {
-    if (!move(original, path)) {
+  if (!promote(primitive, tally, staged, path)) {
+    if (!restore(tally, original, path)) {
       tally.error(retained);
       primitive.discard(staged);
       return false;
@@ -295,7 +297,7 @@ function replaceForeign(
   }
   if (!primitive.reaches(path, owner)) {
     if (!primitive.remove(path)) tally.error(`cannot remove incorrect link: ${path}`);
-    if (!move(original, path)) return fail(retained);
+    if (!restore(tally, original, path)) return fail(retained);
     if (!tryRmdir(container)) tally.error(retained);
     return fail(`link verification failed: ${path}`);
   }
@@ -306,6 +308,33 @@ function replaceForeign(
   }
   if (!tryRmdir(container)) return fail(retained);
   return true;
+}
+
+/**
+ * Put the staged link at `path` (Bash `stage_move "$tmp" "$link"`). The
+ * fault points `stage`, `promote` and `restore` fail it.
+ */
+function promote(primitive: LinkPrimitive, tally: Tally, staged: string, path: string): boolean {
+  if (fault('stage')) return seamFailure(tally, 'staged link creation failed');
+  if (fault('promote', 'restore')) return seamFailure(tally, 'staged move failed');
+  return primitive.promote(staged, path);
+}
+
+/**
+ * Put a Foreign Entry back from its recovery container (Bash
+ * `stage_move "$original" "$link"`). The fault points `stage` and `restore`
+ * fail it.
+ */
+function restore(tally: Tally, original: string, path: string): boolean {
+  if (fault('stage')) return seamFailure(tally, 'staged link creation failed');
+  if (fault('restore')) return seamFailure(tally, 'staged move failed');
+  return move(original, path);
+}
+
+/** Say and count a test seam's failure, as the Bash overrides did, and give false. */
+function seamFailure(tally: Tally, what: string): false {
+  tally.error(`test seam: ${what}`);
+  return false;
 }
 
 /** True when `container` is an empty recovery container made in `parent`. */

@@ -33,11 +33,15 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { fault, seamFailure } from './fault.ts';
 import { linkAll } from './link.ts';
 import { type NexusLock, readLock } from './lock.ts';
 import { error } from './output.ts';
 import type { Paths } from './paths.ts';
 import { findProgram, runProgram } from './run-program.ts';
+
+/** The lock the fault point `install_snapshot_mutate` writes over the Upstream Lock. */
+const BETA_LOCK = '{"version":3,"skills":{"beta":{}}}\n';
 
 /** The `npx` Nexus runs, and the environment it runs with. */
 export type Npx = {
@@ -152,6 +156,7 @@ export function publishUpstreamLock(paths: Paths, options: PublishOptions = {}):
  * `SKILL.md`, run the caller's check, Publish, and link.
  */
 function validateAndPublish(paths: Paths, snapshot: string, options: PublishOptions): number {
+  if (fault('install_snapshot_mutate')) writeFileSync(paths.upstreamLock, BETA_LOCK);
   const read = readLock(snapshot, paths.nexusHome);
   if (!read.ok) {
     for (const sentence of read.errors) error(sentence);
@@ -263,7 +268,8 @@ function sameBytes(a: string, b: string): boolean {
 function removeScratch(path: string): boolean {
   if (!exists(path)) return true;
   try {
-    rmSync(path, { force: true });
+    if (fault('install_cleanup_fail')) seamFailure('install scratch cleanup failed');
+    else rmSync(path, { force: true });
   } catch {
     // The check below says whether it is gone.
   }

@@ -22,9 +22,12 @@ import {
   realpathSync,
   renameSync,
   rmdirSync,
+  symlinkSync,
   unlinkSync,
+  writeFileSync,
 } from 'node:fs';
-import { dirname, join, sep } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
+import { fault, homeFile, pause, seamFailure } from './fault.ts';
 import { entryIdentity, reachedIdentity } from './identity.ts';
 import { error } from './output.ts';
 import type { Paths } from './paths.ts';
@@ -65,7 +68,8 @@ export function canonicalRootFault(paths: Paths): string | undefined {
 /**
  * Materialize and validate the Canonical Root entry of every Skill Name in
  * `names` (`materialize_canonical_links`). False after the first failure,
- * which is said.
+ * which is said. A signal is seen after each entry is materialized and
+ * validated.
  */
 export async function materializeCanonicalLinks(
   paths: Paths,
@@ -74,12 +78,12 @@ export async function materializeCanonicalLinks(
   checkpoint: Checkpoint,
 ): Promise<boolean> {
   for (const name of names) {
-    const ok = materializeCanonicalLink(paths, name, residue);
+    const current = join(paths.canonicalRoot, name);
+    const ok =
+      materializeCanonicalLink(paths, name, residue) &&
+      (!isPresent(current) || validateCanonicalSkill(paths, current));
     await checkpoint();
     if (!ok) return false;
-    const current = join(paths.canonicalRoot, name);
-    if (!isPresent(current)) continue;
-    if (!validateCanonicalSkill(paths, current)) return false;
   }
   return true;
 }
@@ -210,6 +214,24 @@ function materializeCanonicalLink(paths: Paths, name: string, residue: Residue):
  * never carried away.
  */
 function canonicalMove(source: string, destination: string, expected?: string): boolean {
+  const temp = basename(source).startsWith(CANONICAL_TEMP_PREFIX);
+  const original = basename(source) === 'original';
+  const live = source === homeFile(join('.agents', 'skills', 'alpha'));
+  if (fault('canonical_promote', 'canonical_cleanup') && temp) {
+    return seamFailure('canonical promotion failed');
+  }
+  if (fault('canonical_restore') && (temp || original)) {
+    return seamFailure('canonical restore failed');
+  }
+  if (fault('canonical_cleanup') && original) return seamFailure('canonical restore failed');
+  if (fault('canonical_late_collision') && live) {
+    unlinkSync(source);
+    writeFileSync(source, 'late collision\n');
+  }
+  if (fault('canonical_late_repoint') && live) {
+    unlinkSync(source);
+    symlinkSync(homeFile('elsewhere'), source, 'junction');
+  }
   if (expected !== undefined && entryIdentity(source, true) !== expected) return false;
   if (!moveOntoNothing(source, destination)) return false;
   if (expected !== undefined && entryIdentity(destination, true) !== expected) {
@@ -232,6 +254,7 @@ function moveOntoNothing(source: string, destination: string): boolean {
 
 /** Remove a materialization temp in the Canonical Root (`cleanup_canonical_temp`). */
 function cleanupCanonicalTemp(root: string, temp: string): boolean {
+  if (fault('canonical_cleanup')) return seamFailure('canonical temp cleanup failed');
   return removeOwnedDir(temp, root, CANONICAL_TEMP_PREFIX);
 }
 
@@ -278,6 +301,12 @@ function validateCanonicalSkill(paths: Paths, skill: string): boolean {
  * depth first, no link followed. Undefined when a directory cannot be read.
  */
 function symlinksUnder(dir: string): readonly string[] | undefined {
+  const scanned = dir === homeFile(join('.agents', 'skills', 'alpha'));
+  if (fault('canonical_scan_window') && scanned) pause('scan');
+  if (fault('canonical_find_fail') && scanned) {
+    seamFailure('canonical symlink scan failed');
+    return undefined;
+  }
   const links: string[] = [];
   const visit = (path: string): boolean => {
     const entries = listInSystemOrder(Buffer.from(path));

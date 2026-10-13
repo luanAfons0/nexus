@@ -4,8 +4,9 @@
  *
  * These are the link cases of `tests/run.sh` and of
  * `tests/cases/global-instructions.sh`, carried over. The cases that need a
- * fault point (`link_snapshot_safety`) wait for #82, and the one that runs
- * Setup (`global_setup_ends_with_links`) waits for #81. On Linux the same
+ * fault point (`link_snapshot_safety`) are in `faults.test.ts`, and the one
+ * that runs Setup (`global_setup_ends_with_links`) is in `setup.test.ts`.
+ * On Linux the same
  * homes also run through the Bash CLI, and the bytes and the trees are
  * compared, because the Bash CLI is the specification.
  *

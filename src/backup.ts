@@ -18,9 +18,23 @@
  * - each promoted root must still be the tree that was verified: the same
  *   device, inode and type (`identity.ts`).
  */
-import { mkdirSync, mkdtempSync, readdirSync, renameSync, rmdirSync } from 'node:fs';
-import { join } from 'node:path';
+import {
+  appendFileSync,
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  renameSync,
+  rmdirSync,
+  symlinkSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { type Manifest, readManifest, sameManifest } from './backup-manifest.ts';
+import { fault, homeFile, seamFailure, tryChange } from './fault.ts';
 import { entryIdentity } from './identity.ts';
 import { error } from './output.ts';
 import {
@@ -41,6 +55,12 @@ export const TRANSACTION_PREFIX = '.nexus-setup-backup.';
 export type BackupResult =
   | { readonly ok: true; readonly claude: string; readonly codex: string }
   | { readonly ok: false };
+
+/** A time the fault points write: `2026-01-01 00:00:00.987654321`, local, as `touch -d`. */
+const LATE = new Date(2026, 0, 1).getTime() / 1000 + 0.987654321;
+
+/** A whole second the fault points write: 2026-01-01T00:00:00Z. */
+const WHOLE_SECOND = Date.UTC(2026, 0, 1) / 1000;
 
 /** How one attempt at one Agent Home ended. */
 type Verdict = 'verified' | 'failed' | 'changed';
@@ -86,10 +106,10 @@ export async function backupTransaction(
       removeTree(claudeTmp);
       removeTree(codexTmp);
     }
-    let verdict = verifyBackupAttempt(join(home, '.claude'), claudeTmp);
+    let verdict = verifyBackupAttempt(join(home, '.claude'), claudeTmp, attempt);
     await checkpoint();
     if (verdict === 'verified') {
-      verdict = verifyBackupAttempt(join(home, '.codex'), codexTmp);
+      verdict = verifyBackupAttempt(join(home, '.codex'), codexTmp, attempt);
       await checkpoint();
     }
     if (verdict === 'verified') break;
@@ -150,10 +170,10 @@ export async function backupTransaction(
  * `failed` when a manifest or the copy could not be made, `changed` when
  * the copy differs from the source or the source changed meanwhile.
  */
-function verifyBackupAttempt(source: string, copied: string): Verdict {
+function verifyBackupAttempt(source: string, copied: string, attempt: number): Verdict {
   const before = backupManifest(source, true);
   if (before === undefined) return 'failed';
-  if (!copyAgentTree(source, copied)) return 'failed';
+  if (!copyAgentTree(source, copied, attempt)) return 'failed';
   const copy = backupManifest(copied, true);
   if (copy === undefined) return 'failed';
   const absent = !isPresent(source);
@@ -177,6 +197,9 @@ function verifyBackupAttempt(source: string, copied: string): Verdict {
 
 /** The manifest of `root`, or undefined after its sentence is said. */
 function backupManifest(root: string, digests: boolean): Manifest | undefined {
+  if (fault('backup_manifest_count')) {
+    appendFileSync(homeFile('manifest-calls'), `${root}|${digests ? 'full' : 'state'}\n`);
+  }
   const read = readManifest(root, digests);
   if (read.ok) return read.manifest;
   process.stderr.write(`backup manifest: ${read.error}\n`);
@@ -184,15 +207,56 @@ function backupManifest(root: string, digests: boolean): Manifest | undefined {
 }
 
 /**
- * Copy the Agent Home `source` into `destination` (`copy_agent_tree`). An
- * absent source leaves an empty directory: an empty Backup.
+ * Copy the Agent Home `source` into `destination` (`copy_agent_tree`), on
+ * the Backup's attempt `attempt` (Bash `BACKUP_ATTEMPT`). The fault points
+ * fail the copy, corrupt it, or change the source while it is copied.
  */
-function copyAgentTree(source: string, destination: string): boolean {
-  try {
-    mkdirSync(destination, { recursive: true });
-  } catch {
-    return false;
+function copyAgentTree(source: string, destination: string, attempt: number): boolean {
+  const claude = basename(source) === '.claude';
+  const first = claude && attempt === 1;
+  const payload = join(source, 'payload');
+  if (fault('backup_copy_fail') && claude) return seamFailure('backup copy failed');
+  if (fault('backup_copy_false')) return makeDirectory(destination);
+  if (fault('backup_source_content') && first) {
+    writeFileSync(payload, 'changed');
+    utimesSync(payload, WHOLE_SECOND, WHOLE_SECOND);
   }
+  if (!copyHome(source, destination)) return false;
+  if (fault('backup_copy_corrupt')) writeFileSync(join(destination, 'corrupt'), 'corrupt');
+  if (fault('backup_root_corrupt') && claude) {
+    chmodSync(destination, 0o700);
+    utimesSync(destination, LATE, LATE);
+  }
+  if (fault('backup_child_corrupt') && claude) {
+    appendFileSync(join(destination, 'child'), ''); // `touch` makes a missing file.
+    utimesSync(join(destination, 'child'), LATE, LATE);
+  }
+  if (fault('backup_symlink_corrupt') && claude) {
+    tryChange(() => unlinkSync(join(destination, 'trailing-newline-link')));
+    symlinkSync('literal-target', join(destination, 'trailing-newline-link'));
+  }
+  if (fault('backup_retry_once') && first) {
+    appendFileSync(join(source, 'retry-marker'), 'retry-state\n');
+  }
+  if (fault('backup_retry_always') && claude) {
+    appendFileSync(join(source, 'retry-marker'), `unstable-${attempt}\n`);
+  }
+  if (fault('backup_source_mode') && first) chmodSync(payload, 0o640);
+  if (fault('backup_source_time') && first) utimesSync(payload, WHOLE_SECOND, WHOLE_SECOND);
+  if (fault('backup_source_symlink') && first) {
+    unlinkSync(join(source, 'line\nlink'));
+    symlinkSync('other\n', join(source, 'line\nlink'));
+  }
+  if (fault('backup_source_relink') && first) {
+    unlinkSync(join(source, 'hardlink'));
+    copyFileSync(payload, join(source, 'hardlink'));
+  }
+  return true;
+}
+
+/** Copy the Agent Home `source` into `destination`. An absent source leaves an empty Backup. */
+function copyHome(source: string, destination: string): boolean {
+  if (!makeDirectory(destination)) return false;
   if (!isPresent(source)) return true;
   if (!isPhysicalDirectory(source)) {
     error(`agent root is not a directory: ${source}`);
@@ -203,6 +267,16 @@ function copyAgentTree(source: string, destination: string): boolean {
   return copied.ok;
 }
 
+/** Make the directory `path` and its parents (`mkdir -p`); false when it failed. */
+function makeDirectory(path: string): boolean {
+  try {
+    mkdirSync(path, { recursive: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Move a verified tree to `destination`, which must be free, and check that
  * `source` is gone (`backup_move`, `mv -Tn`). Node has no rename that
@@ -211,13 +285,26 @@ function copyAgentTree(source: string, destination: string): boolean {
  * that appeared in between.
  */
 function backupMove(source: string, destination: string): boolean {
+  const codex = basename(destination) === '.codex-backup';
+  const claude = basename(destination) === '.claude-backup';
+  const rollback = basename(source) === '.claude-backup';
+  if (fault('backup_promote_second') && codex) return seamFailure('second backup promotion failed');
+  if (fault('backup_rollback') && (codex || rollback)) return seamFailure('backup rollback failed');
   if (isPresent(destination)) return false;
   try {
     renameSync(source, destination);
   } catch {
     return false;
   }
-  return !isPresent(source);
+  if (isPresent(source)) return false;
+  if (fault('backup_final_corrupt') && codex) {
+    tryChange(() => chmodSync(join(dirname(destination), '.claude-backup', '.hidden'), 0o600));
+  }
+  if (fault('backup_promote_ambiguous') && claude) {
+    renameSync(destination, `${destination}.unknown`);
+    mkdirSync(destination);
+  }
+  return true;
 }
 
 /** The identity of a verified tree before its promotion; said when it cannot be read. */

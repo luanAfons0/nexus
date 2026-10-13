@@ -12,6 +12,7 @@
  */
 import { lstatSync, rmSync, statSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
+import { fault, paused, seamFailure } from './fault.ts';
 import { error } from './output.ts';
 
 /**
@@ -99,6 +100,10 @@ export function removeOwnedFile(
 
 /** Remove `path` and all under it (`rm -rf`); false when it failed. */
 export function removeTree(path: string): boolean {
+  const snapshot = basename(path).startsWith('.nexus-lock.');
+  if (fault('term_pre_cleanup_fail', 'term_post_cleanup_fail') && paused() && snapshot) {
+    return seamFailure('lock snapshot cleanup failed');
+  }
   try {
     rmSync(path, { recursive: true, force: true, maxRetries: 3 });
     return true;

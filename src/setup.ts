@@ -45,6 +45,7 @@ import {
 } from './canonical.ts';
 import type { Command } from './cli.ts';
 import { CONTROL_SKILLS } from './control-skills.ts';
+import { fault, pause } from './fault.ts';
 import { linkAll } from './link.ts';
 import {
   CANDIDATES_PREFIX,
@@ -71,6 +72,9 @@ const COPY_PREFIX = '.nexus-setup-copy.';
 
 /** The prefix of a selected lock Snapshot in the Nexus home (Bash `snapshot_setup_lock`). */
 const SOURCE_PREFIX = '.nexus-setup-source.';
+
+/** The lock the fault point `discovery_mutate` writes over the selected candidate. */
+const BETA_LOCK = '{"version":3,"skills":{"beta":{}}}\n';
 
 /** The sentence of a Setup that finds a Nexus Lock: Link is the way on. */
 const ALREADY_INITIALIZED = 'already initialized; run /nexus-link or $nexus-link to reconcile skills';
@@ -152,6 +156,7 @@ async function setupInner(run: SetupRun, checkpoint: Checkpoint): Promise<number
     for (const sentence of discovery.errors) error(sentence);
     return 1;
   }
+  if (fault('discovery_mutate')) writeFileSync(discovery.selected, BETA_LOCK);
   await checkpoint();
   const rootFault = canonicalRootFault(paths);
   if (rootFault !== undefined) {
@@ -182,7 +187,7 @@ async function setupInner(run: SetupRun, checkpoint: Checkpoint): Promise<number
 
   const names = selected.lock.names;
   let settled = await materializeCanonicalLinks(paths, names, residue, checkpoint);
-  if (settled) settled = linkAll(paths, true) === 0;
+  if (settled) settled = linkAll(paths, true, watch) === 0;
   if (settled) {
     await checkpoint();
     settled = await materializeCanonicalLinks(paths, names, residue, checkpoint);
@@ -239,6 +244,10 @@ function publishSetupLock(run: SetupRun, source: string): boolean {
  * and check the bytes again (`atomic_copy`).
  */
 function atomicCopy(residue: Residue, source: string, destination: string): boolean {
+  if (fault('lock_copy_corrupt')) {
+    error('atomic copy staging verification failed');
+    return false;
+  }
   const parent = dirname(destination);
   if (isPresent(destination)) {
     error(`destination already exists: ${destination}`);
@@ -273,6 +282,10 @@ function atomicCopy(residue: Residue, source: string, destination: string): bool
   residue.forget(temp);
   if (!sameBytes(source, destination)) {
     error(`atomic copy post-publication verification failed: ${destination}`);
+    return false;
+  }
+  if (fault('lock_post_publish_corrupt')) {
+    writeFileSync(destination, 'corrupt');
     return false;
   }
   return true;
@@ -435,6 +448,7 @@ function reportRecoveries(run: SetupRun): void {
 function cleanupDiscovered(run: SetupRun): boolean {
   const dir = run.discoveryDir;
   if (dir === undefined) return true;
+  if (fault('final_cleanup')) pause('finalization');
   const retained = cleanupDiscoveredLockSnapshots(dir, run.paths.nexusHome);
   if (retained !== undefined) {
     error(retained);
