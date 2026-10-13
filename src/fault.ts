@@ -1,6 +1,6 @@
 /**
- * Seam 3: named fault points. They take the place of the Bash function
- * overrides of `tests/faults.sh`, which a TypeScript CLI cannot have.
+ * Seam 3: named fault points. They took the place of the Bash function
+ * overrides the Bash suite had, which a TypeScript CLI cannot have.
  *
  * A test sets `NEXUS_FAULT=<name>`, and the CLI fails, corrupts or pauses at
  * the one point that the name stands for, as the Bash override did. Each
@@ -22,7 +22,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { error } from './output.ts';
 
-/** The file that marks a home as a test home (`new_home` in `tests/run.sh`). */
+/** The file that marks a home as a test home (`newHome` in `tests/helpers/nexus.ts` writes it). */
 const MARKER = '.nexus-test-home';
 
 /** How long a pause sleeps between two looks for its release, in milliseconds. */

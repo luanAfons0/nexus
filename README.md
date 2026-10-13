@@ -11,7 +11,7 @@ canonical root `~/.agents/skills`, custom skills by the custom root
 `~/.custom-skills`, and control skills by `~/.nexus`. The Nexus lock
 `~/.nexus/skill-lock.json` (gitignored) is authoritative for which installed
 skills exist. The native Claude and Codex skill roots contain managed links,
-relative symlinks into those owners. Anything else in a native skill root is a
+relative symlinks into those owners (junctions on Windows). Anything else in a native skill root is a
 foreign entry: a physical directory, a symlink to an unrelated place, or
 Codex's `.system` directory. Nexus never claims or deletes a foreign entry.
 The custom root also owns the global instructions, `~/.custom-skills/GLOBAL.md`,
@@ -23,23 +23,39 @@ and the "Develop" section below.
 
 ## Requirements and first use
 
-Project scripts use Bash 5, GNU coreutils, `jq`, and Python 3 (`python3`). Git
-is needed for Git-based sources and normal development; npm/npx is an upstream
-prerequisite for installation. Setup preflight checks `jq`, `python3`, and the
-required core utilities; it does not check Git, npm, npx, or NVM. Install first
-uses a directly available `npx`; if it is unavailable, NVM is the fallback.
+Nexus needs Node 24 or newer, Git, npm, and `gh`, and nothing else. It runs
+on Linux, macOS, and Windows, with no build step and no runtime dependency.
+Git is needed for Git-based sources and normal development. npm brings `npx`,
+which runs upstream `npx skills` to install, update, and remove a skill.
+`nexus check` needs `gh`. A Node older than 24 is refused with one sentence,
+and nothing changes:
 
-Nexus is installed by cloning it into its home directory:
+```
+nexus: error: Nexus needs Node 24 or newer; this is Node 22.12.0.
+```
+
+Setup preflight checks no program: it does not check Git, npm, npx, or NVM.
+Install first uses a directly available `npx`; if it is unavailable, NVM is the fallback
+on Linux and macOS. On Windows Nexus finds `npx` as `npx.cmd` on the path,
+and there is no NVM fallback.
+
+Nexus is installed by cloning it into its home directory. The same command
+works in a Linux or macOS shell and in PowerShell:
 
 ```bash
-git clone https://github.com/luanAfons0/nexus.git ~/.nexus
+git clone https://github.com/luanAfons0/nexus.git "$HOME/.nexus"
 ```
+
+The Nexus home is `~/.nexus`, which is `%USERPROFILE%\.nexus` on Windows.
+`NEXUS_HOME` moves it.
 
 From a shell, bootstrap only the control skills with:
 
 ```bash
-~/.nexus/scripts/nexus bootstrap
+node "$HOME/.nexus/src/nexus.js" bootstrap
 ```
+
+The quotes keep a path with a space whole.
 
 Bootstrap exposes only the control skills `nexus-setup`, `nexus-link`,
 `nexus-install`, `nexus-new`, `nexus-update`, `nexus-remove`, `nexus-help`,
@@ -60,7 +76,20 @@ Native invocation forms are:
 | Show skills or command help | `/nexus-help` | `$nexus-help` |
 | Open the page: list, update, remove, edit global instructions | `/nexus` | `$nexus` |
 
-The equivalent CLI is `~/.nexus/scripts/nexus {setup,link,install,update,remove,new,list,check,global,help}`.
+The equivalent CLI is `node "$HOME/.nexus/src/nexus.js" {setup,link,install,update,remove,new,list,check,global,help}`.
+
+### On Windows
+
+Nexus runs on Windows itself, with no WSL. There a symlink needs Developer
+Mode or an administrator, so Nexus never makes one on Windows. A managed link
+to a skill is a junction, which needs neither. Each instruction path is a
+Managed Copy: a regular file with the bytes of `GLOBAL.md`, whose SHA-256
+Nexus records in `~/.nexus/managed-copies.json`. Link and `nexus global edit`
+keep both copies byte-identical to `GLOBAL.md`. A copy you edit by hand no
+longer matches the record, so it is a foreign entry: link reports it and
+keeps it, and `list` and `global show --json` call it `foreign`. The decision
+is recorded in
+`docs/adr/0010-on-windows-a-managed-link-is-a-junction-or-a-managed-copy.md`.
 
 ## Setup and recovery
 
@@ -108,15 +137,8 @@ link reports the fault and leaves both agent roots exactly as they were.
 After the skill links, link reconciles the two instruction paths against the
 global instructions. See "Global instructions" below.
 
-On Windows, where a symlink needs Developer Mode or an administrator, Nexus
-never makes one. A managed link to a skill is a junction, which needs
-neither, and each instruction path is a managed copy: a regular file with the
-bytes of `GLOBAL.md`, whose SHA-256 Nexus records in
-`~/.nexus/managed-copies.json`. Link and `nexus global edit` keep both copies
-byte-identical to `GLOBAL.md`. A copy you edit by hand no longer matches the
-record, so link reports it as a foreign entry and keeps it. The decision is
-recorded in
-`docs/adr/0010-on-windows-a-managed-link-is-a-junction-or-a-managed-copy.md`.
+On Windows a managed link is a junction or a Managed Copy. See "On Windows"
+above.
 
 ## Global instructions
 
@@ -145,8 +167,8 @@ instruction path states. Replace them with the full new content on standard
 input:
 
 ```bash
-~/.nexus/scripts/nexus global show --json
-printf '%s\n' 'Answer in short sentences.' | ~/.nexus/scripts/nexus global edit --if-match <sha256>
+node "$HOME/.nexus/src/nexus.js" global show --json
+printf '%s\n' 'Answer in short sentences.' | node "$HOME/.nexus/src/nexus.js" global edit --if-match <sha256>
 ```
 
 `global edit` runs these checks in this order before any write, and any
@@ -169,8 +191,7 @@ Nexus lock yet it reports the missing lock and exits 1, the new `GLOBAL.md`
 stays in place, and setup followed by link finishes the job. When the file
 existed, link does not run and nothing is printed. On Windows, `global edit`
 then brings each managed copy in step with the new `GLOBAL.md`, so both
-agents read it at once; a copy you edited by hand stays a foreign entry, and
-`list` and `global show --json` call it `foreign`. Exit codes: 0 success,
+agents read it at once (see "On Windows"). Exit codes: 0 success,
 1 refusal or fault, 2 usage (unknown flag, extra argument, or `--if-match` without a hex sha256).
 
 The owner is named `GLOBAL.md`, not `AGENTS.md`, because Codex loads an
@@ -184,7 +205,7 @@ custom root, make its wording agent-neutral, commit it, then run link:
 
 ```bash
 mv ~/.claude/CLAUDE.md ~/.custom-skills/GLOBAL.md
-~/.nexus/scripts/nexus link
+node "$HOME/.nexus/src/nexus.js" link
 ```
 
 Link reconciles each instruction path in this order, and the three skipped
@@ -257,7 +278,7 @@ repository's `.gitignore`.
 Create a custom skill with:
 
 ```bash
-~/.nexus/scripts/nexus new skill-name
+node "$HOME/.nexus/src/nexus.js" new skill-name
 ```
 
 The command validates the name, refuses a name that collides with an installed
@@ -278,9 +299,9 @@ Installation requires exactly one source and at least one repeated `--skill`
 argument. Examples:
 
 ```bash
-~/.nexus/scripts/nexus install owner/repository --skill review --skill testing
-~/.nexus/scripts/nexus install https://github.com/owner/repository.git --skill review
-~/.nexus/scripts/nexus install /path/to/local/skills --skill review
+node "$HOME/.nexus/src/nexus.js" install owner/repository --skill review --skill testing
+node "$HOME/.nexus/src/nexus.js" install https://github.com/owner/repository.git --skill review
+node "$HOME/.nexus/src/nexus.js" install /path/to/local/skills --skill review
 ```
 
 The source is passed as an argument to upstream `npx skills add`; Nexus never
@@ -304,7 +325,7 @@ this repository. Development and test runs should use an isolated `HOME` and
 Update refreshes exactly one installed skill:
 
 ```bash
-~/.nexus/scripts/nexus update review
+node "$HOME/.nexus/src/nexus.js" update review
 ```
 
 The name must be a safe, non-control name that the Nexus lock already contains.
@@ -327,7 +348,7 @@ lock that no longer contains the skill leaves the existing Nexus lock unchanged.
 Removal takes exactly one skill name:
 
 ```bash
-~/.nexus/scripts/nexus remove skill-name
+node "$HOME/.nexus/src/nexus.js" remove skill-name
 ```
 
 Nexus refuses a missing name, more than one name, an option-like name such as
@@ -369,7 +390,8 @@ show --json` without `content`. When the lock is absent the info line goes
 to standard error, so standard output stays valid JSON. The table output
 without the flag is unchanged.
 
-`nexus help` (also `-h` and `--help`) prints the usage line and one line per
+`nexus help` (also `-h` and `--help`) prints the usage line, then the line
+`Run it as: node "$HOME/.nexus/src/nexus.js" <command>`, then one line per
 subcommand: `bootstrap`, `setup`, `link`, `install`, `update`, `remove`,
 `new`, `list`, `check`, `global`, and `help`.
 
@@ -391,8 +413,8 @@ read-only command, and reports the result. It never runs a mutating command.
 and changes nothing:
 
 ```bash
-~/.nexus/scripts/nexus check
-~/.nexus/scripts/nexus check --json
+node "$HOME/.nexus/src/nexus.js" check
+node "$HOME/.nexus/src/nexus.js" check --json
 ```
 
 A skill is **behind** when the folder it came from has a commit newer than the
@@ -426,8 +448,8 @@ a repository that cannot be reached is not a failure of the check, it is one
 ### Reading the last result
 
 ```bash
-~/.nexus/scripts/nexus check --last
-~/.nexus/scripts/nexus check --last --json
+node "$HOME/.nexus/src/nexus.js" check --last
+node "$HOME/.nexus/src/nexus.js" check --last --json
 ```
 
 `--last` prints `~/.nexus/skill-check.json` as it stands and asks GitHub
@@ -448,8 +470,10 @@ again`. Neither says that anything is current.
 end. The skill starts nothing: the FirstMate Host serves the page and runs
 the Nexus Plugin Server, so there is no run for an agent session to own and
 no handshake line to wait for. It reads the port and the token out of
-`~/.firstmate/runtime.json` and prints one URL. Where the Host is not
-running, it says so and names the command that starts it.
+FirstMate's `runtime.json` with one `node -e` line and prints one URL. That
+file is in `~/.firstmate` on Linux and in `%APPDATA%\FirstMate` on Windows;
+`FIRSTMATE_HOME` moves it. Where the Host is not running, it says so and
+tells you to open the FirstMate App, which starts the Host.
 
 The printed URL is the contract. Nothing here opens a browser: from an agent
 sandbox that usually fails, so open the URL by hand or use FirstMate's Tray.
@@ -499,14 +523,15 @@ a Tray, and each one names what replaced it.
 `/nexus` (`$nexus` in Codex) prints the address. So does FirstMate's own Tray,
 which opens its Index Page, from which every Plugin is one click away.
 
-The Host has to be running:
+The Host has to be running. The FirstMate App starts it when the App opens.
+Check it with FirstMate's command line:
 
 ```sh
-systemctl --user status firstmate
+firstmate status
 ```
 
 The address never changes, so it can be bookmarked. The token is in
-`~/.firstmate/runtime.json`, readable by you alone, and it reaches the browser
+FirstMate's `runtime.json`, readable by you alone, and it reaches the browser
 once: the Host answers the first navigation with a cookie and sends the
 browser to the clean address, which is why the page's relative paths are
 undisturbed.
@@ -567,11 +592,14 @@ Plugin Server is Stopped.
 Any of it can be driven from a terminal:
 
 ```sh
-token=$(python3 -c "import json;print(json.load(open('$HOME/.firstmate/runtime.json'))['token'])")
+token=$(node -e "console.log(JSON.parse(require('fs').readFileSync((process.env.FIRSTMATE_HOME||require('os').homedir()+'/.firstmate')+'/runtime.json')).token)")
 curl -X POST -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_skills","arguments":{}}}' \
   "http://127.0.0.1:4747/p/nexus/rpc?token=$token"
 ```
+
+On Windows `runtime.json` is in `%APPDATA%\FirstMate`, so set
+`FIRSTMATE_HOME` to that folder first.
 
 ### Pages and routes
 
@@ -648,6 +676,8 @@ dialog closes it. It persists until the next command, and a banner that
 points at the output links straight to it. When a call cannot reach the server at all, a red banner
 says `Connection lost. The FirstMate Host is not answering. Check it with
 systemctl --user status firstmate.` and the page does not retry on its own.
+That command is from FirstMate 1.x; with the FirstMate App, run `firstmate
+status` instead.
 
 ### Editor
 
@@ -685,8 +715,8 @@ content security policy blocks one. To update the renderer by hand:
    the file name, so the static allowlist and the page stay unchanged.
 3. Update the version in this section and check the header comment of the
    new file names the same version.
-4. Run `bash tests/run.sh`; the renderer test reads the version from the
-   served file.
+4. Run `npm run check`. No test reads the renderer version, so open the
+   page and check that the Preview tab renders.
 
 ### Save and conflicts
 
@@ -767,14 +797,15 @@ which the tests use with a short value.
   auth status`, then `gh auth login`. Nothing was changed; the rows carry the
   reason `gh` gave.
 - **The page does not open:** the Host is not running. Check it with
-  `systemctl --user status firstmate`, and read it with `journalctl --user -u
-  firstmate`. The Plugin Server's own output is in the same journal.
+  `firstmate status`, and read what it said with `firstmate logs`. The Plugin
+  Server's own output is in the same log.
 - **The Index Page shows nexus as Stopped:** the Host could not run `mcp.ts`,
-  or it exited. `journalctl --user -u firstmate` names the reason. In a `wsl`
+  or it exited. `firstmate logs` names the reason, and `firstmate restart
+  nexus` starts it again. In a `wsl`
   Place, check that `~/.nexus/mcp` is executable and that the `node` on PATH
   is Node 24 or newer.
-- **The page says "Connection lost":** the Host stopped. Start it with
-  `systemctl --user start firstmate` and reload; the address does not change.
+- **The page says "Connection lost":** the Host stopped. Open the FirstMate
+  App, which starts it, and reload; the address does not change.
 - **403 with `token`, `host`, or `origin`:** the request did not carry the
   Host's token or did not come from the page itself. Open the address from
   `/nexus` or from the Tray; the token changes at every Host start, so a
@@ -783,47 +814,46 @@ which the tests use with a short value.
 ## Develop
 
 Nexus is installed by cloning, but a clone you work in does not have to live
-at `~/.nexus`: the CLI finds its own files from the path of `scripts/nexus`,
+at `~/.nexus`: the CLI finds its own files from the path of `src/nexus.js`,
 and the home directory it manages comes from `$HOME`.
 
 ```bash
 git clone https://github.com/luanAfons0/nexus.git
 cd nexus
-bash tests/run.sh
 npm install
 npm run check
 ```
 
-Nexus is being ported to TypeScript on Node 24, and the TypeScript CLI,
-`node src/nexus.js`, grows beside the Bash CLI until the port ends.
-`bash tests/run.sh` is the Bash suite; `npm run check` checks the types and
-runs the Node suite with `node --test`. Every test builds its own home
-directory under a temporary root and drives the CLI over its command line.
-The `Check` workflow runs the Bash suite on `ubuntu-latest`, and
-`npm run check` on `ubuntu-latest` and `windows-latest`, for every pull
-request.
+`npm install` brings the two development dependencies, `typescript` and
+`@types/node`. `npm run check` checks the types with `tsc --noEmit`, then runs
+the whole suite with `node --test`. Every test builds its own home directory
+under a temporary root and drives the CLI over its command line. The `Check`
+workflow runs `npm run check` on Linux and on Windows, in the jobs `Types and
+tests on Linux` and `Types and tests on Windows`, for every pull request.
 
 To try a change by hand, never point it at your own agent context. Use the
 sandbox home:
 
 ```bash
-scripts/dev-home bootstrap     # link the control skills, in the sandbox
-scripts/dev-home list          # what the sandbox home holds
-scripts/dev-home setup         # the real setup, against throwaway files
-scripts/dev-home --reset list  # start the sandbox home again from empty
+node scripts/dev-home.ts bootstrap     # link the control skills, in the sandbox
+node scripts/dev-home.ts list          # what the sandbox home holds
+node scripts/dev-home.ts setup         # the real setup, against throwaway files
+node scripts/dev-home.ts --reset list  # start the sandbox home again from empty
+node scripts/dev-home.ts --help        # how it is typed
 ```
 
-`scripts/dev-home` runs `scripts/nexus` with `$HOME` pointed at
-`.scratch/home` inside the repository, which Git ignores, so the canonical
-root, the custom root, both native skill roots and both instruction paths all
-land there. It refuses to run if the sandbox would hold your real home, and it
-deletes only a directory it marked as its own. `NEXUS_DEV_HOME` moves the
-sandbox elsewhere.
+`node scripts/dev-home.ts` runs `src/nexus.js` with the Node that runs it. It
+points `HOME` and `USERPROFILE` at `.scratch/home` inside the repository,
+which Git ignores, and `NEXUS_HOME` at `.nexus` in it. So the canonical root, the custom root,
+both native skill roots and both instruction paths all land there. It works
+on Linux and on Windows. It refuses to run if the sandbox would hold your real
+home, and it deletes only a directory it marked as its own. `NEXUS_DEV_HOME`
+moves the sandbox elsewhere.
 
 Changes to `web/` or `mcp.ts` need a running FirstMate Host, which serves the
-page and runs the Plugin Server (ADR 0008). Register your clone as a Plugin
-from the FirstMate repository with
-`node src/cli.ts add nexus /absolute/path/to/your/clone`, then open
+page and runs the Plugin Server (ADR 0008). Open the FirstMate App, which
+starts the Host. Register your clone as a Plugin with FirstMate's command
+line, `firstmate add nexus /absolute/path/to/your/clone`, then open
 `http://127.0.0.1:4747/p/nexus/`.
 
 [`CONTRIBUTING.md`](CONTRIBUTING.md) has the rest: where a new test goes, how

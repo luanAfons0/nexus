@@ -3,13 +3,11 @@
  * Roots, and nothing else. It runs no Setup, reads no lock and installs
  * nothing.
  *
- * These are the bootstrap cases of `tests/run.sh` and of
- * `tests/cases/global-instructions.sh`, carried over. The case that needs a
+ * These are the bootstrap cases of the Bash suite, carried over. The case that
+ * needs a
  * fault point (`bootstrap_staging_failure`) is in `faults.test.ts`, and the
  * forced replacement only Setup makes is in `setup.test.ts`
- * (`force_replacement`) and `faults.test.ts` (`force_recovery`). On Linux
- * the same homes also run
- * through the Bash CLI, and the bytes and the trees are compared.
+ * (`force_replacement`) and `faults.test.ts` (`force_recovery`).
  *
  * Every other case runs on Windows too, where each Managed Link is a junction
  * (ADR 0010) and the links a case starts with are junctions as well.
@@ -26,9 +24,6 @@ import {
   isAbsent,
   linkText,
   makeLink,
-  runBash,
-  WINDOWS,
-  withoutToolNoise,
 } from './helpers/links.ts';
 import { newHome, runNexus } from './helpers/nexus.ts';
 
@@ -157,38 +152,3 @@ test('a Control Skill with no Owner directory is a missing link target', () => {
   );
   assertLinkTo(join(home, '.codex', 'skills', 'nexus'), join(home, '.nexus', 'skills', 'nexus'));
 });
-
-test(
-  'bootstrap says the same bytes and leaves the same trees as the Bash CLI',
-  { skip: WINDOWS && 'the Bash CLI runs on Linux alone' },
-  () => {
-    const scenes: Record<string, (home: string) => void> = {
-      fresh: () => undefined,
-      collisions: (home) => {
-        mkdirSync(join(home, '.claude', 'skills', 'nexus-setup', 'inner'), { recursive: true });
-        writeFileSync(join(home, '.codex', 'skills', 'nexus'), 'file\n');
-        makeLink('/external/target', join(home, '.codex', 'skills', 'nexus-link'));
-        makeLink('../../.agents/skills/old', join(home, '.claude', 'skills', 'nexus-new'));
-        makeLink('../../.nexus/skills/nexus-help', join(home, '.claude', 'skills', 'nexus-update'));
-      },
-      'missing-owner': (home) => renameSync(join(home, '.nexus', 'skills', 'nexus-help'), join(home, 'moved')),
-      'bad-lock': (home) => writeFileSync(join(home, '.nexus', 'skill-lock.json'), '{bad'),
-    };
-    for (const [name, fill] of Object.entries(scenes)) {
-      const bash = customHome(`bootstrap-bash-${name}`);
-      const node = customHome(`bootstrap-node-${name}`);
-      fill(bash);
-      fill(node);
-      for (const round of [1, 2]) {
-        const expected = runBash(bash, ['bootstrap']);
-        const actual = runNexus(node, ['bootstrap']);
-        const label = `${name}, run ${round}`;
-        const same = (text: string, home: string) => text.replaceAll(home, '<home>');
-        assert.equal(actual.status, expected.status, label);
-        assert.equal(same(actual.stdout, node), same(expected.stdout, bash), label);
-        assert.equal(same(actual.stderr, node), same(withoutToolNoise(expected.stderr), bash), label);
-        assert.equal(same(agentTrees(node), node), same(agentTrees(bash), bash), label);
-      }
-    }
-  },
-);

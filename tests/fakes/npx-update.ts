@@ -1,6 +1,6 @@
 /**
  * The behaviour of a fake `npx skills update`: the update fake of
- * `tests/cases/update.sh`. It writes the Canonical Root and the Upstream Lock
+ * the Bash suite. It writes the Canonical Root and the Upstream Lock
  * in the home it runs in, as upstream `npx skills` would, and reaches no
  * network.
  *

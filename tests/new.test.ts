@@ -1,22 +1,18 @@
 /**
  * `nexus new <name>`: reserve one empty Custom Skill directory.
  *
- * This is `new_cli` of `tests/run.sh`, carried over. `new` makes the
+ * This is `new_cli` of the Bash suite, carried over. `new` makes the
  * directory and names it; it does not link, because the skill has no
  * `SKILL.md` yet (the `nexus-new` Control Skill runs `nexus link` after the
- * skill is written). On Linux the same homes also run through the Bash CLI,
- * and the bytes are compared, because the Bash CLI is the specification.
- * Nothing here links, so every case runs on Windows too.
+ * skill is written). Nothing here links, so every case runs on Windows too.
  */
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { customHome, writeLock, writeSkill } from './helpers/homes.ts';
-import { agentTrees, isAbsent, runBashWithFakes, withoutToolNoise } from './helpers/links.ts';
+import { agentTrees, isAbsent } from './helpers/links.ts';
 import { runNexus } from './helpers/nexus.ts';
-
-const WINDOWS = process.platform === 'win32';
 
 /** A home with the Custom Root and one Installed Skill, `installed`. */
 function newSkillHome(name: string): string {
@@ -121,52 +117,3 @@ test('without a Custom Root, new refuses instead of creating one', () => {
   );
   assert.equal(readFileSync(join(home, '.custom-skills'), 'utf8'), 'not a directory');
 });
-
-test(
-  'new says the same bytes and leaves the same files as the Bash CLI',
-  { skip: WINDOWS && 'the Bash CLI runs on Linux alone' },
-  () => {
-    type Scene = { readonly args: readonly string[]; readonly fill?: (home: string) => void };
-    const scenes: Readonly<Record<string, Scene>> = {
-      created: { args: ['mine'] },
-      none: { args: [] },
-      two: { args: ['a', 'b'] },
-      unsafe: { args: ['../escape'] },
-      flag: { args: ['--flag'] },
-      control: { args: ['nexus'] },
-      installed: { args: ['installed'] },
-      exists: { args: ['mine'], fill: (home) => writeSkill(join(home, '.custom-skills'), 'mine') },
-      'no-root': {
-        args: ['mine'],
-        fill: (home) => rmSync(join(home, '.custom-skills'), { recursive: true }),
-      },
-      'file-root': {
-        args: ['mine'],
-        fill: (home) => {
-          rmSync(join(home, '.custom-skills'), { recursive: true });
-          writeFileSync(join(home, '.custom-skills'), '');
-        },
-      },
-      'no-lock': {
-        args: ['installed'],
-        fill: (home) => rmSync(join(home, '.nexus', 'skill-lock.json')),
-      },
-      'bad-lock': {
-        args: ['mine'],
-        fill: (home) => writeFileSync(join(home, '.nexus', 'skill-lock.json'), '{bad'),
-      },
-    };
-    for (const [name, scene] of Object.entries(scenes)) {
-      const bash = newSkillHome(`new-bash-${name}`);
-      const node = newSkillHome(`new-node-${name}`);
-      for (const home of [bash, node]) scene.fill?.(home);
-      const expected = runBashWithFakes(bash, ['new', ...scene.args]);
-      const actual = runNexus(node, ['new', ...scene.args]);
-      const same = (text: string, home: string) => text.replaceAll(home, '<home>');
-      assert.equal(actual.status, expected.status, name);
-      assert.equal(same(actual.stdout, node), same(expected.stdout, bash), name);
-      assert.equal(same(actual.stderr, node), same(withoutToolNoise(expected.stderr), bash), name);
-      assert.equal(same(agentTrees(node), node), same(agentTrees(bash), bash), name);
-    }
-  },
-);

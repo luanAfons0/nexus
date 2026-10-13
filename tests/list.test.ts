@@ -2,11 +2,10 @@
  * `nexus list` and `nexus list --json`: the Installed, Custom and Control
  * Skills, and the state of the Global Instructions, read and never changed.
  *
- * These are the cases of `tests/cases/list.sh`, carried over. Its two help
+ * These are the list cases of the Bash suite, carried over. Its two help
  * cases, `help_content` and `help_rejects_extra_args`, live in
  * `tests/cli.test.ts`, which asserts the whole help text and every usage
- * refusal byte for byte. On Linux the same homes also run through the Bash
- * CLI, and the bytes are compared, because the Bash CLI is the specification.
+ * refusal byte for byte.
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -22,7 +21,7 @@ import {
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { customHome, snapshotTree, writeLock, writeSkill } from './helpers/homes.ts';
-import { newHome, REPO_ROOT, runNexus } from './helpers/nexus.ts';
+import { newHome, runNexus } from './helpers/nexus.ts';
 
 const SRC1 = 'owner/repo-a';
 const HASH1 = '0123456789abcdef0123456789abcdef01234567';
@@ -513,100 +512,3 @@ test('a missing or empty lock field shows as - in the table and keeps its JSON v
     updatedAt: true,
   });
 });
-
-/**
- * The Bash CLI's stderr without the lines `jq` adds on its own, such as
- * `jq: error (at <snapshot>:0): ...`. They name a random Snapshot path and
- * are no sentence of Nexus, so the port does not say them.
- */
-function withoutToolNoise(stderr: string): string {
-  return stderr
-    .split('\n')
-    .filter((line) => !line.startsWith('jq: '))
-    .join('\n');
-}
-
-/** Run the Bash CLI on a test home, as `run_nexus` does. */
-function runBash(home: string, args: readonly string[]) {
-  return spawnSync('bash', [join(REPO_ROOT, 'scripts', 'nexus'), ...args], {
-    cwd: home,
-    env: { ...process.env, HOME: home, NEXUS_HOME: join(home, '.nexus'), LC_ALL: 'C' },
-    encoding: 'utf8',
-  });
-}
-
-test(
-  'list and list --json say the same bytes as the Bash CLI for the same home',
-  { skip: process.platform === 'win32' && 'the Bash CLI runs on Linux alone' },
-  () => {
-    const homes: string[] = [];
-    const add = (name: string, fill: (home: string) => void) => {
-      const home = customHome(`same-as-bash-${name}`);
-      fill(home);
-      homes.push(home);
-    };
-    const lock = (home: string) => join(home, '.nexus', 'skill-lock.json');
-    add('full', (home) => {
-      writeSkill(join(home, '.custom-skills'), 'middle-skill');
-      writeListLock(home);
-      writeFileSync(join(home, '.custom-skills', 'GLOBAL.md'), 'rule one\n');
-      symlinkSync('../.custom-skills/GLOBAL.md', join(home, '.claude', 'CLAUDE.md'));
-      writeFileSync(join(home, '.codex', 'AGENTS.md'), 'mine\n');
-    });
-    add('no-lock', (home) => writeSkill(join(home, '.custom-skills'), 'only-custom'));
-    add('collision', (home) => {
-      writeSkill(join(home, '.custom-skills'), 'alpha');
-      writeLock(lock(home), ['alpha', 'beta']);
-    });
-    add('fields', (home) => {
-      writeFileSync(
-        lock(home),
-        JSON.stringify({
-          version: 3,
-          skills: {
-            bare: {},
-            empty: { source: '', skillFolderHash: false, updatedAt: null },
-            number: { source: 42, skillFolderHash: 'abc', updatedAt: true },
-            plain: null,
-            wide: { source: 'owner/ünïcode\u007f\t', skillFolderHash: 'f'.repeat(64) },
-          },
-        }),
-      );
-    });
-    add('invalid-lock', (home) => writeFileSync(lock(home), '{"version":3,"skills":{"../x":{}}}'));
-    add('symlink-lock', (home) => {
-      writeLock(join(home, 'real.json'), ['alpha']);
-      symlinkSync(join(home, 'real.json'), lock(home));
-    });
-    add('custom-faults', (home) => {
-      const custom = join(home, '.custom-skills');
-      writeSkill(custom, 'good');
-      symlinkSync(join(home, '.agents'), join(custom, 'aaa-link'));
-      mkdirSync(join(custom, 'bbb bad'));
-      mkdirSync(join(custom, 'ccc-missing'));
-      writeSkill(custom, 'nexus');
-    });
-    add('custom-root-file', (home) => {
-      rmSync(join(home, '.custom-skills'), { recursive: true });
-      writeFileSync(join(home, '.custom-skills'), '');
-    });
-    add('owner-symlink', (home) => {
-      symlinkSync(join(home, 'nowhere'), join(home, '.custom-skills', 'GLOBAL.md'));
-    });
-    add('no-homes', (home) => {
-      rmSync(join(home, '.claude'), { recursive: true });
-      rmSync(join(home, '.codex'), { recursive: true });
-      writeFileSync(join(home, '.codex'), '');
-    });
-    for (const home of homes) {
-      for (const args of [['list'], ['list', '--json'], ['list', '--json', '--json'], ['list', '-x']]) {
-        const bash = runBash(home, args);
-        const node = runNexus(home, args);
-        const label = `${home} ${args.join(' ')}`;
-        assert.equal(node.status, bash.status, label);
-        assert.equal(node.stdout, bash.stdout, label);
-        assert.equal(node.stderr, withoutToolNoise(bash.stderr), label);
-      }
-    }
-  },
-);

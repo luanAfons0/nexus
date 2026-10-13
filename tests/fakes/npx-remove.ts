@@ -1,6 +1,6 @@
 /**
  * The behaviour of a fake `npx skills remove <name>`: the remove fake of
- * `tests/cases/remove.sh`. It deletes the skill from the Canonical Root and
+ * the Bash suite. It deletes the skill from the Canonical Root and
  * from the Upstream Lock in the home it runs in, as upstream `npx skills`
  * would, and reaches no network.
  *

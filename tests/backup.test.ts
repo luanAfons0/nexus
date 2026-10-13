@@ -2,7 +2,7 @@
  * The Backup: a copy of each Agent Home that a manifest proves equal to its
  * source, or no Backup at all.
  *
- * These carry over `tests/backup_manifest_test.py` through the one seam a
+ * These carry over the Python manifest test of the Bash suite through the one seam a
  * test has, `nexus setup`: a Backup is promoted only when the manifest of
  * the copy equals the source's, so a Setup that ends with a Backup proves
  * that the copier kept what the manifest records, and the Backup is then
@@ -34,17 +34,18 @@ import { test } from 'node:test';
 import { snapshotTree, writeLock } from './helpers/homes.ts';
 import { isAbsent, makeLink, WINDOWS } from './helpers/links.ts';
 import { newHome, runNexus } from './helpers/nexus.ts';
-import { assertSetupSameAsBash, runSetup, setupResidue } from './helpers/setup.ts';
-
-const BASH_PARITY = WINDOWS && 'the Bash CLI runs on Linux alone';
+import { runSetup, setupResidue } from './helpers/setup.ts';
 
 /** The precision a copy's time is written to: one microsecond, ten on Windows. */
 const TIME_UNIT = WINDOWS ? 10_000n : 1_000n;
 
-/** A file name that is not UTF-8, as `backup_manifest_test.py` makes it. */
+/** A file name that is not UTF-8, as the Python manifest test made it. */
 const NOT_UTF8 = Buffer.from([0x6e, 0x6f, 0x6e, 0x75, 0x74, 0x66, 0x38, 0x5f, 0xff]);
 
-/** A plain path as Python's `repr` writes it: in quotes, each backslash doubled. */
+/**
+ * A plain path as the manifest's message writes it, in the form Python's
+ * `repr` gave: in quotes, each backslash doubled.
+ */
 function pythonRepr(path: string): string {
   return `'${path.replaceAll('\\', '\\\\')}'`;
 }
@@ -55,7 +56,7 @@ function bytePath(dir: string, name: Buffer): Buffer {
 }
 
 /**
- * Claude's home of `backup_manifest_test.py`: a hidden file, a nested file
+ * Claude's home of the Python manifest test: a hidden file, a nested file
  * with mode 751 and a time with nanoseconds, a hard link to it, and on
  * Linux a symlink whose name and target end in a newline and a file whose
  * name is not UTF-8.
@@ -174,17 +175,4 @@ test('an Agent Home that is a file or a symlink refuses setup and changes nothin
     assert.ok(isAbsent(join(home, '.claude-backup')), kind);
     assert.deepEqual(setupResidue(home), [], kind);
   }
-});
-
-test('the Backup says the same bytes and leaves the same trees as the Bash CLI', { skip: BASH_PARITY }, () => {
-  assertSetupSameAsBash('parity_fixture', fixtureHome);
-  assertSetupSameAsBash('parity_fifo', (home) => {
-    writeLock(join(home, '.agents', '.skill-lock.json'), []);
-    mkdirSync(join(home, '.claude'));
-    spawnSync('mkfifo', [join(home, '.claude', 'fifo')]);
-  });
-  assertSetupSameAsBash('parity_root_file', (home) => {
-    writeLock(join(home, '.agents', '.skill-lock.json'), []);
-    writeFileSync(join(home, '.codex'), 'not a directory\n');
-  });
 });

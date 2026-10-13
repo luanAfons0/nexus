@@ -2,11 +2,11 @@
  * Seam 3, for Link, the lock and Install: named fault points, driven
  * through the CLI as a subprocess (Seam 1).
  *
- * These are the fault cases of `tests/run.sh` that `tests/faults.sh` made
- * with Bash function overrides: `bootstrap_staging_failure`,
- * `force_recovery`, `link_snapshot_safety` and the two install cases of
+ * These are the fault cases of the Bash suite, which made them with Bash
+ * function overrides: `bootstrap_staging_failure`, `force_recovery`,
+ * `link_snapshot_safety` and the two install cases of
  * `install_cli_and_nvm_fallback`, each asserting what the Bash case asserted.
- * The Bash CLI drove a forced link by calling `put_link` itself; the port has
+ * The Bash suite drove a forced link by calling `put_link` itself; the port has
  * no such entry, so a forced link here is the one Setup makes over a Foreign
  * Entry at a Control Skill's path. Setup's own fault cases are in
  * `setup-faults.test.ts`, and the cases that interrupt Setup in
@@ -19,8 +19,7 @@ import { mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { snapshotTree, writeLock, writeSkill } from './helpers/homes.ts';
-import { assertFaultSameAsBash } from './helpers/faults.ts';
-import { assertLinkTo, isAbsent, linkText, makeLink, WINDOWS } from './helpers/links.ts';
+import { assertLinkTo, isAbsent, linkText, makeLink } from './helpers/links.ts';
 import { installFake, newHome, type RunOptions, runNexus } from './helpers/nexus.ts';
 
 /** Run the CLI in `home` with the fault point `fault`. */
@@ -188,12 +187,4 @@ test('install scratch that cannot be removed is named and kept', () => {
   });
   assert.match(run.stderr, /install scratch retained: /);
   assert.notDeepEqual(named(join(home, '.nexus'), '.nexus-install-'), []);
-});
-
-test('every Link and lock fault says the same bytes and leaves the same trees as the Bash CLI', { skip: WINDOWS && 'the Bash CLI runs on Linux alone' }, () => {
-  assertFaultSameAsBash('lock_extract', ['link'], fillSnapshotHome);
-  assertFaultSameAsBash('lock_replace', ['link'], fillSnapshotHome);
-  for (const fault of ['stage', 'promote', 'verify', 'restore']) {
-    assertFaultSameAsBash(fault, ['setup'], (home) => fillForcedHome(home, fault));
-  }
 });

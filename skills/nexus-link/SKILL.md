@@ -9,18 +9,18 @@ Only run this mutating command when the user asks you to reconcile or repair lin
 
 Run the Nexus link command exactly once:
 
-```bash
-~/.nexus/scripts/nexus link
+```sh
+node "$HOME/.nexus/src/nexus.js" link
 ```
 
-Link reconciles the Native Skill Roots first, then the two Instruction Paths (`~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`): each becomes a relative Managed Link to the Global Instructions owned by `~/.custom-skills/GLOBAL.md`, so both agents read byte-identical instructions.
+Link reconciles the Native Skill Roots first, then the two Instruction Paths (`~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`): each becomes a relative Managed Link to the Global Instructions owned by `~/.custom-skills/GLOBAL.md`, so both agents read byte-identical instructions. On Windows a skill link is a junction, and each Instruction Path is a Managed Copy of `GLOBAL.md` that link brings back in step.
 
 Report the command output clearly. Never bypass validation errors or collision errors; report them and stop.
 
 Some lines are notices, not errors, and link still exits 0:
 
 - `global instructions are absent`: there is no `~/.custom-skills/GLOBAL.md` yet. Skills were still reconciled. Tell the user to create that file and rerun link.
-- `foreign entry at <path>`: a physical file, an unrelated symlink, or a directory sits at an Instruction Path. Nexus preserved it and skipped only that link. Show the user the exact `mv` command from the notice; the move is theirs to make, never yours.
+- `foreign entry at <path>`: a physical file, an unrelated symlink, or a directory sits at an Instruction Path (on Windows, also a Managed Copy edited by hand). Nexus preserved it and skipped only that link. Show the user the exact `mv` command from the notice; the move is theirs to make, never yours.
 - `skipped <path>: agent home is absent`: that agent is not installed. Nexus never creates an Agent Home.
 
 `global instructions must be a regular file` is an error: `GLOBAL.md` is a symlink or a directory, and link changed nothing. Report it and stop.

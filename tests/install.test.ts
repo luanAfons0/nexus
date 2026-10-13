@@ -2,17 +2,15 @@
  * `nexus install`: run `npx skills add` through a fake `npx`, Publish the
  * Upstream Lock it wrote, and link.
  *
- * These are the install cases of `tests/run.sh`
+ * These are the install cases of the Bash suite
  * (`install_cli_and_nvm_fallback`, `install_rejects_custom_collision`),
  * carried over, with more refusals of the Publish flow. The two cases that
  * need a fault point (`install_snapshot_mutate`, `install_cleanup_fail`)
- * are in `faults.test.ts`. No case reaches the network: the fake `npx` writes the
- * Canonical Root and the Upstream Lock as upstream would. On Linux the same
- * homes also run through the Bash CLI, and the bytes are compared, because
- * the Bash CLI is the specification.
+ * are in `faults.test.ts`. No case reaches the network: the fake `npx` writes
+ * the Canonical Root and the Upstream Lock as upstream would.
  *
- * Every case but the NVM fallback and the Bash parity runs on Windows too,
- * where the fake is found as `npx.cmd` and Link makes junctions (ADR 0010).
+ * Every case but the NVM fallback runs on Windows too, where the fake is
+ * found as `npx.cmd` and Link makes junctions (ADR 0010).
  */
 import assert from 'node:assert/strict';
 import {
@@ -29,12 +27,7 @@ import {
 import { delimiter, join } from 'node:path';
 import { test } from 'node:test';
 import { customHome, writeLock, writeSkill } from './helpers/homes.ts';
-import {
-  agentTrees,
-  assertLinkTo,
-  runBashWithFakes,
-  withoutToolNoise,
-} from './helpers/links.ts';
+import { assertLinkTo } from './helpers/links.ts';
 import { fakeCalls, installFake, newHome, runNexus } from './helpers/nexus.ts';
 
 const WINDOWS = process.platform === 'win32';
@@ -54,13 +47,6 @@ const ADD_ALPHA_BETA = [
   'beta',
   '--yes',
 ];
-
-/** One parity scene: the arguments, the fake's mode, and what the home holds first. */
-type Scene = {
-  readonly args: readonly string[];
-  readonly mode?: string;
-  readonly fill?: (home: string) => void;
-};
 
 /** A home with the install fake first on its PATH. */
 function installHome(name: string): string {
@@ -305,70 +291,6 @@ test('a malformed Custom Root is refused before npx', () => {
   );
   assert.deepEqual(fakeCalls(home, 'npx'), []);
 });
-
-test(
-  'install says the same bytes and leaves the same files as the Bash CLI',
-  { skip: WINDOWS && 'the Bash CLI runs on Linux alone' },
-  () => {
-    const scenes: Readonly<Record<string, Scene>> = {
-      success: { args: ['source', '--skill', 'alpha', '--skill', 'beta'] },
-      failure: { args: ['source', '--skill', 'alpha'], mode: 'failure' },
-      empty: { args: ['source', '--skill', 'alpha'], mode: 'empty' },
-      invalid: { args: ['source', '--skill', 'alpha'], mode: 'invalid' },
-      bad: { args: ['source', '--skill', 'alpha'], mode: 'bad' },
-      'missing-skill-md': { args: ['source', '--skill', 'alpha'], mode: 'missing-skill-md' },
-      'no-lock': { args: ['source', '--skill', 'alpha'], mode: 'no-lock' },
-      'bad-flag': { args: ['-bogus', '--skill', 'alpha'] },
-      collision: {
-        args: ['source', '--skill', 'mine'],
-        fill: (home) => writeSkill(join(home, '.custom-skills'), 'mine'),
-      },
-      'link-fault': {
-        args: ['source', '--skill', 'alpha'],
-        fill: (home) => mkdirSync(join(home, '.claude', 'skills', 'alpha')),
-      },
-    };
-    for (const [name, scene] of Object.entries(scenes)) {
-      const bash = customHome(`install-bash-${name}`);
-      const node = customHome(`install-node-${name}`);
-      for (const home of [bash, node]) {
-        installFake(home, 'npx', 'npx-install.ts');
-        writeLock(join(home, '.nexus', 'skill-lock.json'), ['kept']);
-        scene.fill?.(home);
-      }
-      const env: Readonly<Record<string, string>> =
-        scene.mode === undefined ? {} : { NEXUS_FAKE_NPX_MODE: scene.mode };
-      const expected = runBashWithFakes(bash, ['install', ...scene.args], env);
-      const actual = runNexus(node, ['install', ...scene.args], { env });
-      const same = (text: string, home: string) =>
-        text
-          .replaceAll(home, '<home>')
-          .replace(/\.nexus-install-lock\.[A-Za-z0-9]{6}/g, '<snapshot>');
-      assert.equal(actual.status, expected.status, name);
-      assert.equal(same(actual.stdout, node), same(expected.stdout, bash), name);
-      assert.equal(
-        same(actual.stderr, node),
-        same(withoutCopyNoise(withoutToolNoise(expected.stderr)), bash),
-        name,
-      );
-      assert.equal(same(agentTrees(node), node), same(agentTrees(bash), bash), name);
-      assert.deepEqual(
-        readFileSync(join(node, '.nexus', 'skill-lock.json')),
-        readFileSync(join(bash, '.nexus', 'skill-lock.json')),
-        name,
-      );
-      assert.deepEqual(scratch(node), scratch(bash), name);
-    }
-  },
-);
-
-/** The Bash CLI's stderr without what `cp` says of its own when it fails. */
-function withoutCopyNoise(stderr: string): string {
-  return stderr
-    .split('\n')
-    .filter((line) => !line.startsWith('cp: '))
-    .join('\n');
-}
 
 /** `text` with every character a regular expression reads as syntax made plain. */
 function escape(text: string): string {

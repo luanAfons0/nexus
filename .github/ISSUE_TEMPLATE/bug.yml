@@ -38,9 +38,9 @@ body:
     attributes:
       label: What your Agent Context looks like
       description: >
-        The output of `~/.nexus/scripts/nexus list`. It shows the Skills of
-        all three kinds and the state of the Global Instructions, and it
-        prints no secret.
+        The output of `node "$HOME/.nexus/src/nexus.js" list`. It shows the
+        Skills of all three kinds and the state of the Global Instructions,
+        and it prints no secret.
       render: shell
     validations:
       required: false
@@ -50,8 +50,8 @@ body:
     attributes:
       label: Versions
       description: >
-        The output of `bash --version | head -1; jq --version; python3 -V;
-        uname -sr`, and whether you are on WSL.
+        The output of `node --version; git --version; gh --version | head -1`,
+        and your system: Linux, macOS, Windows, or WSL.
       render: shell
     validations:
       required: true
@@ -61,5 +61,5 @@ body:
     attributes:
       label: The suite
       options:
-        - label: I ran `bash tests/run.sh` and said above whether it passed.
+        - label: I ran `npm run check` and said above whether it passed.
           required: false

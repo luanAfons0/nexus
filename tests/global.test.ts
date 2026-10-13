@@ -3,13 +3,10 @@
  * and replace `GLOBAL.md`, the one path Nexus writes in the Custom Root
  * (ADR 0004).
  *
- * These are the cases of `tests/cases/global.sh`, carried over. Its help
+ * These are the global cases of the Bash suite, carried over. Its help
  * case, `global_help_lists_global`, lives in `tests/cli.test.ts`, which
- * asserts the whole help text. The link cases of
- * `tests/cases/global-instructions.sh` live in `tests/link.test.ts` and
- * `tests/bootstrap.test.ts`. On Linux the same homes also run through the
- * Bash CLI, and the bytes and the trees are compared, because the Bash CLI is
- * the specification.
+ * asserts the whole help text. The link cases of its Global Instructions
+ * suite live in `tests/link.test.ts` and `tests/bootstrap.test.ts`.
  *
  * On Windows each Instruction Path is a Managed Copy of `GLOBAL.md`
  * (ADR 0010): `global edit` brings both copies in step with the new file, and
@@ -17,8 +14,6 @@
  * it, and that `list` and `global show --json` call a Managed Copy linked.
  */
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -33,11 +28,10 @@ import {
   managedCopies,
   sha256,
   WINDOWS,
-  withoutToolNoise,
 } from './helpers/links.ts';
-import { newHome, REPO_ROOT, type Run, runNexus } from './helpers/nexus.ts';
+import { newHome, type Run, runNexus } from './helpers/nexus.ts';
 
-const LINUX_ONLY = WINDOWS && 'the Bash CLI and POSIX modes are Linux alone';
+const POSIX_ONLY = WINDOWS && 'POSIX file modes are Linux alone';
 const WINDOWS_ONLY = !WINDOWS && 'only Windows makes Managed Copies';
 
 const EMPTY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
@@ -385,7 +379,7 @@ test('global edit that makes GLOBAL.md with no lock keeps the file and fails as 
 
 test(
   'global edit keeps the mode of GLOBAL.md, and gives a new one the umask mode',
-  { skip: LINUX_ONLY },
+  { skip: POSIX_ONLY },
   () => {
     const home = globalHome('global_edit_mode');
     writeFileSync(owner(home), 'old rule\n');
@@ -398,74 +392,6 @@ test(
     const umask = process.umask(0o022);
     process.umask(umask);
     assert.equal(statSync(owner(home)).mode & 0o7777, 0o666 & ~umask);
-  },
-);
-
-test(
-  'global show and global edit say the same bytes and leave the same trees as the Bash CLI',
-  { skip: LINUX_ONLY },
-  () => {
-    type Step = { readonly args: readonly string[]; readonly input?: string };
-    const show = (...more: string[]): Step => ({ args: ['global', 'show', ...more] });
-    const write = (input: string, ...more: string[]): Step => ({ args: ['global', 'edit', ...more], input });
-    const scenes: Record<string, { readonly fill: (home: string) => void; readonly steps: readonly Step[] }> = {
-      'create-and-edit': {
-        fill: (home) => writeFileSync(join(home, '.codex', 'AGENTS.md'), 'hand written\n'),
-        steps: [show(), show('--json'), write('first rule\n'), show(), show('--json'), write('second\n')],
-      },
-      'if-match': {
-        fill: (home) => writeFileSync(owner(home), 'old rule\n'),
-        steps: [
-          write('x\n', '--if-match', EMPTY_SHA256),
-          write('y\n', '--if-match', sha256Text('old rule\n'), '--if-match', sha256Text('old rule\n')),
-          show('--json'),
-        ],
-      },
-      'no-lock': {
-        fill: (home) => rmSync(join(home, '.nexus', 'skill-lock.json')),
-        steps: [write('first rule\n'), show('--json')],
-      },
-      'owner-symlink': {
-        fill: (home) => makeLink('mine/SKILL.md', owner(home)),
-        steps: [show(), show('--json'), write('x\n')],
-      },
-      'no-root': {
-        fill: (home) => rmSync(join(home, '.custom-skills'), { recursive: true }),
-        steps: [show(), write('x\n')],
-      },
-      usage: {
-        fill: () => undefined,
-        steps: [
-          { args: ['global'] },
-          { args: ['global', 'nope'] },
-          show('--json', '--json'),
-          show('extra'),
-          write('x\n', '--if-match'),
-          write('x\n', '--if-match', 'g'.repeat(64)),
-          write('x\n', '--json'),
-        ],
-      },
-      'invalid-utf8': {
-        fill: (home) => writeFileSync(owner(home), Buffer.from([0x61, 0xff, 0x0a, 0x7f])),
-        steps: [show('--json')],
-      },
-    };
-    for (const [name, { fill, steps }] of Object.entries(scenes)) {
-      const bash = globalHome(`global-bash-${name}`);
-      const node = globalHome(`global-node-${name}`);
-      fill(bash);
-      fill(node);
-      for (const [index, step] of steps.entries()) {
-        const expected = runBashWithInput(bash, step.args, step.input);
-        const actual = runNexus(node, step.args, { input: step.input ?? '' });
-        const label = `${name}, step ${index + 1}: ${step.args.join(' ')}`;
-        const same = (text: string, home: string) => text.replaceAll(home, '<home>');
-        assert.equal(actual.status, expected.status, label);
-        assert.equal(same(actual.stdout, node), same(expected.stdout, bash), label);
-        assert.equal(same(actual.stderr, node), same(withoutToolNoise(expected.stderr), bash), label);
-        assert.equal(same(snapshot(node), node), same(snapshot(bash), bash), label);
-      }
-    }
   },
 );
 
@@ -532,19 +458,3 @@ test(
     assert.equal(line(), `global instructions: ${owner(home)} (claude: foreign, codex: linked)`);
   },
 );
-
-/** The SHA-256 of `text`, in hex. */
-function sha256Text(text: string): string {
-  return createHash('sha256').update(text).digest('hex');
-}
-
-/** Run the Bash CLI on a test home with `input` on stdin, as `run_nexus` does. */
-function runBashWithInput(home: string, args: readonly string[], input: string | undefined): Run {
-  const result = spawnSync('bash', [join(REPO_ROOT, 'scripts', 'nexus'), ...args], {
-    cwd: home,
-    env: { ...process.env, HOME: home, NEXUS_HOME: join(home, '.nexus'), LC_ALL: 'C' },
-    encoding: 'utf8',
-    input: input ?? '',
-  });
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
-}

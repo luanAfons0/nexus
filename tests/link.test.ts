@@ -2,13 +2,9 @@
  * `nexus link`: the one reconcile of both Native Skill Roots and both
  * Instruction Paths into Managed Links to their Owners.
  *
- * These are the link cases of `tests/run.sh` and of
- * `tests/cases/global-instructions.sh`, carried over. The cases that need a
- * fault point (`link_snapshot_safety`) are in `faults.test.ts`, and the one
- * that runs Setup (`global_setup_ends_with_links`) is in `setup.test.ts`.
- * On Linux the same
- * homes also run through the Bash CLI, and the bytes and the trees are
- * compared, because the Bash CLI is the specification.
+ * These are the link cases of the Bash suite, carried over. The cases that
+ * need a fault point (`link_snapshot_safety`) are in `faults.test.ts`, and the
+ * one that runs Setup (`global_setup_ends_with_links`) is in `setup.test.ts`.
  *
  * Every other case runs on Windows too, where a Managed Link to a skill is a
  * junction and each Instruction Path is a Managed Copy of `GLOBAL.md`
@@ -38,14 +34,11 @@ import {
   linkText,
   makeLink,
   managedCopies,
-  runBash,
   sha256,
   WINDOWS,
-  withoutToolNoise,
 } from './helpers/links.ts';
 import { newHome, runNexus } from './helpers/nexus.ts';
 
-const LINUX_ONLY = WINDOWS && 'the Bash CLI runs on Linux alone';
 const WINDOWS_ONLY = !WINDOWS && 'only Windows makes Managed Copies';
 
 const CONTROL_SKILLS = [
@@ -589,86 +582,6 @@ test('every Preflight fault is named before the count, and nothing changes', () 
   );
   assert.equal(agentTrees(home), before);
 });
-
-test(
-  'link says the same bytes and leaves the same trees as the Bash CLI',
-  { skip: LINUX_ONLY },
-  () => {
-    const scenes: Record<string, (home: string) => void> = {
-      reconcile: (home) => {
-        const canonical = join(home, '.agents', 'skills');
-        writeSkill(canonical, 'alpha');
-        writeSkill(canonical, 'stale');
-        writeSkill(join(home, '.custom-skills'), 'mine');
-        writeLock(join(home, '.nexus', 'skill-lock.json'), ['alpha', 'missing']);
-        mkdirSync(join(home, '.codex', 'skills', '.system'), { recursive: true });
-        makeLink('../../.agents/skills/stale', join(home, '.claude', 'skills', 'stale'));
-        makeLink('../../.agents/skills/missing', join(home, '.codex', 'skills', 'missing'));
-        makeLink('../../.agents/skills/stale', join(home, '.codex', 'skills', 'alpha'));
-        makeLink('/external/keep', join(home, '.codex', 'skills', 'external'));
-        mkdirSync(join(home, '.claude', 'skills', 'nexus-new'));
-        makeLink('/external/link', join(home, '.codex', 'skills', 'nexus-help'));
-        writeFileSync(join(home, '.custom-skills', 'GLOBAL.md'), 'rule one\n');
-        writeFileSync(join(home, '.codex', 'AGENTS.md'), 'mine\n');
-      },
-      'no-owner': (home) => {
-        writeLock(join(home, '.nexus', 'skill-lock.json'), []);
-        makeLink('../.custom-skills/GLOBAL.md', join(home, '.claude', 'CLAUDE.md'));
-        makeLink('/unrelated/AGENTS.md', join(home, '.codex', 'AGENTS.md'));
-      },
-      'no-homes': (home) => {
-        writeLock(join(home, '.nexus', 'skill-lock.json'), []);
-        writeFileSync(join(home, '.custom-skills', 'GLOBAL.md'), 'rule one\n');
-        rmSync(join(home, '.claude'), { recursive: true });
-      },
-      preflight: (home) => {
-        const custom = join(home, '.custom-skills');
-        writeSkill(join(home, '.agents', 'skills'), 'installed');
-        writeLock(join(home, '.nexus', 'skill-lock.json'), ['installed']);
-        writeSkill(custom, 'installed');
-        mkdirSync(join(custom, 'bad name'));
-        makeLink(join(home, '.agents'), join(custom, 'aliased'));
-        makeLink(join(custom, 'installed'), join(home, '.agents', 'skills', '.hidden'));
-        mkdirSync(join(custom, 'GLOBAL.md'));
-      },
-      'custom-root-file': (home) => {
-        rmSync(join(home, '.custom-skills'), { recursive: true });
-        writeFileSync(join(home, '.custom-skills'), '');
-        writeLock(join(home, '.nexus', 'skill-lock.json'), []);
-      },
-      'stale-ownership': (home) => {
-        const canonical = join(home, '.agents', 'skills');
-        renameSync(canonical, join(home, '.agents', 'skills-real'));
-        makeLink('skills-real', canonical);
-        writeSkill(canonical, 'stale');
-        makeLink('/external/target', join(canonical, 'alias'));
-        writeLock(join(home, '.nexus', 'skill-lock.json'), []);
-        makeLink('../../.agents/skills/alias/stale', join(home, '.claude', 'skills', 'lexical'));
-        makeLink(join(home, '.agents', 'skills-real', 'stale'), join(home, '.codex', 'skills', 'resolved'));
-        makeLink('../../.nexus/skills/alias/nexus-setup', join(home, '.claude', 'skills', 'nexus-setup'));
-        makeLink('../../.agents/skills-elsewhere/x', join(home, '.claude', 'skills', 'lookalike'));
-      },
-      'no-lock': () => undefined,
-      'bad-lock': (home) => writeFileSync(join(home, '.nexus', 'skill-lock.json'), '{"version":3,"skills":{"../x":{}}}'),
-    };
-    for (const [name, fill] of Object.entries(scenes)) {
-      const bash = customHome(`link-bash-${name}`);
-      const node = customHome(`link-node-${name}`);
-      fill(bash);
-      fill(node);
-      for (const round of [1, 2]) {
-        const expected = runBash(bash, ['link']);
-        const actual = runNexus(node, ['link']);
-        const label = `${name}, run ${round}`;
-        const same = (text: string, home: string) => text.replaceAll(home, '<home>');
-        assert.equal(actual.status, expected.status, label);
-        assert.equal(same(actual.stdout, node), same(expected.stdout, bash), label);
-        assert.equal(same(actual.stderr, node), same(withoutToolNoise(expected.stderr), bash), label);
-        assert.equal(same(agentTrees(node), node), same(agentTrees(bash), bash), label);
-      }
-    }
-  },
-);
 
 test('after GLOBAL.md changes, link brings both Instruction Paths back in step', () => {
   const home = globalHome('global_changed');

@@ -1,15 +1,13 @@
 /**
  * The CLI entry and its dispatch: help, the usage refusal, and the refusal of
- * a Node that is too old. The Bash CLI is the specification, so on Linux the
- * same arguments are also run through `scripts/nexus` and the bytes compared.
+ * a Node that is too old.
  */
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { join } from 'node:path';
 import { test } from 'node:test';
-import { newHome, REPO_ROOT, runNexus } from './helpers/nexus.ts';
+import { newHome, runNexus } from './helpers/nexus.ts';
 
 const HELP = `Usage: nexus <bootstrap|setup|link|install|update|remove|new|list|check|global|help>
+Run it as: node "$HOME/.nexus/src/nexus.js" <command>
 
 bootstrap    Link only the Nexus control skills.
 setup        Run one-time initialization with backups.
@@ -56,25 +54,6 @@ test('a missing command, an unknown one, or an extra argument prints the usage o
     assert.equal(run.stderr, HELP, JSON.stringify(args));
   }
 });
-
-test(
-  'help and every usage refusal say the same bytes as the Bash CLI',
-  { skip: process.platform === 'win32' && 'the Bash CLI runs on Linux alone' },
-  () => {
-    const home = newHome('same-as-bash');
-    for (const args of [['help'], ['-h'], ['--help'], ...USAGE_REFUSALS]) {
-      const bash = spawnSync('bash', [join(REPO_ROOT, 'scripts', 'nexus'), ...args], {
-        cwd: home,
-        env: { ...process.env, HOME: home, NEXUS_HOME: join(home, '.nexus') },
-        encoding: 'utf8',
-      });
-      const node = runNexus(home, args);
-      assert.equal(node.status, bash.status, JSON.stringify(args));
-      assert.equal(node.stdout, bash.stdout, JSON.stringify(args));
-      assert.equal(node.stderr, bash.stderr, JSON.stringify(args));
-    }
-  },
-);
 
 test('below Node 24 the CLI refuses with one sentence that names the version it needs', () => {
   const home = newHome('old-node');

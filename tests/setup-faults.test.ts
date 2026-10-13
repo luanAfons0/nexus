@@ -3,17 +3,17 @@
  * the Nexus Lock and the Canonical Root, driven through the CLI as a
  * subprocess (Seam 1).
  *
- * These are the fault cases of `tests/run.sh` that `tests/faults.sh` made
- * with Bash function overrides (`setup_backup_transaction_and_absent_roots`,
+ * These are the fault cases of the Bash suite, which made them with Bash
+ * function overrides (`setup_backup_transaction_and_absent_roots`,
  * `setup_backup_retries_and_manifest_bound`,
  * `setup_lock_publication_verification`,
  * `setup_canonical_failures_retain_publication`, the late collision and
  * repoint, and the scan failure), each asserting what the Bash case
  * asserted. Three more come from cases that sourced Bash internals:
  * `discover_lock_uses_immutable_snapshots`, the change-detection half of
- * `backup_manifest_test.py` (a change of content, mode, a nanosecond of
+ * the Python manifest test (a change of content, mode, a nanosecond of
  * time, a symlink's target or a hard link, made while the Backup copies),
- * and `backup_final_corrupt`, the one fault of `tests/faults.sh` that no
+ * and `backup_final_corrupt`, the one fault point of the Bash suite that no
  * Bash case ran.
  *
  * On Windows a home's links are junctions, as `makeLink` makes them. A
@@ -38,7 +38,6 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { snapshotTree, writeLock, writeSkill } from './helpers/homes.ts';
 import { assertLinkText, isAbsent, linkText, makeLink, WINDOWS } from './helpers/links.ts';
-import { assertFaultSameAsBash } from './helpers/faults.ts';
 import { newHome, type Run, runNexus } from './helpers/nexus.ts';
 import { setupResidue } from './helpers/setup.ts';
 
@@ -277,7 +276,7 @@ test('a change inside a promoted Backup is past what setup checks: setup complet
 });
 
 /**
- * A home for the change-detection cases of `backup_manifest_test.py`: in
+ * A home for the change-detection cases of the Python manifest test: in
  * Claude's home, `payload` at a whole second, its hard link `hardlink`, and
  * on Linux and macOS a symlink named `line\nlink` whose text is `literal\n`.
  */
@@ -353,6 +352,9 @@ test('a lock that changes after its publication keeps it and both Backups, and s
   for (const words of ['setup is now initialized/disabled', '/nexus-link', '$nexus-link']) {
     assert.ok(run.stderr.includes(words), run.stderr);
   }
+  // The advice names the CLI in the one form that works on every system.
+  const cli = join(home, '.nexus', 'src', 'nexus.js');
+  assert.ok(run.stderr.includes(`(CLI: node "${cli}" link)\n`), run.stderr);
   assert.deepEqual(setupResidue(home), []);
 });
 
@@ -423,47 +425,4 @@ test('a canonical symlink scan that fails is said and fails setup', () => {
   });
   assert.notEqual(run.status, 0);
   assert.match(run.stderr, /cannot scan canonical skill symlinks/);
-});
-
-test('every Setup fault says the same bytes and leaves the same trees as the Bash CLI', { skip: WINDOWS && 'the Bash CLI runs on Linux alone' }, () => {
-  const lockOnly = (home: string): void => writeLock(join(home, '.agents', '.skill-lock.json'), []);
-  const faults: readonly (readonly [string, (home: string) => void])[] = [
-    ['backup_copy_fail', markedHome],
-    ['backup_copy_false', markedHome],
-    ['backup_copy_corrupt', markedHome],
-    ['backup_root_corrupt', markedHome],
-    ['backup_child_corrupt', markedHome],
-    ['backup_symlink_corrupt', (home) => {
-      emptyHome(home);
-      symlinkSync('literal-target\n', join(home, '.claude', 'trailing-newline-link'));
-    }],
-    ['backup_retry_once', markedHome],
-    ['backup_retry_always', (home) => {
-      markedHome(home);
-      write(join(home, '.claude', 'retry-marker'), 'live\n');
-    }],
-    ['backup_manifest_count', lockOnly],
-    ['backup_promote_second', lockOnly],
-    ['backup_rollback', markedHome],
-    ['backup_final_corrupt', (home) => {
-      emptyHome(home);
-      write(join(home, '.claude', '.hidden'), 'hidden\n');
-    }],
-    ['backup_promote_ambiguous', emptyHome],
-    ['lock_copy_corrupt', markedHome],
-    ['lock_post_publish_corrupt', emptyHome],
-    ['canonical_promote', canonicalLinkHome],
-    ['canonical_restore', canonicalLinkHome],
-    ['canonical_cleanup', canonicalLinkHome],
-    ['canonical_late_collision', canonicalLinkHome],
-    ['canonical_late_repoint', (home) => {
-      canonicalLinkHome(home);
-      mkdirSync(join(home, 'elsewhere'));
-    }],
-    ['canonical_find_fail', (home) => {
-      writeLock(join(home, '.agents', '.skill-lock.json'), ['alpha']);
-      writeSkill(join(home, '.agents', 'skills'), 'alpha');
-    }],
-  ];
-  for (const [fault, build] of faults) assertFaultSameAsBash(fault, ['setup'], build);
 });

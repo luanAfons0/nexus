@@ -128,7 +128,7 @@ export function runNexus(home: string, args: readonly string[], options: RunOpti
 /**
  * Start the CLI against a test home, as `runNexus` runs it, and give it back
  * while it runs: a test waits for a fault point's handshake, then signals or
- * releases it (`start_nexus_overridden` in `tests/run.sh`).
+ * releases it (`start_nexus_overridden` of the Bash suite).
  */
 export function startNexus(
   home: string,

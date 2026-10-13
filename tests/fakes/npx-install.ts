@@ -1,6 +1,6 @@
 /**
  * The behaviour of a fake `npx skills add`: the install fake of
- * `tests/run.sh`. It writes the Canonical Root and the Upstream Lock in the
+ * the Bash suite. It writes the Canonical Root and the Upstream Lock in the
  * home it runs in, as upstream `npx skills` would, and reaches no network.
  *
  * `NEXUS_FAKE_NPX_MODE` picks what it does:

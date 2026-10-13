@@ -1,6 +1,6 @@
 /**
  * The behaviour of the fake `gh` that `nexus check` asks, as `check_fake_gh`
- * in `tests/cases/check.sh` answered: `gh auth` succeeds unless
+ * of the Bash suite answered: `gh auth` succeeds unless
  * `NEXUS_FAKE_GH_MODE` is `logged_out`, and each repository a case set up
  * gives its last commit date, nothing, a date that is no date, or a 404.
  * Anything else is an error, so a case that asks for something no case set up

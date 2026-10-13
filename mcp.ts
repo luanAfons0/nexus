@@ -47,9 +47,9 @@ const CLI = join(HERE, 'src', 'nexus.js');
 
 /**
  * What `command` names as element 0 of every Envelope. The page shows it by
- * its base name, so the Last command panel reads `nexus update docx`, as it
- * did when the CLI was the Bash `scripts/nexus`. The real argv starts with
- * the Node and the entry, which a person never types.
+ * its base name, so the Last command panel reads `nexus update docx` on
+ * every system. The real argv starts with the Node and the entry, which a
+ * person never types.
  */
 const SHOWN_CLI = 'nexus';
 

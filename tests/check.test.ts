@@ -3,29 +3,24 @@
  * asked of GitHub through a fake `gh`, with nothing moved but the Check
  * Result.
  *
- * These are the CLI cases of `tests/cases/check.sh`, carried over. Its three
+ * These are the CLI cases of the Bash suite, carried over. Its three
  * Plugin Server cases belong to the Plugin Server's tests (#83). No case
  * reaches the network: the fake `gh` answers every call, and the cases that
- * prove a road without `gh` run on a PATH that holds no `gh`. On Linux the
- * same homes also run through the Bash CLI, and the bytes are compared,
- * because the Bash CLI is the specification.
+ * prove a road without `gh` run on a PATH that holds no `gh`.
  */
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
-  mkdirSync,
   readdirSync,
   readFileSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { customHome, snapshotTree } from './helpers/homes.ts';
-import { fakeCalls, fakePath, installFake, REPO_ROOT, runNexus } from './helpers/nexus.ts';
+import { fakeCalls, installFake, REPO_ROOT, runNexus } from './helpers/nexus.ts';
 
 const HELP = readFileSync(join(REPO_ROOT, 'src', 'help.ts'), 'utf8');
 const USAGE = /export const HELP_TEXT = `([^`]*)`;/.exec(HELP)?.[1] ?? '';
@@ -426,139 +421,3 @@ test('check --last refuses a result that is not there, or not a result', () => {
     }
   }
 });
-
-/**
- * The Bash CLI on a home, with `bin` as its whole PATH. The lines jq prints
- * itself about an invalid lock are dropped: they name a random Snapshot path,
- * and the port does not print them.
- */
-function runBash(home: string, args: readonly string[], path: string, extra = {}) {
-  const run = spawnSync('/usr/bin/env', ['bash', join(REPO_ROOT, 'scripts', 'nexus'), ...args], {
-    cwd: home,
-    env: {
-      ...process.env,
-      ...extra,
-      HOME: home,
-      NEXUS_HOME: join(home, '.nexus'),
-      PATH: path,
-      LC_ALL: 'C',
-    },
-    encoding: 'utf8',
-  });
-  const stderr = run.stderr
-    .split('\n')
-    .filter((line) => !line.startsWith('jq: '))
-    .join('\n');
-  return { status: run.status, stdout: run.stdout, stderr };
-}
-
-/** A directory of the programs the Bash CLI needs, and no `gh`. */
-function binWithoutGh(home: string): string {
-  const bin = join(home, 'nogh');
-  mkdirSync(bin, { recursive: true });
-  const programs = ['bash', 'jq', 'date', 'mktemp', 'dirname', 'rm', 'mv', 'cp', 'mkdir', 'cat'];
-  for (const name of programs) {
-    const found = (process.env.PATH ?? '')
-      .split(delimiter)
-      .map((dir) => join(dir, name))
-      .find((path) => existsSync(path));
-    if (found !== undefined) symlinkSync(found, join(bin, name));
-  }
-  return bin;
-}
-
-/** Text with the moment of each Check Result replaced, so two runs can be compared. */
-function timeless(text: string): string {
-  return text.replace(/(checkedAt": "|checked at )\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ/g, '$1<at>');
-}
-
-test(
-  'check and check --last say the same bytes as the Bash CLI for the same home',
-  { skip: process.platform === 'win32' && 'the Bash CLI runs on Linux alone' },
-  () => {
-    const cases: readonly {
-      readonly name: string;
-      readonly fill: (home: string) => void;
-      readonly runs: readonly (readonly string[])[];
-      readonly env?: Readonly<Record<string, string>>;
-      readonly gh?: boolean;
-    }[] = [
-      { name: 'full', fill: writeCheckLock, runs: [['check'], ['check', '--json']] },
-      {
-        name: 'reasons',
-        fill: (home) =>
-          writeCheckLock(home, {
-            local: { ...skill('owner/quiet', 'a/SKILL.md', 'f'), sourceType: 'local' },
-            silent: skill('owner/empty', 'SKILL.md', 'f'),
-            odd: skill('owner/odd', 'b/c/SKILL.md', 'f'),
-            tabbed: skill('owner/quiet', 'd/SKILL.md', 'f', 'a\tb\\c'),
-          }),
-        runs: [['check'], ['check', '--json']],
-      },
-      { name: 'empty', fill: (home) => writeCheckLock(home, {}), runs: [['check', '--json']] },
-      { name: 'no-gh', fill: writeCheckLock, runs: [['check']], gh: false },
-      {
-        name: 'logged-out',
-        fill: writeCheckLock,
-        runs: [['check']],
-        env: { NEXUS_FAKE_GH_MODE: 'logged_out' },
-      },
-      { name: 'no-lock', fill: () => {}, runs: [['check'], ['check', '--all']] },
-      {
-        name: 'bad-lock',
-        fill: (home) => writeFileSync(lockPath(home), '{"version":3}'),
-        runs: [['check']],
-      },
-      { name: 'no-result', fill: () => {}, runs: [['check', '--last']], gh: false },
-      {
-        name: 'half-result',
-        fill: (home) => writeFileSync(resultPath(home), 'half a result\n'),
-        runs: [['check', '--last', '--json']],
-        gh: false,
-      },
-    ];
-    for (const each of cases) {
-      const node = customHome(`same-as-bash-node-${each.name}`);
-      const bash = customHome(`same-as-bash-bash-${each.name}`);
-      for (const home of [node, bash]) {
-        if (each.gh !== false) installFake(home, 'gh', 'gh-check.ts');
-        each.fill(home);
-      }
-      const bashPath =
-        each.gh === false ? binWithoutGh(bash) : fakePath(bash, process.env.PATH ?? '');
-      for (const args of each.runs) {
-        const env = { ...each.env, ...(each.gh === false ? { PATH: '' } : {}) };
-        const ours = runNexus(node, args, { env });
-        const theirs = runBash(bash, args, bashPath, each.env);
-        const label = `${each.name}: ${args.join(' ')}`;
-        const mine = (text: string) => timeless(text.replaceAll(node, '<home>'));
-        const bashs = (text: string) => timeless(text.replaceAll(bash, '<home>'));
-        assert.equal(ours.status, theirs.status, label);
-        assert.equal(mine(ours.stdout), bashs(theirs.stdout), label);
-        assert.equal(mine(ours.stderr), bashs(theirs.stderr), label);
-      }
-      const [nodeResult, bashResult] = [resultPath(node), resultPath(bash)];
-      assert.equal(existsSync(nodeResult), existsSync(bashResult), each.name);
-      if (existsSync(bashResult) && each.name !== 'half-result') {
-        assert.equal(
-          timeless(readFileSync(nodeResult, 'utf8')),
-          timeless(readFileSync(bashResult, 'utf8')),
-          each.name,
-        );
-        // Both CLIs read the one result the Bash CLI wrote, byte for byte.
-        const bin = binWithoutGh(customHome(`bin-${each.name}`));
-        for (const args of [['check', '--last'], ['check', '--last', '--json']]) {
-          writeFileSync(nodeResult, readFileSync(bashResult));
-          const ours = runNexus(node, args, ONLY_FAKES);
-          const theirs = runBash(bash, args, bin);
-          assert.equal(ours.status, theirs.status);
-          assert.equal(
-            ours.stdout.replaceAll(node, '<home>'),
-            theirs.stdout.replaceAll(bash, '<home>'),
-          );
-          assert.equal(ours.stderr, theirs.stderr);
-        }
-      }
-    }
-  },
-);

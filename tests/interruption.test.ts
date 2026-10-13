@@ -2,7 +2,7 @@
  * Seam 3, for a signal that stops Setup: a fault point holds Setup in one
  * window, and the test stops it there, as `term_recovery`,
  * `setup_finalization_signal_window` and `setup_canonical_scan_signal_cleanup`
- * of `tests/run.sh` did. Setup must clean what is its own, name every path a
+ * of the Bash suite did. Setup must clean what is its own, name every path a
  * person must review, release its mutex, and exit 143.
  *
  * The windows: `pre` holds a lock Snapshot before anything is published,

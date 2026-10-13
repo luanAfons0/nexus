@@ -356,11 +356,19 @@ function postPublicationFailure(run: SetupRun, detail: string): void {
   error(linkAdvice(paths));
 }
 
+/**
+ * The CLI as a person types it on any system: `node` with the entry under the
+ * Nexus home, in quotes so that a home with a space in it stays one argument.
+ */
+function cliForm(paths: Paths): string {
+  return `node "${join(paths.nexusHome, 'src', 'nexus.js')}"`;
+}
+
 /** The sentence that sends a person to Link. */
 function linkAdvice(paths: Paths): string {
   return (
     'correct the reported issue, then run /nexus-link or $nexus-link ' +
-    `(CLI: ${paths.nexusHome}/scripts/nexus link)`
+    `(CLI: ${cliForm(paths)} link)`
   );
 }
 
@@ -396,7 +404,7 @@ function interrupted(run: SetupRun, signal: 'SIGINT' | 'SIGTERM'): number {
     reportRecoveries(run);
     error(
       'rerun setup only after reviewing retained paths; correct the issue, then run ' +
-        `/nexus-link or $nexus-link (CLI: ${paths.nexusHome}/scripts/nexus link)`,
+        `/nexus-link or $nexus-link (CLI: ${cliForm(paths)} link)`,
     );
   } else {
     error(

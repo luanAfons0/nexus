@@ -2,7 +2,7 @@
  * The Plugin Server, `mcp.ts`: the tools the Plugin Page and the Tool Bus
  * call, each one subprocess run of the Nexus CLI, over stdio (Seam 2).
  *
- * These carry over the three Plugin Server cases of `tests/cases/check.sh`
+ * These carry over the three Plugin Server cases of the Bash suite
  * and widen them to every tool, the refusals of the protocol, one mutation at
  * a time, and the timeout. Each Envelope is compared with what the CLI says
  * for the same home, because the page shows exactly what the command line

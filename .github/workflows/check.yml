@@ -1,11 +1,9 @@
 # The whole suite, run by a machine on every change.
 #
-# Nexus is being ported from Bash to TypeScript on Node 24 (#72), and the two
-# CLIs grow side by side until the port ends. `Tests` runs the Bash suite,
-# `bash tests/run.sh`, on Linux alone: it needs bash, git, python3, jq and
-# coreutils, all of which ubuntu-latest already carries. The Node suite runs
-# `npm run check` (the types, then `node --test`) on Linux and on Windows.
-# There is no build step, because Node 24 runs the TypeScript directly.
+# Nexus is TypeScript on Node 24 with no build step: Node runs the TypeScript
+# directly. `npm run check` checks the types, then runs every test with
+# `node --test`, on Linux and on Windows, because a Managed Link is a symlink
+# on one and a junction or a Managed Copy on the other (ADR 0010).
 #
 # Every test gets its own home under a temporary root and refuses to run
 # outside it, so nothing here reaches the runner's own files.
@@ -20,15 +18,6 @@ on:
   pull_request:
 
 jobs:
-  check:
-    name: Tests
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - run: bash tests/run.sh
-
   node:
     name: Types and tests on ${{ matrix.system }}
     runs-on: ${{ matrix.os }}

@@ -2,14 +2,11 @@
  * `nexus setup`: discover the Upstream Lock, take the Backup, Publish the
  * first Nexus Lock, make the Canonical Root own its skills, and link.
  *
- * These are the setup cases of `tests/run.sh` and
- * `tests/cases/global-instructions.sh` that need no fault point, carried
- * over. The cases that need one (a failed or corrupt copy, a failed
+ * These are the setup cases of the Bash suite that need no fault point,
+ * carried over. The cases that need one (a failed or corrupt copy, a failed
  * promotion, a late collision) are in `setup-faults.test.ts`, and a signal
  * in a held window in `interruption.test.ts`; the Backup's own cases are in
- * `backup.test.ts`. On Linux the same homes also
- * run through the Bash CLI, and the bytes and the trees are compared,
- * because the Bash CLI is the specification.
+ * `backup.test.ts`.
  *
  * On Windows a home's links are junctions, as `makeLink` makes them, a
  * Managed Link is a junction, and an Instruction Path a Managed Copy (ADR
@@ -18,7 +15,6 @@
  */
 import assert from 'node:assert/strict';
 import {
-  existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
@@ -41,9 +37,8 @@ import {
   WINDOWS,
 } from './helpers/links.ts';
 import { newHome, runNexus, testRoot } from './helpers/nexus.ts';
-import { assertSetupSameAsBash, runSetup, setupResidue } from './helpers/setup.ts';
+import { runSetup, setupResidue } from './helpers/setup.ts';
 
-const BASH_PARITY = WINDOWS && 'the Bash CLI runs on Linux alone';
 const NESTED = WINDOWS && 'a symlink inside a skill needs a privilege on Windows';
 
 /** Every tree of a home Setup may touch, as one snapshot. */
@@ -487,34 +482,5 @@ test('setup with absent Agent Homes makes two empty Backups', () => {
     assert.ok(lstatSync(join(home, backup)).isDirectory());
     assert.deepEqual(readdirSync(join(home, backup)), []);
   }
-});
-
-test('setup says the same bytes and leaves the same trees as the Bash CLI', { skip: BASH_PARITY }, () => {
-  const homes: readonly (readonly [string, (home: string) => void])[] = [
-    ['parity_happy', happyHome],
-    ['parity_backups', existingBackupsHome],
-    ['parity_conflicts', conflictingHome],
-    ['parity_invalid', invalidCandidateHome],
-    ['parity_none', noCandidateHome],
-    ['parity_broken_canonical', brokenCanonicalHome],
-    ['parity_agents_symlink', symlinkedAgentsHome],
-    ['parity_skill_md_symlink', symlinkedSkillFileHome],
-    ['parity_nested_broken', nestedBroken],
-    ['parity_nested_cyclic', nestedCyclic],
-    ['parity_nested_internal', nestedInternal],
-    ['parity_reserved', (home) => writeLock(join(home, '.agents', '.skill-lock.json'), ['nexus'])],
-    [
-      'parity_mutex',
-      (home) => {
-        writeLock(join(home, '.agents', '.skill-lock.json'), []);
-        mkdirSync(join(home, '.nexus', '.nexus-setup.lock'));
-      },
-    ],
-    [
-      'parity_initialized',
-      (home) => writeLock(join(home, '.nexus', 'skill-lock.json'), ['alpha']),
-    ],
-  ];
-  for (const [name, build] of homes) assertSetupSameAsBash(name, build);
 });
 

@@ -2,15 +2,12 @@
  * `nexus remove <name>`: run `npx skills remove` through a fake `npx`,
  * Publish the Upstream Lock it wrote, and link.
  *
- * These are the cases of `tests/cases/remove.sh`, carried over. No case
+ * These are the remove cases of the Bash suite, carried over. No case
  * reaches the network: the fake `npx` deletes from the Canonical Root and the
- * Upstream Lock as upstream would. On Linux the same homes also run through
- * the Bash CLI, and the bytes are compared, because the Bash CLI is the
- * specification.
+ * Upstream Lock as upstream would.
  *
- * A home starts reconciled by a real `nexus link`. Every case but the Bash
- * comparison runs on Windows too, where the fake is found as `npx.cmd` and a
- * link is a junction.
+ * A home starts reconciled by a real `nexus link`. Every case runs on
+ * Windows too, where the fake is found as `npx.cmd` and a link is a junction.
  */
 import assert from 'node:assert/strict';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -23,12 +20,8 @@ import {
   assertLinkTo,
   isAbsent,
   makeLink,
-  runBashWithFakes,
-  withoutToolNoise,
 } from './helpers/links.ts';
 import { fakeCalls, installFake, runNexus } from './helpers/nexus.ts';
-
-const WINDOWS = process.platform === 'win32';
 
 /** A home with `names` installed in both locks and the remove fake first on its PATH. */
 function removeHome(name: string, names: readonly string[]): string {
@@ -208,63 +201,6 @@ test(
     assert.ok(isAbsent(join(home, '.claude', 'skills', 'alpha')));
     assert.ok(isAbsent(join(home, '.codex', 'skills', 'alpha')));
     assert.deepEqual(nexusLock(home), upstreamLock(home));
-  },
-);
-
-test(
-  'remove says the same bytes and leaves the same files as the Bash CLI',
-  { skip: WINDOWS && 'the Bash CLI runs on Linux alone' },
-  () => {
-    type Scene = {
-      readonly args: readonly string[];
-      readonly mode?: string;
-      readonly names?: readonly string[];
-      readonly fill?: (home: string) => void;
-    };
-    const scenes: Readonly<Record<string, Scene>> = {
-      success: { args: ['alpha'] },
-      last: { args: ['alpha'], names: ['alpha'] },
-      failure: { args: ['alpha'], mode: 'failure' },
-      keep: { args: ['alpha'], mode: 'keep' },
-      leave_directory: { args: ['alpha'], mode: 'leave_directory' },
-      none: { args: [] },
-      two: { args: ['alpha', 'beta'] },
-      flag: { args: ['--all'] },
-      unsafe: { args: ['../escape'] },
-      control: { args: ['nexus-link'] },
-      custom: {
-        args: ['mine'],
-        fill: (home) => writeSkill(join(home, '.custom-skills'), 'mine'),
-      },
-      'not-installed': { args: ['ghost'] },
-      'link-fault': {
-        args: ['alpha'],
-        fill: (home) => writeSkill(join(home, '.codex', 'skills'), 'beta'),
-      },
-    };
-    for (const [name, scene] of Object.entries(scenes)) {
-      const bash = removeHome(`remove-bash-${name}`, scene.names ?? ['alpha', 'beta']);
-      const node = removeHome(`remove-node-${name}`, scene.names ?? ['alpha', 'beta']);
-      for (const home of [bash, node]) {
-        assert.equal(runNexus(home, ['link']).status, 0, name);
-        scene.fill?.(home);
-      }
-      const env: Readonly<Record<string, string>> =
-        scene.mode === undefined ? {} : { NEXUS_FAKE_NPX_MODE: scene.mode };
-      const expected = runBashWithFakes(bash, ['remove', ...scene.args], env);
-      const actual = runNexus(node, ['remove', ...scene.args], { env });
-      const same = (text: string, home: string) =>
-        text
-          .replaceAll(home, '<home>')
-          .replace(/\.nexus-install-lock\.[A-Za-z0-9]{6}/g, '<snapshot>');
-      assert.equal(actual.status, expected.status, name);
-      assert.equal(same(actual.stdout, node), same(expected.stdout, bash), name);
-      assert.equal(same(actual.stderr, node), same(withoutToolNoise(expected.stderr), bash), name);
-      assert.equal(same(agentTrees(node), node), same(agentTrees(bash), bash), name);
-      assert.deepEqual(nexusLock(node), nexusLock(bash), name);
-      assert.deepEqual(scratch(node), scratch(bash), name);
-      assert.deepEqual(fakeCalls(node, 'npx'), fakeCalls(bash, 'npx'), name);
-    }
   },
 );
 

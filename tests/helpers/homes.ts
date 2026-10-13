@@ -1,7 +1,7 @@
 /**
  * What a test puts in its home before it runs the CLI, and how it looks at
  * the home after: the Node forms of `custom_home`, `write_skill`,
- * `write_lock` and `snapshot_tree` in `tests/run.sh`.
+ * `write_lock` and `snapshot_tree` of the Bash suite.
  *
  * These write and read files only. They never import a Nexus module, so the
  * CLI stays the one seam (Seam 1).

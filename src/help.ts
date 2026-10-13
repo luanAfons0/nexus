@@ -1,13 +1,15 @@
 /**
  * `nexus help`: the text that names every command.
  *
- * The dispatch prints the same text on stderr as the usage refusal. Its bytes
- * are the Bash CLI's, because the Control Skills and the README quote it.
+ * The dispatch prints the same text on stderr as the usage refusal. It names
+ * the one CLI form that works on every system, the form the Control Skills
+ * and the README use: `node` with the entry under the Nexus home.
  */
 import type { Command } from './cli.ts';
 
 /** The help text, which is also the usage. */
 export const HELP_TEXT = `Usage: nexus <bootstrap|setup|link|install|update|remove|new|list|check|global|help>
+Run it as: node "$HOME/.nexus/src/nexus.js" <command>
 
 bootstrap    Link only the Nexus control skills.
 setup        Run one-time initialization with backups.
