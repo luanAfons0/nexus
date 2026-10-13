@@ -16,7 +16,6 @@
  * and there the fake is found as `npx.cmd`.
  */
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -31,16 +30,13 @@ import {
 import { delimiter, join } from 'node:path';
 import { test } from 'node:test';
 import { customHome, writeLock, writeSkill } from './helpers/homes.ts';
-import { agentTrees, assertLinkTo, withoutToolNoise } from './helpers/links.ts';
 import {
-  fakeCalls,
-  fakePath,
-  installFake,
-  newHome,
-  REPO_ROOT,
-  type Run,
-  runNexus,
-} from './helpers/nexus.ts';
+  agentTrees,
+  assertLinkTo,
+  runBashWithFakes,
+  withoutToolNoise,
+} from './helpers/links.ts';
+import { fakeCalls, installFake, newHome, runNexus } from './helpers/nexus.ts';
 
 const WINDOWS = process.platform === 'win32';
 const UNTIL_JUNCTIONS = WINDOWS && 'link refuses on Windows until it has junctions (#76)';
@@ -368,27 +364,6 @@ test(
     }
   },
 );
-
-/** Run the Bash CLI on a test home with its fake programs first on PATH. */
-function runBashWithFakes(
-  home: string,
-  args: readonly string[],
-  extra: Readonly<Record<string, string>>,
-): Run {
-  const result = spawnSync('bash', [join(REPO_ROOT, 'scripts', 'nexus'), ...args], {
-    cwd: home,
-    env: {
-      ...process.env,
-      ...extra,
-      PATH: fakePath(home, process.env.PATH ?? ''),
-      HOME: home,
-      NEXUS_HOME: join(home, '.nexus'),
-      LC_ALL: 'C',
-    },
-    encoding: 'utf8',
-  });
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
-}
 
 /** The Bash CLI's stderr without what `cp` says of its own when it fails. */
 function withoutCopyNoise(stderr: string): string {
