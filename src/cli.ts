@@ -8,6 +8,7 @@
  * argument is the command's own to read.
  */
 import { help, HELP_TEXT } from './help.ts';
+import { list } from './list.ts';
 import { error } from './output.ts';
 
 /** One command: it gets the arguments after its name and gives the exit code. */
@@ -39,7 +40,7 @@ const COMMANDS: ReadonlyMap<string, Entry> = new Map<string, Entry>([
   ['new', { run: notPorted('new'), takesArguments: true }],
   ['update', { run: notPorted('update'), takesArguments: true }],
   ['remove', { run: notPorted('remove'), takesArguments: true }],
-  ['list', { run: notPorted('list'), takesArguments: true }],
+  ['list', { run: list, takesArguments: true }],
   ['check', { run: notPorted('check'), takesArguments: true }],
   ['link', { run: notPorted('link'), takesArguments: false }],
   ['global', { run: notPorted('global'), takesArguments: true }],

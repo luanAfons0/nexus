@@ -98,7 +98,6 @@ test('a command not yet in the Node CLI says so and exits 1', () => {
     ['update'],
     ['remove'],
     ['new'],
-    ['list'],
     ['check'],
     ['global'],
   ];

@@ -10,6 +10,14 @@ export function info(message: string): void {
   process.stdout.write(`nexus: ${message}\n`);
 }
 
+/**
+ * Say one line of progress on stderr, where stdout must stay one JSON
+ * document (`list --json`).
+ */
+export function note(message: string): void {
+  process.stderr.write(`nexus: ${message}\n`);
+}
+
 /** Say one error on stderr. */
 export function error(message: string): void {
   process.stderr.write(`nexus: error: ${message}\n`);
