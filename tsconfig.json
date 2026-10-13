@@ -17,5 +17,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "src/**/*.js", "tests/**/*.ts"]
+  "include": ["mcp.ts", "src/**/*.ts", "src/**/*.js", "tests/**/*.ts"]
 }

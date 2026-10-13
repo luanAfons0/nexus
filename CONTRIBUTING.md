@@ -111,9 +111,9 @@ directory it marked as its own. `NEXUS_DEV_HOME` moves the sandbox elsewhere.
 ## The page, and FirstMate
 
 Nexus is a FirstMate Plugin (ADR 0008). The FirstMate Host serves the Plugin
-Page in `web/` and runs the Plugin Server `mcp`; Nexus opens no listener of
+Page in `web/` and runs the Plugin Server `mcp.ts`; Nexus opens no listener of
 its own. Changes to the CLI, the tests or the docs need none of this. Changes
-to `web/` or `mcp` need a running Host:
+to `web/` or `mcp.ts` need a running Host:
 
 1. Install FirstMate: <https://github.com/luanAfons0/FirstMate>.
 2. Register this clone as a Plugin, from the FirstMate repository:
