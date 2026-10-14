@@ -11,9 +11,11 @@ Nexus is a FirstMate Plugin: the FirstMate Host serves its page and runs its Plu
 
 Run one command and read its output:
 
-```bash
-python3 -c "import json,os;r=json.load(open(os.path.expanduser(os.environ.get('FIRSTMATE_HOME','~/.firstmate'))+'/runtime.json'));print('http://127.0.0.1:%d/p/nexus/?token=%s' % (r['port'], r['token']))"
+```sh
+node -e "const p=require('path');const h=process.env.FIRSTMATE_HOME||(process.platform==='win32'?p.join(process.env.APPDATA,'FirstMate'):p.join(require('os').homedir(),'.firstmate'));const r=JSON.parse(require('fs').readFileSync(p.join(h,'runtime.json'),'utf8'));console.log('http://127.0.0.1:'+r.port+'/p/nexus/?token='+r.token)"
 ```
+
+It reads `runtime.json` in the FirstMate home: `FIRSTMATE_HOME` when it is set, else `%APPDATA%\FirstMate` on Windows and `~/.firstmate` on Linux.
 
 It prints one line, in this exact form:
 
@@ -23,11 +25,7 @@ http://127.0.0.1:PORT/p/nexus/?token=TOKEN
 
 Print that URL to the user and end the skill. The printed URL is the contract: nothing here opens a browser, because from an agent sandbox that usually fails. The user opens it by hand, or opens FirstMate's Tray, from whose Index Page every Plugin is one click away. Do not poll anything.
 
-If the command fails, the FirstMate Host is not running. Report that and give the user this one command; never retry with a different one:
-
-```bash
-systemctl --user start firstmate
-```
+If the command fails, the FirstMate Host is not running. Report that and tell the user to open the FirstMate App, which starts the Host. Never retry with a different command. `firstmate status` tells the user whether the Host runs.
 
 The token is on the address once. The Host answers the first navigation with a cookie and sends the browser to `http://127.0.0.1:PORT/p/nexus/`, which is what makes that plain address worth bookmarking. A bookmark that carries a token is stale at the next Host start.
 

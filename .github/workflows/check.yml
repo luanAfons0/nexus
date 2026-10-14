@@ -1,11 +1,15 @@
 # The whole suite, run by a machine on every change.
 #
-# `bash tests/run.sh` is the one entry point, as AGENTS.md says. Every test
-# gets its own HOME under a temporary root and refuses to run outside it, so
-# nothing here reaches the runner's own files.
+# Nexus is TypeScript on Node 24 with no build step: Node runs the TypeScript
+# directly. `npm run check` checks the types, then runs every test with
+# `node --test`, on Linux and on Windows, because a Managed Link is a symlink
+# on one and a junction or a Managed Copy on the other (ADR 0010).
 #
-# It needs bash, git, python3, jq and coreutils, all of which ubuntu-latest
-# already carries. There is nothing to install and nothing to build.
+# Every test gets its own home under a temporary root and refuses to run
+# outside it, so nothing here reaches the runner's own files.
+#
+# Each job name is a required check in the repository ruleset: a rename must
+# update the ruleset in the same change.
 name: Check
 
 on:
@@ -14,11 +18,26 @@ on:
   pull_request:
 
 jobs:
-  check:
-    name: Tests
-    runs-on: ubuntu-latest
+  node:
+    name: Types and tests on ${{ matrix.system }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: Linux
+            os: ubuntu-latest
+          - system: Windows
+            os: windows-latest
 
     steps:
       - uses: actions/checkout@v7
 
-      - run: bash tests/run.sh
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run check

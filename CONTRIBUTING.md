@@ -1,7 +1,7 @@
 # Contributing to Nexus
 
 Nexus owns an Agent Context: the Skills and the Global Instructions that
-Claude and Codex load before they read a prompt. It moves symbolic links
+Claude and Codex load before they read a prompt. It moves Managed Links
 around inside a person's home directory. A mistake here costs somebody the
 setup they work in every day, so this file is longer than a project of this
 size usually needs.
@@ -22,92 +22,106 @@ size usually needs.
 
 ## What you need
 
-Bash 5, GNU coreutils, `jq`, Python 3 and Git. Also `npx`, if you touch
-installing or updating: Nexus calls upstream `npx skills` for those two
-operations and for nothing else.
+Node 24 or newer, npm and Git. Also `gh`, if you touch `nexus check`. Nexus
+calls upstream `npx skills` to install, update and remove a skill, and for
+nothing else. The suite runs fake `gh` and `npx` programs in their place.
 
-Nexus is developed and tested on Linux and on WSL. The scripts assume GNU
-coreutils, so macOS with the BSD tools is untried rather than unsupported. If
-you run the suite there, open an issue with what breaks.
+Nexus is TypeScript on Node 24, with no build step: Node runs the `.ts` files
+directly. `npm install` brings the two development dependencies, `typescript`
+and `@types/node`. Nexus has no runtime dependency.
+
+Nexus is developed and tested on Linux, on WSL and on Windows. macOS is
+untried rather than unsupported. If you run the suite there, open an issue
+with what breaks.
 
 ## Get the code
 
 ```bash
 git clone https://github.com/luanAfons0/nexus.git
 cd nexus
-bash tests/run.sh
+npm install
+npm run check
 ```
 
 The clone does not have to live at `~/.nexus`. The CLI finds its own files
-from the path of `scripts/nexus`, and the home directory it manages comes from
-`$HOME`. An installed Nexus lives at `~/.nexus`; a clone you develop in can
-live anywhere.
+from the path of `src/nexus.js`, and the home directory it manages comes from
+`$HOME` (`%USERPROFILE%` on Windows). An installed Nexus lives at `~/.nexus`;
+a clone you develop in can live anywhere.
 
 Run every command from the repository root.
 
 ## Run the tests
 
 ```bash
-bash tests/run.sh
+npm run check
 ```
 
-That is the whole suite and its only entry point. It prints one line per
-behaviour and ends with a count, which has to read `0 failed`:
-
-```
-96 passed, 0 failed
-```
+`npm run check` is the whole suite. It checks the types with `tsc --noEmit`,
+then runs every test with `node --test`, on Linux and on Windows. Its tests
+drive `node src/nexus.js` through `tests/helpers/nexus.ts`, with fake `gh` and
+`npx` programs first on PATH. `node --test tests/link.test.ts` runs one file
+while you work on it. The suite must end with no failed test.
 
 Every test builds its own home directory under a temporary root and drives the
 CLI over its command line, exactly as a person does. Two properties keep that
 honest, and a change must keep both:
 
-- **No test sources a library of the CLI to reach inside it.** The seam is the
+- **No test imports a Nexus module to reach inside it.** The seam is the
   command line and the files the CLI writes into a home directory.
-- **A test never touches a real home.** `run_nexus_overridden` refuses to run
-  against anything that is not a validated fake home under the temporary root.
+- **A test never touches a real home.** `runNexus` in
+  `tests/helpers/nexus.ts` refuses to run against anything that is not a
+  marked test home under the temporary root.
 
 Where a new test goes:
 
-- A behaviour of one subcommand belongs in `tests/cases/<subcommand>.sh`. Each
-  file defines its test functions and appends their names to `CASE_TESTS`.
-- Anything that spans subcommands, or that drives Setup, belongs in
-  `tests/run.sh` next to its relatives.
+- A behaviour of one subcommand belongs in the `tests/<area>.test.ts` file of
+  its area, such as `tests/link.test.ts` or `tests/check.test.ts`.
+- The text of the README and of the Control Skills is checked by
+  `tests/documentation.test.ts`.
 - A failure you need to force — an interrupted Setup, a failing upstream
-  command, a late Collision — belongs in `tests/faults.sh`, which injects it
-  by overriding one shell function.
+  command, a late Collision — is a named fault point. The CLI honours
+  `NEXUS_FAULT=<name>` only with `NEXUS_TEST_MODE=1` and the test-home marker
+  file `.nexus-test-home` in the home, so a fault can never reach a person's
+  Agent Context. Each point is one `if (fault(...))` line at its site, in the
+  terms of `src/fault.ts`. What a point changes in a tree, and the names of
+  the files it touches, go in `src/fault-changes.ts`, never at the site. Its
+  case belongs in `tests/faults.test.ts`, `tests/setup-faults.test.ts` or
+  `tests/interruption.test.ts`.
 
 A test name is a sentence about behaviour, not about code:
-`setup_canonical_late_collision_is_preserved`.
+`'a Foreign Entry at a desired link path is a Collision and is kept'`.
 
 ## Try a change by hand, safely
 
 Never point a half-finished change at your own Agent Context. Use the sandbox:
 
 ```bash
-scripts/dev-home bootstrap     # link the Control Skills, in the sandbox
-scripts/dev-home list          # what the sandbox home holds
-scripts/dev-home setup         # the real Setup, against throwaway files
-scripts/dev-home --reset list  # start the sandbox home again from empty
+node scripts/dev-home.ts bootstrap     # link the Control Skills, in the sandbox
+node scripts/dev-home.ts list          # what the sandbox home holds
+node scripts/dev-home.ts setup         # the real Setup, against throwaway files
+node scripts/dev-home.ts --reset list  # start the sandbox home again from empty
 ```
 
-`scripts/dev-home` runs `scripts/nexus` with `$HOME` pointed at
-`.scratch/home` inside the repository, which Git ignores. Every path Nexus
-touches is derived from `$HOME`, so the Canonical Root, the Custom Root, both
+`node scripts/dev-home.ts` runs `src/nexus.js` with the Node that runs it. It
+points `HOME` and `USERPROFILE` at `.scratch/home` inside the repository,
+which Git ignores, and `NEXUS_HOME` at `.nexus` in it. Every path Nexus
+touches is derived from the home, so the Canonical Root, the Custom Root, both
 Native Skill Roots and both Instruction Paths all land in the sandbox. It
-refuses to run if the sandbox would hold your real home, and it deletes only a
-directory it marked as its own. `NEXUS_DEV_HOME` moves the sandbox elsewhere.
+works on Linux and on Windows. It refuses to run if the sandbox would hold
+your real home, and it deletes only a directory it marked as its own.
+`NEXUS_DEV_HOME` moves the sandbox elsewhere.
 
 ## The page, and FirstMate
 
 Nexus is a FirstMate Plugin (ADR 0008). The FirstMate Host serves the Plugin
-Page in `web/` and runs the Plugin Server `mcp`; Nexus opens no listener of
+Page in `web/` and runs the Plugin Server `mcp.ts`; Nexus opens no listener of
 its own. Changes to the CLI, the tests or the docs need none of this. Changes
-to `web/` or `mcp` need a running Host:
+to `web/` or `mcp.ts` need a running Host:
 
-1. Install FirstMate: <https://github.com/luanAfons0/FirstMate>.
-2. Register this clone as a Plugin, from the FirstMate repository:
-   `node src/cli.ts add nexus /absolute/path/to/your/nexus/clone`.
+1. Install FirstMate: <https://github.com/luanAfons0/FirstMate>. Open the
+   FirstMate App, which starts the Host.
+2. Register this clone as a Plugin, with FirstMate's command line:
+   `firstmate add nexus /absolute/path/to/your/nexus/clone`.
 3. Open `http://127.0.0.1:4747/p/nexus/`.
 
 The Host serves the clone you registered, so an edit in `web/` is one reload
@@ -116,11 +130,18 @@ the Plugin Server touches no file itself. Keep it that way.
 
 ## How the code is written
 
-- Plain Bash functions, single quotes, two-space indent, lines under 100
-  columns. There is no formatter; match the file you are in.
-- **No new dependencies**, at runtime or for development. Bash, coreutils,
-  `jq` and Python 3 are the whole toolbox, and upstream `npx skills` is called
-  only where it already is.
+- TypeScript that Node 24 runs directly. A file starts with a header comment:
+  what the file is, then why it is that way. Every exported name carries a
+  one-line `/** … */`.
+- Plain functions and object literals. No classes, no default exports, no
+  inheritance, no framework. `readonly` on every field of an exported type.
+- Node built-ins carry the `node:` prefix. Local imports carry the `.ts`
+  extension, because Node runs the TypeScript directly.
+- Single quotes, semicolons, two-space indent, lines under 100 columns. There
+  is no formatter; match the file you are in.
+- **No new dependencies**, at runtime or for development. Nexus has no runtime
+  dependency, and `typescript` and `@types/node` are its only development
+  dependencies. Upstream `npx skills` is called only where it already is.
 - Comments say **why**, in the project's words, and name the ADR when a
   decision is behind the code (`(ADR 0004)`).
 - Errors are sentences a person can act on, and name the path they are about:
@@ -157,9 +178,10 @@ docs together. No attribution, co-author or "generated by" lines.
 ## Pull requests
 
 1. Branch from `main`. Name it after the issue: `issue-67-late-collision`.
-2. Leave `bash tests/run.sh` green. The `Check` workflow runs that one command
-   on `ubuntu-latest` for every pull request, and `main` is protected by a
-   ruleset that keeps it green.
+2. Leave `npm run check` green. The `Check` workflow runs it on Linux and on
+   Windows, in the jobs `Types and tests on Linux` and `Types and tests on
+   Windows`, for every pull request, and `main` is protected by a ruleset that
+   keeps it green.
 3. Update `README.md` when you change a command, a path, an address or an
    environment variable.
 4. Open the pull request with `gh pr create --base main`, and write
@@ -174,8 +196,8 @@ and let it be discussed before you write the code.
 ## Issues
 
 Issues live in GitHub Issues for `luanAfons0/nexus`. A bug report is most
-useful with the exact command, its whole output, and the versions of Bash,
-`jq` and Python 3.
+useful with the exact command, its whole output, the versions of Node, Git and
+`gh`, and the system: Linux, macOS, Windows or WSL.
 
 Triage uses five labels: `needs-triage`, `needs-info`, `ready-for-agent`,
 `ready-for-human` and `wontfix`. See

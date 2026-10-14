@@ -3,14 +3,18 @@
 Nexus is the context manager for Claude and Codex. It gives both agents one
 owner for their Agent Context: the skills of all three kinds and the Global
 Instructions (`~/.custom-skills/GLOBAL.md`), which it links into each agent's
-Instruction Path. See `README.md` for behavior, safety contract, and recovery. Run `bash tests/run.sh` before a
-commit.
+Instruction Path. See `README.md` for behavior, safety contract, and recovery.
 
-Try a change with `scripts/dev-home <nexus arguments>`, which runs the CLI
-against a sandbox home under `.scratch/`. Never drive a half-finished change
-against the real Agent Context. `CONTRIBUTING.md` holds the rest: where a new
-test goes, how the code is written, Conventional Commits with the subject in
-the project's own words, and the safety properties a change may not weaken.
+Nexus is TypeScript on Node 24, with no build step and no runtime dependency.
+The CLI is `node src/nexus.js <command>`. Run `npm run check` (`tsc --noEmit`,
+then `node --test`) before a commit; `node --test tests/<area>.test.ts` runs
+one file while you work.
+
+Try a change with `node scripts/dev-home.ts <nexus arguments>`, which runs the
+CLI against a sandbox home under `.scratch/`. Never drive a half-finished
+change against the real Agent Context. `CONTRIBUTING.md` holds the rest: where
+a new test goes, how the code is written, Conventional Commits with the subject
+in the project's own words, and the safety properties a change may not weaken.
 
 ## Agent skills
 

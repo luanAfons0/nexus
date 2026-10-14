@@ -23,11 +23,10 @@ is quietly overridden is worse than one that is argued with.
 
 ## Checks
 
-- [ ] `bash tests/run.sh` passes locally, and the last line says so.
-- [ ] New behaviour has a test, in `tests/cases/<subcommand>.sh` or next to
-      its relatives in `tests/run.sh`.
-- [ ] I tried it by hand with `scripts/dev-home`, not against my real Agent
-      Context.
+- [ ] `npm run check` passes locally.
+- [ ] New behaviour has a test, in the `tests/<area>.test.ts` file of its area.
+- [ ] I tried it by hand with `node scripts/dev-home.ts`, not against my real
+      Agent Context.
 - [ ] `README.md` is updated, if a command, a path, an address or an
       environment variable changed.
 - [ ] No new dependency, no new network listener, and no weakened safety

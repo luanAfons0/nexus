@@ -1,0 +1,280 @@
+/**
+ * The Backup: Setup's copy of each Agent Home, `~/.claude` and `~/.codex`,
+ * to `~/.claude-backup` and `~/.codex-backup`, taken before Setup changes
+ * anything an agent reads.
+ *
+ * The Backup is the safety contract of Setup, so it keeps every guarantee of
+ * the Bash CLI (`backup_transaction`):
+ * - it is a copy, never a move: the Agent Home is left as it was;
+ * - it never overwrites: an existing Backup refuses Setup, and each
+ *   promotion is a rename onto nothing;
+ * - it is verified: a manifest of the source before the copy, of the copy,
+ *   and of the source after must agree, or the copy is refused;
+ * - a source that changed during the copy is copied once more, and a second
+ *   change refuses Setup and asks a person to close the agents;
+ * - both copies are made in one transaction directory beside the home and
+ *   promoted together: if the second promotion fails, the first is taken
+ *   back, and if that fails too, every path is named for recovery;
+ * - each promoted root must still be the tree that was verified: the same
+ *   device, inode and type (`identity.ts`).
+ */
+import { mkdirSync, mkdtempSync, readdirSync, rmdirSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import { type Manifest, readManifest, sameManifest } from './backup-manifest.ts';
+import { isPhysicalDirectory, isPresent } from './entries.ts';
+import { fault, faultChange, recordCall, seamFailure } from './fault.ts';
+import { entryIdentity } from './identity.ts';
+import { moveOntoNothing } from './move.ts';
+import { error } from './output.ts';
+import {
+  type Checkpoint,
+  isOwnedDir,
+  removeOwnedDir,
+  removeTree,
+  type Residue,
+} from './residue.ts';
+import { COPY_TIME_UNIT, copyTree } from './tree-copy.ts';
+
+/** The prefix of the transaction directory, in the home directory. */
+export const TRANSACTION_PREFIX = '.nexus-setup-backup.';
+
+/** What the Backup gave: both Backups, or a refusal already said. */
+export type BackupResult =
+  | { readonly ok: true; readonly claude: string; readonly codex: string }
+  | { readonly ok: false };
+
+/** The faults that change the Claude copy once it is made. */
+const COPY_CHANGES = ['backup_root_corrupt', 'backup_child_corrupt', 'backup_symlink_corrupt'];
+
+/** The faults that put something at the Claude Backup's path before its promotion. */
+const DESTINATION_CHANGES = ['backup_destination_empty', 'backup_destination_full'];
+
+/** The faults that change the Claude home after its first copy. */
+const SOURCE_CHANGES = [
+  'backup_retry_once',
+  'backup_source_mode',
+  'backup_source_time',
+  'backup_source_symlink',
+  'backup_source_relink',
+];
+
+/** How one attempt at one Agent Home ended. */
+type Verdict = 'verified' | 'failed' | 'changed';
+
+/**
+ * Take the Backup of both Agent Homes under `home`. Every refusal is said
+ * here; the transaction directory is registered in `residue` while it lives.
+ */
+export async function backupTransaction(
+  home: string,
+  residue: Residue,
+  checkpoint: Checkpoint,
+): Promise<BackupResult> {
+  const claudeBackup = join(home, '.claude-backup');
+  const codexBackup = join(home, '.codex-backup');
+  for (const backup of [claudeBackup, codexBackup]) {
+    if (isPresent(backup)) {
+      error(`backup already exists: ${backup}`);
+      return { ok: false };
+    }
+  }
+  let tx: string;
+  try {
+    tx = mkdtempSync(join(home, TRANSACTION_PREFIX));
+  } catch {
+    error('cannot reserve setup backup transaction');
+    return { ok: false };
+  }
+  if (!isOwnedDir(tx, home, TRANSACTION_PREFIX)) {
+    error(`invalid setup backup transaction: ${tx}`);
+    return { ok: false };
+  }
+  residue.temp(tx);
+  const abandon = (): { readonly ok: false } => {
+    if (removeOwnedDir(tx, home, TRANSACTION_PREFIX)) residue.forget(tx);
+    return { ok: false };
+  };
+
+  const claudeTmp = join(tx, 'claude-backup');
+  const codexTmp = join(tx, 'codex-backup');
+  for (const attempt of [1, 2]) {
+    if (attempt === 2) {
+      removeTree(claudeTmp);
+      removeTree(codexTmp);
+    }
+    let verdict = verifyBackupAttempt(join(home, '.claude'), claudeTmp, attempt);
+    await checkpoint();
+    if (verdict === 'verified') {
+      verdict = verifyBackupAttempt(join(home, '.codex'), codexTmp, attempt);
+      await checkpoint();
+    }
+    if (verdict === 'verified') break;
+    if (verdict === 'failed') {
+      error('cannot create complete agent backups');
+      return abandon();
+    }
+    if (attempt === 2) {
+      error('agent state changed during backup; close Claude and Codex and retry');
+      return abandon();
+    }
+  }
+
+  const claudeIdentity = verifiedIdentity(claudeTmp);
+  const codexIdentity = verifiedIdentity(codexTmp);
+  if (claudeIdentity === undefined || codexIdentity === undefined) return { ok: false };
+  if (!backupMove(claudeTmp, claudeBackup)) {
+    error('cannot promote Claude backup');
+    return abandon();
+  }
+  if (!backupMove(codexTmp, codexBackup)) {
+    error('cannot promote Codex backup');
+    if (!backupMove(claudeBackup, claudeTmp)) {
+      residue.forget(tx);
+      residue.recovery(tx);
+      error(`backup recovery retained: ${claudeBackup}; ${tx} (Codex backup: ${codexTmp})`);
+      return { ok: false };
+    }
+    return abandon();
+  }
+  if (isPresent(claudeTmp)) {
+    error('Claude backup promotion did not consume verified tree');
+    return { ok: false };
+  }
+  if (isPresent(codexTmp)) {
+    error('Codex backup promotion did not consume verified tree');
+    return { ok: false };
+  }
+  if (
+    entryIdentity(claudeBackup, false) !== claudeIdentity ||
+    entryIdentity(codexBackup, false) !== codexIdentity
+  ) {
+    error('backup promotion changed verified tree identity');
+    return { ok: false };
+  }
+  try {
+    rmdirSync(tx);
+  } catch {
+    error(`setup backup transaction retained: ${tx}`);
+    return { ok: false };
+  }
+  residue.forget(tx);
+  return { ok: true, claude: claudeBackup, codex: codexBackup };
+}
+
+/**
+ * Copy one Agent Home and check the copy (`verify_backup_attempt`):
+ * `failed` when a manifest or the copy could not be made, `changed` when
+ * the copy differs from the source or the source changed meanwhile.
+ */
+function verifyBackupAttempt(source: string, copied: string, attempt: number): Verdict {
+  const before = backupManifest(source, true);
+  if (before === undefined) return 'failed';
+  if (!copyAgentTree(source, copied, attempt)) return 'failed';
+  const copy = backupManifest(copied, true);
+  if (copy === undefined) return 'failed';
+  const absent = !isPresent(source);
+  if (absent) {
+    // An absent root is an empty Backup: the copy must be one empty directory.
+    if (!isPhysicalDirectory(copied) || !isEmptyDirectory(copied)) return 'changed';
+  } else if (!sameManifest(before, copy, { digests: true, timeUnit: COPY_TIME_UNIT })) {
+    // The full manifest holds every field of the state one, so this one
+    // comparison is the Bash CLI's two (`.full` and `.state`).
+    error(`backup verification failed for ${source}`);
+    return 'changed';
+  }
+  const after = backupManifest(source, false);
+  if (after === undefined) return 'failed';
+  if (!sameManifest(before, after, { digests: false, timeUnit: 1n })) {
+    error(`backup verification failed for ${source}`);
+    return 'changed';
+  }
+  return 'verified';
+}
+
+/** The manifest of `root`, or undefined after its sentence is said. */
+function backupManifest(root: string, digests: boolean): Manifest | undefined {
+  const manifestKind = digests ? 'full' : 'state';
+  if (fault('backup_manifest_count')) recordCall('manifest-calls', `${root}|${manifestKind}`);
+  const read = readManifest(root, digests);
+  if (read.ok) return read.manifest;
+  process.stderr.write(`backup manifest: ${read.error}\n`);
+  return undefined;
+}
+
+/**
+ * Copy the Agent Home `source` into `destination` (`copy_agent_tree`), on
+ * the Backup's attempt `attempt` (Bash `BACKUP_ATTEMPT`). The fault points
+ * fail the copy, corrupt it, or change the source while it is copied.
+ */
+function copyAgentTree(source: string, destination: string, attempt: number): boolean {
+  const claude = basename(source) === '.claude';
+  const first = claude && attempt === 1;
+  if (fault('backup_copy_fail') && claude) return seamFailure('backup copy failed');
+  if (fault('backup_copy_false')) return makeDirectory(destination);
+  if (fault('backup_source_content') && first) faultChange(source);
+  if (!copyHome(source, destination)) return false;
+  if (fault('backup_copy_corrupt')) faultChange(destination);
+  if (fault(...COPY_CHANGES) && claude) faultChange(destination);
+  if (fault(...SOURCE_CHANGES) && first) faultChange(source);
+  if (fault('backup_retry_always') && claude) faultChange(source, attempt);
+  return true;
+}
+
+/** Copy the Agent Home `source` into `destination`. An absent source leaves an empty Backup. */
+function copyHome(source: string, destination: string): boolean {
+  if (!makeDirectory(destination)) return false;
+  if (!isPresent(source)) return true;
+  if (!isPhysicalDirectory(source)) {
+    error(`agent root is not a directory: ${source}`);
+    return false;
+  }
+  const copied = copyTree(source, destination, { dereference: false });
+  if (!copied.ok) error(copied.error);
+  return copied.ok;
+}
+
+/** Make the directory `path` and its parents (`mkdir -p`); false when it failed. */
+function makeDirectory(path: string): boolean {
+  try {
+    mkdirSync(path, { recursive: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Move a verified tree to `destination`, which must be free, and check that
+ * `source` is gone (`backup_move`, `mv -Tn`). The move refuses anything at
+ * `destination`, even an empty directory that appeared a moment before, so a
+ * Backup is never replaced (`move.ts`).
+ */
+function backupMove(source: string, destination: string): boolean {
+  const codex = basename(destination) === '.codex-backup';
+  const claude = basename(destination) === '.claude-backup';
+  const rollback = basename(source) === '.claude-backup';
+  const home = dirname(destination);
+  if (fault('backup_promote_second') && codex) return seamFailure('second backup promotion failed');
+  if (fault('backup_rollback') && (codex || rollback)) return seamFailure('backup rollback failed');
+  if (fault(...DESTINATION_CHANGES) && claude) faultChange(destination);
+  if (!moveOntoNothing(source, destination)) return false;
+  if (isPresent(source)) return false;
+  if (fault('backup_final_corrupt') && codex) faultChange(join(home, '.claude-backup'));
+  if (fault('backup_promote_ambiguous') && claude) faultChange(destination);
+  return true;
+}
+
+/** The identity of a verified tree before its promotion; said when it cannot be read. */
+function verifiedIdentity(path: string): string | undefined {
+  const identity = entryIdentity(path, false);
+  if (identity === undefined) error(`cannot identify verified backup tree: ${path}`);
+  return identity;
+}
+
+function isEmptyDirectory(path: string): boolean {
+  try {
+    return readdirSync(path).length === 0;
+  } catch {
+    return false;
+  }
+}

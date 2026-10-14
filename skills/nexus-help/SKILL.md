@@ -14,17 +14,17 @@ First, ask the user one choice question with exactly two options:
 
 Then run exactly one of these commands, based on the answer:
 
-```bash
-~/.nexus/scripts/nexus list
+```sh
+node "$HOME/.nexus/src/nexus.js" list
 ```
 
-```bash
-~/.nexus/scripts/nexus help
+```sh
+node "$HOME/.nexus/src/nexus.js" help
 ```
 
 Report the output as a table (for `list`) or a list (for `help`). Do not run both commands, and do not run anything else.
 
-The last line of `list` is not a skill row. It reports the Global Instructions: the Owner file `~/.custom-skills/GLOBAL.md` and the state of each Instruction Path (`~/.claude/CLAUDE.md` for Claude, `~/.codex/AGENTS.md` for Codex). Report it under the table. `linked` means the path is a Managed Link to the Owner file; `foreign` means something else sits there, usually an instruction file that has not been moved into the Custom Root yet; `absent` means nothing is at the path; `no home` means that agent is not installed. When the Owner is reported as `absent`, tell the user that creating `~/.custom-skills/GLOBAL.md` and running `/nexus-link` gives both agents one shared instruction file.
+The last line of `list` is not a skill row. It reports the Global Instructions: the Owner file `~/.custom-skills/GLOBAL.md` and the state of each Instruction Path (`~/.claude/CLAUDE.md` for Claude, `~/.codex/AGENTS.md` for Codex). Report it under the table. `linked` means the path is a Managed Link to the Owner file (on Windows, a Managed Copy of it); `foreign` means something else sits there, usually an instruction file that has not been moved into the Custom Root yet; `absent` means nothing is at the path; `no home` means that agent is not installed. When the Owner is reported as `absent`, tell the user that creating `~/.custom-skills/GLOBAL.md` and running `/nexus-link` gives both agents one shared instruction file.
 
 When you report `list` output, explain that "version" here means the upstream folder hash and the `updatedAt` time; Nexus has no semver. Custom and control skills show a dash for source, hash, and time because they are not upstream installs.
 

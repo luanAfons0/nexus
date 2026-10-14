@@ -1,0 +1,96 @@
+/**
+ * The Global Instructions as Nexus reports them: whether the Owner,
+ * `GLOBAL.md`, is present, and the state of each Instruction Path.
+ *
+ * Reading only. An Instruction Path is in one of four states: `linked` (a
+ * Managed Link that reaches the Owner: a symlink on Linux and macOS, a
+ * Managed Copy on Windows, as the Link primitive reads it), `foreign`
+ * (anything else there), `absent` (nothing there, Agent Home present) or
+ * `no home` (the Agent Home is absent). The words and the JSON shape are the
+ * Bash CLI's (`instruction_path_state`, `global_instructions_json`), which
+ * `list --json`, `global show --json` and the Plugin Page read.
+ */
+import { createHash } from 'node:crypto';
+import { lstatSync, readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { reachesDirectory } from './entries.ts';
+import { type LinkPrimitive, linkPrimitive } from './link-primitive.ts';
+import type { Paths } from './paths.ts';
+
+/** The state of one Instruction Path. */
+export type InstructionPathState = 'no home' | 'absent' | 'linked' | 'foreign';
+
+/** The Global Instructions as one JSON object. */
+export type GlobalInstructions = {
+  /** The path of the Owner, `GLOBAL.md`, present or not. */
+  readonly owner: string;
+  /** True when the Owner is a regular file. */
+  readonly present: boolean;
+  /** The SHA-256 of the Owner's bytes, in hex, or null when it is absent. */
+  readonly sha256: string | null;
+  /** The Owner's text; only when it was asked for, and null when absent. */
+  readonly content?: string | null;
+  /** The state of Claude's Instruction Path. */
+  readonly claude: InstructionPathState;
+  /** The state of Codex's Instruction Path. */
+  readonly codex: InstructionPathState;
+};
+
+/** True when the Owner of the Global Instructions is a regular file. */
+export function globalInstructionsPresent(paths: Paths): boolean {
+  try {
+    return lstatSync(paths.globalInstructions).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The state of the Instruction Path `path`, whose Owner is `owner`. It is
+ * `linked` when the Link primitive says the entry already reaches the Owner
+ * (`links_exactly_to`), or when it is a Managed Copy (ADR 0010): one that a
+ * hand edit of `GLOBAL.md` left behind is still Nexus's own, and the next
+ * Link brings it in step. A copy edited by hand reads `foreign`, as Link
+ * treats it.
+ */
+export function instructionPathState(
+  primitive: LinkPrimitive,
+  path: string,
+  owner: string,
+): InstructionPathState {
+  if (!reachesDirectory(dirname(path))) return 'no home';
+  try {
+    lstatSync(path);
+  } catch {
+    return 'absent';
+  }
+  return primitive.reaches(path, owner) || primitive.isManagedCopy(path) ? 'linked' : 'foreign';
+}
+
+/**
+ * The Global Instructions as one object, in the key order the Bash CLI
+ * writes: `owner, present, sha256, [content,] claude, codex`. `list --json`
+ * leaves `content` out; `global show --json` puts it in.
+ */
+export function readGlobalInstructions(paths: Paths, withContent: boolean): GlobalInstructions {
+  const bytes = globalInstructionsPresent(paths) ? readFileSync(paths.globalInstructions) : null;
+  const sha256 = bytes === null ? null : createHash('sha256').update(bytes).digest('hex');
+  const owner = paths.globalInstructions;
+  const primitive = linkPrimitive(paths);
+  const claude = instructionPathState(primitive, paths.claudeInstructions, owner);
+  const codex = instructionPathState(primitive, paths.codexInstructions, owner);
+  if (!withContent) return { owner, present: bytes !== null, sha256, claude, codex };
+  // Invalid UTF-8 becomes U+FFFD, as `jq -Rs` reads it.
+  const content = bytes === null ? null : bytes.toString('utf8');
+  return { owner, present: bytes !== null, sha256, content, claude, codex };
+}
+
+/** The last line of `nexus list`: the Owner and both Instruction Paths. */
+export function globalInstructionsLine(paths: Paths): string {
+  const owner = paths.globalInstructions;
+  const shown = globalInstructionsPresent(paths) ? owner : `absent (${owner})`;
+  const primitive = linkPrimitive(paths);
+  const claude = instructionPathState(primitive, paths.claudeInstructions, owner);
+  const codex = instructionPathState(primitive, paths.codexInstructions, owner);
+  return `global instructions: ${shown} (claude: ${claude}, codex: ${codex})`;
+}

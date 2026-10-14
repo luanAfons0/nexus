@@ -4,6 +4,9 @@
 
 Accepted
 
+Amended on Windows by ADR 0010: there each Instruction Path is a Managed
+Copy of `GLOBAL.md`, not a symlink.
+
 ## Context
 
 Claude reads `~/.claude/CLAUDE.md` and Codex reads `~/.codex/AGENTS.md` at

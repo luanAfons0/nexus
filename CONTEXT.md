@@ -94,16 +94,25 @@ Nexus places Managed Links here and owns nothing else inside it.
 _Avoid_: agent skills folder, target root, live root
 
 **Managed Link**:
-A relative symlink at a Native Skill Root entry or an Instruction Path that
-Nexus created and that resolves into an Owner. Nexus may create, update, or
-remove only these.
+What Nexus places at a Native Skill Root entry or an Instruction Path, and
+that resolves into an Owner. On Linux and macOS it is a relative
+symlink. On Windows it is a junction to an Owner directory, or a Managed Copy
+of an Owner file (ADR 0010). Nexus may create, update, or remove only these.
 _Avoid_: Nexus-managed link, reconciled link, symlink
+
+**Managed Copy**:
+On Windows, the form a Managed Link takes at an Instruction Path: a regular
+file that Nexus wrote with the bytes of `GLOBAL.md` and whose hash it
+recorded. A file whose hash is not the one Nexus recorded is a Foreign Entry,
+even with the same bytes.
+_Avoid_: copy, mirror, synced file, hard link
 
 **Foreign Entry**:
 Anything at a Native Skill Root entry or an Instruction Path that is not a
 Managed Link: a physical
-directory or file, a symlink to an unrelated place, or Codex's `.system`
-directory. Nexus preserves it and never claims or deletes it.
+directory or file, a symlink or junction to an unrelated place, a Managed
+Copy edited by hand, or Codex's `.system` directory. Nexus preserves it and
+never claims or deletes it.
 _Avoid_: physical entry, unrelated link, external link, non-managed entry
 
 **Stale Link**:
@@ -124,7 +133,7 @@ _Avoid_: global rules, rules, memory, system prompt, CLAUDE.md, AGENTS.md
 **Instruction Path**:
 The native file one agent reads its Global Instructions from
 (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`). Nexus places a Managed Link
-here.
+here: a symlink, or on Windows a Managed Copy.
 _Avoid_: global memory file, rules file, agent instructions file
 
 ### Lock
@@ -222,9 +231,11 @@ secret: the Host admits it with a cookie set on the first navigation.
 _Avoid_: Web UI, dashboard, web app, admin page, GUI
 
 **Plugin Server**:
-The executable `mcp` in the Nexus home. The Host runs it over stdio and
+`mcp.ts` in the Nexus home. The Host runs it with its own Node over stdio and
 speaks MCP to it, and its tools are everything the page can do. Every tool is
-one subprocess call to the Nexus CLI, so the server touches no file itself.
+one subprocess call to the Nexus CLI, so the server touches no file itself. In
+a FirstMate `wsl` Place the Host starts `mcp` instead, a two-line `sh`
+launcher that hands `mcp.ts` to the `node` on PATH.
 _Avoid_: backend, API, ui server, adapter
 
 **Envelope**:

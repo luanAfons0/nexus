@@ -1,0 +1,487 @@
+/**
+ * The Link primitive: the one module that knows the system (spec #72).
+ *
+ * Link and Bootstrap decide what to create, keep, replace or remove; this
+ * module does the work that differs by system, behind six verbs. Everything
+ * above it is system-free.
+ *
+ * On Linux and macOS a Managed Link is a relative symlink, staged under a
+ * temporary name beside its path and renamed over it, so an agent never
+ * sees a half-made link. An entry is managed when its link text reaches into
+ * an Owner root (the Canonical Root, the Control Skills' root in the Nexus
+ * home, or the Custom Root), read lexically or resolved, as the Bash CLI's
+ * `is_managed_link` read it.
+ *
+ * On Windows a symlink needs Developer Mode or an administrator, so Nexus
+ * never makes one there (ADR 0010). A Managed Link to an Owner directory is a
+ * junction, which needs neither; Node reads a junction as a symbolic link, so
+ * the managed rule is the same. A Managed Link to an Owner file, the
+ * Global Instructions, is a Managed Copy: a regular file whose bytes equal
+ * the Owner's, and whose SHA-256 Nexus recorded when it wrote it, in the
+ * Managed Copies file of the Nexus home. A file whose hash is not the record
+ * is a Foreign Entry, so a hand edit is never overwritten.
+ */
+import { createHash, randomInt } from 'node:crypto';
+import {
+  lstatSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  renameSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
+import { isPresent, isRegularFile, reachesDirectory, sameBytes } from './entries.ts';
+import { fault } from './fault.ts';
+import { note } from './output.ts';
+import type { Paths } from './paths.ts';
+import { isWithin, realpathMissing, resolvedLinkTarget } from './real-paths.ts';
+
+/**
+ * What is at one Native Skill Root entry or Instruction Path:
+ * - `nothing`: no entry at all;
+ * - `managed`: a Managed Link (on Windows a junction or a Managed Copy) that
+ *   Link may replace or remove;
+ * - `foreign link`: a link that reaches no Owner root, kept as a Foreign Entry;
+ * - `foreign`: a physical file or directory, kept as a Foreign Entry.
+ */
+export type Entry = 'nothing' | 'managed' | 'foreign link' | 'foreign';
+
+/** A Managed Link made under a temporary name, or the sentence that refuses it. */
+export type Staged =
+  | { readonly ok: true; readonly path: string }
+  | { readonly ok: false; readonly error: string };
+
+/** The work on Managed Links that differs by system. */
+export type LinkPrimitive = {
+  /** What is at `path`. */
+  readonly read: (path: string) => Entry;
+  /**
+   * True when the entry at `path` is a Managed Link that already reaches
+   * `owner` (`links_exactly_to`); for a Managed Copy, when its bytes equal
+   * the Owner's and its hash is the record. Both must exist.
+   */
+  readonly reaches: (path: string, owner: string) => boolean;
+  /**
+   * True when the entry at `path` is a Managed Copy: a regular file whose
+   * hash is the record, whatever the Owner holds now. Only Windows makes one.
+   */
+  readonly isManagedCopy: (path: string) => boolean;
+  /**
+   * Make a Managed Link to `owner` beside `path`, under a temporary name
+   * `.nexus-tmp.*`, and verify that it reaches `owner`. The parent of `path`
+   * must exist. A refused stage leaves nothing behind.
+   */
+  readonly stage: (owner: string, path: string) => Staged;
+  /**
+   * Put a staged link at `path`: `path` is free, a Managed Link, or (forced
+   * by Setup) a link that reaches elsewhere. False when it failed, and then
+   * what was at `path` is still there.
+   */
+  readonly promote: (staged: string, path: string) => boolean;
+  /** Remove the Managed Link at `path`. False when it failed. */
+  readonly remove: (path: string) => boolean;
+  /** Remove a staged link that was not promoted, if it is still there. Silent. */
+  readonly discard: (staged: string) => void;
+};
+
+/** The prefix of a staged link's name, beside the path it is for. */
+export const STAGED_PREFIX = '.nexus-tmp.';
+
+/**
+ * The Managed Copies file in the Nexus home: the SHA-256 of each Managed
+ * Copy Nexus wrote, by its path. Git ignores it, as it does the Check Result.
+ * Only Windows writes it.
+ */
+export const MANAGED_COPIES_FILE = 'managed-copies.json';
+
+/** The Link primitive of this system, for the Owner roots of `paths`. */
+export function linkPrimitive(paths: Paths): LinkPrimitive {
+  return process.platform === 'win32' ? windowsPrimitive(paths) : posixPrimitive(paths);
+}
+
+/**
+ * Bring every Managed Copy at an Instruction Path back in step with
+ * `GLOBAL.md`, and give the sentence of each failure. `nexus global edit`
+ * calls it right after it replaces `GLOBAL.md` (#77). Only a Managed Copy is
+ * touched, so on Linux and macOS it does nothing: a symlink already reads the
+ * new file, and one that points elsewhere is Link's to judge. A Foreign
+ * Entry, and an absent path, are left alone everywhere: making a missing
+ * link is Link's work.
+ */
+export function refreshManagedCopies(paths: Paths): readonly string[] {
+  const primitive = linkPrimitive(paths);
+  const owner = paths.globalInstructions;
+  const errors: string[] = [];
+  for (const path of [paths.claudeInstructions, paths.codexInstructions]) {
+    if (!primitive.isManagedCopy(path) || primitive.reaches(path, owner)) continue;
+    const staged = primitive.stage(owner, path);
+    if (!staged.ok) {
+      errors.push(staged.error);
+      continue;
+    }
+    if (!primitive.promote(staged.path, path)) {
+      primitive.discard(staged.path);
+      errors.push(`cannot install link: ${path}`);
+    } else if (!primitive.reaches(path, owner)) {
+      errors.push(`link verification failed: ${path}`);
+    }
+  }
+  return errors;
+}
+
+/** Relative symlinks, as the Bash CLI makes them. */
+function posixPrimitive(paths: Paths): LinkPrimitive {
+  const isManagedLink = managedLinkRule(paths);
+  const reaches = (path: string, owner: string): boolean => isLinkTo(path, owner);
+  return {
+    read: (path) => readLinkOrEntry(path, isManagedLink),
+    reaches,
+    isManagedCopy: () => false,
+    stage(owner, path) {
+      const parent = dirname(path);
+      let text: string;
+      try {
+        // As `realpath --relative-to`: both ends physical, so a symlinked
+        // Agent Home or Owner root still gives a link that reaches.
+        text = relative(realpathSync.native(parent), realpathSync.native(owner)) || '.';
+      } catch {
+        return { ok: false, error: `cannot calculate relative target for ${path}` };
+      }
+      const staged = stagedName(path);
+      try {
+        symlinkSync(text, staged);
+      } catch {
+        return { ok: false, error: `cannot create temporary link for ${path}` };
+      }
+      if (!reaches(staged, owner)) {
+        discardLink(staged);
+        return { ok: false, error: `staged link verification failed: ${path}` };
+      }
+      return { ok: true, path: staged };
+    },
+    promote(staged, path) {
+      try {
+        renameSync(staged, path);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    remove(path) {
+      try {
+        unlinkSync(path);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    discard: discardLink,
+  };
+}
+
+/**
+ * Junctions to Owner directories and Managed Copies of Owner files. Windows
+ * cannot rename over a directory, nor over a junction, so a promote that
+ * finds an entry at its path first moves it aside under a staged name, and
+ * puts it back when the staged link cannot take its place.
+ */
+function windowsPrimitive(paths: Paths): LinkPrimitive {
+  const isManagedLink = managedLinkRule(paths);
+  const record = managedCopies(join(paths.nexusHome, MANAGED_COPIES_FILE));
+  const isManagedCopy = (path: string): boolean => {
+    const hash = isRegularFile(path) ? sha256(path) : undefined;
+    return hash !== undefined && record.hashes(path).includes(hash);
+  };
+  return {
+    read(path) {
+      const entry = readLinkOrEntry(path, isManagedLink);
+      return entry === 'foreign' && isManagedCopy(path) ? 'managed' : entry;
+    },
+    reaches(path, owner) {
+      if (reachesDirectory(owner)) return isLinkTo(path, owner);
+      return sameBytes(path, owner) && isManagedCopy(path);
+    },
+    isManagedCopy,
+    stage(owner, path) {
+      if (!reachesDirectory(owner)) return stageCopy(owner, path);
+      let target: string;
+      try {
+        target = realpathSync.native(owner);
+      } catch {
+        return { ok: false, error: `cannot calculate relative target for ${path}` };
+      }
+      const staged = stagedName(path);
+      try {
+        symlinkSync(target, staged, 'junction');
+      } catch {
+        return { ok: false, error: `cannot create temporary link for ${path}` };
+      }
+      if (!isLinkTo(staged, owner)) {
+        discardLink(staged);
+        return { ok: false, error: `staged link verification failed: ${path}` };
+      }
+      return { ok: true, path: staged };
+    },
+    promote(staged, path) {
+      if (isRegularFile(staged)) return promoteCopy(record, staged, path);
+      if (!moveInPlace(staged, path, false)) return false;
+      return record.set(path, []);
+    },
+    remove(path) {
+      try {
+        unlinkSync(path);
+      } catch {
+        return false;
+      }
+      return record.set(path, []);
+    },
+    discard: discardLink,
+  };
+}
+
+/**
+ * Put the staged copy `staged` at `path` so that no moment loses Nexus's
+ * claim to it. The record first accepts the new hash beside the old one,
+ * then the copy is renamed in, and only then is the old hash dropped. A run
+ * that stops at any point leaves at `path` a file whose hash is recorded; a
+ * record that cannot be written stops the promotion before `path` changes.
+ */
+function promoteCopy(record: ManagedCopies, staged: string, path: string): boolean {
+  const hash = sha256(staged);
+  if (hash === undefined) return false;
+  const before = record.hashes(path);
+  if (!record.set(path, [...before.filter((known) => known !== hash), hash])) return false;
+  if (!moveInPlace(staged, path, true)) {
+    record.set(path, before);
+    return false;
+  }
+  if (fault('copy_promote_crash')) process.kill(process.pid, 'SIGKILL');
+  // A record that keeps the old hash as well still names this copy.
+  record.set(path, [hash]);
+  return true;
+}
+
+/**
+ * Rename `staged` to `path`. A copy renames over a copy in one step;
+ * anything else at `path` is moved aside first, and put back when the staged
+ * entry cannot take its place.
+ */
+function moveInPlace(staged: string, path: string, copy: boolean): boolean {
+  const aside = isPresent(path) && !(copy && isRegularFile(path)) ? stagedName(path) : undefined;
+  if (aside !== undefined && !move(path, aside)) return false;
+  if (!move(staged, path)) {
+    if (aside !== undefined) move(aside, path);
+    return false;
+  }
+  if (aside !== undefined) discardLink(aside);
+  return true;
+}
+
+/** Stage a copy of the Owner file `owner` beside `path`, and verify its bytes. */
+function stageCopy(owner: string, path: string): Staged {
+  const staged = stagedName(path);
+  try {
+    writeFileSync(staged, readFileSync(owner), { flag: 'wx' });
+  } catch {
+    discardLink(staged);
+    return { ok: false, error: `cannot create temporary link for ${path}` };
+  }
+  if (!sameBytes(staged, owner)) {
+    discardLink(staged);
+    return { ok: false, error: `staged link verification failed: ${path}` };
+  }
+  return { ok: true, path: staged };
+}
+
+/**
+ * The Managed Copies file, read fresh each time and replaced whole. Each
+ * path holds one hash, or two while a promotion moves a copy in.
+ */
+type ManagedCopies = {
+  /** The hashes recorded for the Managed Copy at `path`; empty when none. */
+  readonly hashes: (path: string) => readonly string[];
+  /**
+   * Record `hashes` for `path`, or drop the path when they are empty. False
+   * when the file could not be written.
+   */
+  readonly set: (path: string, hashes: readonly string[]) => boolean;
+};
+
+/** True once this run has said that the Managed Copies file cannot be read. */
+let unreadableSaid = false;
+
+function managedCopies(file: string): ManagedCopies {
+  // A missing file records nothing, and so does an unreadable one, after one
+  // sentence: every copy then reads as a Foreign Entry and is kept, the safe
+  // side of not knowing (ADR 0010).
+  const read = (): Record<string, string | readonly string[]> => {
+    let text: string;
+    try {
+      text = readFileSync(file, 'utf8');
+    } catch (failure) {
+      if ((failure as { code?: unknown }).code !== 'ENOENT') unreadable();
+      return {};
+    }
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        return parsed as Record<string, string | readonly string[]>;
+      }
+    } catch {
+      // Said below.
+    }
+    unreadable();
+    return {};
+  };
+  const unreadable = (): void => {
+    if (unreadableSaid) return;
+    unreadableSaid = true;
+    note(`cannot read the Managed Copies file: ${file}; each copy is kept as a Foreign Entry`);
+  };
+  const write = (copies: Record<string, string | readonly string[]>): boolean => {
+    if (fault('copy_record_fail')) return false;
+    const staged = stagedName(file);
+    try {
+      writeFileSync(staged, `${JSON.stringify(copies, null, 2)}\n`, { flag: 'wx' });
+      renameSync(staged, file);
+      return true;
+    } catch {
+      discardLink(staged);
+      return false;
+    }
+  };
+  const hashesOf = (copies: Record<string, unknown>, path: string): readonly string[] => {
+    const value = Object.hasOwn(copies, path) ? copies[path] : undefined;
+    if (typeof value === 'string') return [value];
+    if (!Array.isArray(value)) return [];
+    return value.filter((hash): hash is string => typeof hash === 'string');
+  };
+  return {
+    hashes: (path) => hashesOf(read(), path),
+    set(path, hashes) {
+      const copies = read();
+      const known = hashesOf(copies, path);
+      if (known.length === hashes.length && known.every((hash, i) => hash === hashes[i])) {
+        return true;
+      }
+      if (hashes.length === 0) delete copies[path];
+      else copies[path] = hashes.length === 1 ? (hashes[0] as string) : [...hashes];
+      return write(copies);
+    },
+  };
+}
+
+/** The entry at `path`, links judged by `isManagedLink`. */
+function readLinkOrEntry(path: string, isManagedLink: (link: string) => boolean): Entry {
+  let isLink: boolean;
+  try {
+    isLink = lstatSync(path).isSymbolicLink();
+  } catch {
+    return 'nothing';
+  }
+  if (!isLink) return 'foreign';
+  return isManagedLink(path) ? 'managed' : 'foreign link';
+}
+
+/**
+ * The rule that a link is managed: its text, read lexically from the link's
+ * directory or resolved, lies inside an Owner root. Each root is taken as
+ * written, physical (`realpath -m`), and native, which on Windows expands an
+ * 8.3 short name the way a junction's text holds it.
+ */
+function managedLinkRule(paths: Paths): (link: string) => boolean {
+  const roots = [paths.canonicalRoot, paths.controlRoot, paths.customRoot].flatMap((root) =>
+    [resolve(root), physical(root), native(root)].filter((form) => form !== undefined),
+  );
+  const isManagedPath = (path: string): boolean => {
+    const candidates = [resolve(path), physical(path)].filter((form) => form !== undefined);
+    return roots.some((root) => candidates.some((candidate) => within(candidate, root)));
+  };
+  return (link) => {
+    let text: string;
+    try {
+      text = readlinkSync(link);
+    } catch {
+      return false;
+    }
+    const resolved = resolvedLinkTarget(link);
+    if (resolved === undefined) return false;
+    return isManagedPath(resolve(dirname(link), text)) || isManagedPath(resolved);
+  };
+}
+
+/** `isWithin`, but Windows paths compare without case, as Windows reads them. */
+function within(candidate: string, root: string): boolean {
+  if (process.platform !== 'win32') return isWithin(candidate, root);
+  return isWithin(candidate.toLowerCase(), root.toLowerCase());
+}
+
+/** True when `path` is a link whose physical form is `owner`'s. */
+function isLinkTo(path: string, owner: string): boolean {
+  if (fault('verify')) return false;
+  try {
+    return (
+      lstatSync(path).isSymbolicLink() && realpathSync.native(path) === realpathSync.native(owner)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** A fresh staged name beside `path`. */
+function stagedName(path: string): string {
+  return join(dirname(path), `${STAGED_PREFIX}${process.pid}.${randomInt(32768)}`);
+}
+
+/**
+ * Remove the link, junction or staged copy at `path`, if it is one. Never a
+ * directory: a junction is removed as the link it is, and never followed.
+ */
+function discardLink(path: string): void {
+  try {
+    const stats = lstatSync(path);
+    if (stats.isSymbolicLink() || stats.isFile()) unlinkSync(path);
+  } catch {
+    // Nothing is there, or nothing can be done: a staged name says what it is.
+  }
+}
+
+/** Rename `from` to `to`; false when it failed. */
+function move(from: string, to: string): boolean {
+  try {
+    renameSync(from, to);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The SHA-256 of the file at `path`, in hex, or undefined when unreadable. */
+function sha256(path: string): string | undefined {
+  try {
+    return createHash('sha256').update(readFileSync(path)).digest('hex');
+  } catch {
+    return undefined;
+  }
+}
+
+/** `realpath -m` of `path`, or undefined when its links loop. */
+function physical(path: string): string | undefined {
+  try {
+    return realpathMissing(path);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The native real path of `path`, or undefined when it does not exist. */
+function native(path: string): string | undefined {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return undefined;
+  }
+}
