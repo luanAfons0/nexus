@@ -233,7 +233,9 @@ test('Nexus runs on Node alone: no Bash, Python or jq file, and no runtime depen
   assert.deepEqual(foreign, []);
 
   // The one file that is not Node: the launcher a FirstMate `wsl` Place starts.
-  assert.equal(read('mcp'), '#!/bin/sh\nexec node "$(dirname -- "$0")/mcp.ts" "$@"\n');
+  // It finds a Node 24 and runs mcp.ts with it, and holds nothing else.
+  assert.match(read('mcp'), /^#!\/bin\/sh\n/);
+  assert.match(read('mcp'), /exec "\$node" "\$here\/mcp\.ts" "\$@"\n/);
 
   const manifest = JSON.parse(read('package.json')) as Record<string, unknown>;
   assert.equal(manifest.dependencies, undefined);

@@ -234,8 +234,8 @@ _Avoid_: Web UI, dashboard, web app, admin page, GUI
 `mcp.ts` in the Nexus home. The Host runs it with its own Node over stdio and
 speaks MCP to it, and its tools are everything the page can do. Every tool is
 one subprocess call to the Nexus CLI, so the server touches no file itself. In
-a FirstMate `wsl` Place the Host starts `mcp` instead, a two-line `sh`
-launcher that hands `mcp.ts` to the `node` on PATH.
+a FirstMate `wsl` Place the Host starts `mcp` instead, an `sh` launcher that
+finds a Node 24 and hands it `mcp.ts`.
 _Avoid_: backend, API, ui server, adapter
 
 **Envelope**:

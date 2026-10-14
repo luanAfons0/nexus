@@ -500,7 +500,9 @@ The contract is recorded in
 - Nexus is a directory holding a `web/` folder and a Plugin Server, `mcp.ts`,
   and asks nothing else of anyone. The Host starts it with its own Node, on
   Linux and on Windows. In a FirstMate `wsl` Place the Host starts `./mcp`
-  instead, a two-line `sh` launcher that hands `mcp.ts` to the `node` on PATH.
+  instead, an `sh` launcher that finds a Node 24 and hands it `mcp.ts`:
+  `NEXUS_NODE` first, then the `node` on PATH, then one nvm keeps. The Place
+  starts it with no login shell, so nvm is not on PATH there.
 - The Plugin Server never touches `GLOBAL.md`, the Nexus Lock, or any skill
   root. Every tool is a subprocess call to the CLI: `list --json`, `check
   --json`, `check --last --json`, `global show --json`, `global edit

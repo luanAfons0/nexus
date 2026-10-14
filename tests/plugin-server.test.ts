@@ -13,7 +13,14 @@
  */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { customHome, writeLock, writeSkill } from './helpers/homes.ts';
@@ -576,11 +583,7 @@ test(
   'the sh launcher starts the Plugin Server from ./mcp',
   { skip: WINDOWS && 'a wsl Place alone starts ./mcp' },
   async () => {
-    const lines = readFileSync(LAUNCHER, 'utf8')
-      .split('\n')
-      .filter((line) => line !== '');
-    assert.equal(lines.length, 2, 'the launcher holds logic');
-    assert.equal(lines[0], '#!/bin/sh');
+    assert.equal(readFileSync(LAUNCHER, 'utf8').split('\n')[0], '#!/bin/sh');
     assert.ok((statSync(LAUNCHER).mode & 0o111) !== 0, 'the launcher is not executable');
 
     const server = startServer(customHome('server-launcher'), { launcher: true });
@@ -591,5 +594,78 @@ test(
     assert.equal((reply.result?.['serverInfo'] as { name: string }).name, 'nexus');
     assert.equal(listed.exit, 0, listed.stderr);
     assert.equal(server.stderr(), 'nexus: the Plugin Server is up\n');
+  },
+);
+
+/**
+ * A `wsl` Place starts ./mcp with no login shell, so nvm is not on PATH and the
+ * first `node` can be the one the distribution ships. This writes such a Node
+ * first on PATH: it says it is Node 20, and fails if it is asked to run a file.
+ */
+function oldNodeFirst(home: string): Readonly<Record<string, string>> {
+  const bin = join(home, 'old-node');
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, 'node'),
+    '#!/bin/sh\ncase "$1" in -p) echo 20 ;; *) echo "Node 20 ran $1" >&2; exit 9 ;; esac\n',
+    { mode: 0o755 },
+  );
+  return { PATH: `${bin}:/usr/bin:/bin`, NVM_DIR: join(home, '.nvm') };
+}
+
+/** Put this Node 24 where nvm keeps one, under the NVM_DIR `oldNodeFirst` names. */
+function nvmNode(home: string): void {
+  const bin = join(home, '.nvm', 'versions', 'node', 'v24.0.0', 'bin');
+  mkdirSync(bin, { recursive: true });
+  symlinkSync(process.execPath, join(bin, 'node'));
+}
+
+test(
+  'the sh launcher passes over a Node older than 24 on PATH for the one nvm keeps',
+  { skip: WINDOWS && 'a wsl Place alone starts ./mcp' },
+  async () => {
+    const home = customHome('launcher-nvm');
+    const env = oldNodeFirst(home);
+    nvmNode(home);
+
+    const server = startServer(home, { launcher: true, env });
+    const listed = envelopeOf(await server.call('list_skills'));
+    assert.equal(await server.close(), 0);
+
+    assert.equal(listed.exit, 0, listed.stderr);
+    assert.equal(server.stderr(), 'nexus: the Plugin Server is up\n');
+  },
+);
+
+test(
+  'the sh launcher takes NEXUS_NODE before any other Node',
+  { skip: WINDOWS && 'a wsl Place alone starts ./mcp' },
+  async () => {
+    const home = customHome('launcher-variable');
+    const env = { ...oldNodeFirst(home), NEXUS_NODE: process.execPath };
+
+    const server = startServer(home, { launcher: true, env });
+    const listed = envelopeOf(await server.call('list_skills'));
+    assert.equal(await server.close(), 0);
+
+    assert.equal(listed.exit, 0, listed.stderr);
+  },
+);
+
+test(
+  'with no Node 24 the sh launcher says so in one sentence and fails',
+  { skip: WINDOWS && 'a wsl Place alone starts ./mcp' },
+  async () => {
+    const home = customHome('launcher-no-node');
+
+    const server = startServer(home, { launcher: true, env: oldNodeFirst(home) });
+    assert.equal(await server.close(), 1);
+
+    assert.equal(
+      server.stderr(),
+      'nexus: no Node 24 or newer was found, and the Plugin Server is TypeScript that ' +
+        'Node runs with no build step. Set NEXUS_NODE to a Node 24, or start the Host ' +
+        'with one on its PATH.\n',
+    );
   },
 );
