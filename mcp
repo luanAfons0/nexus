@@ -1,2 +1,21 @@
 #!/bin/sh
-exec node "$(dirname -- "$0")/mcp.ts" "$@"
+# The launcher a FirstMate `wsl` Place starts as ./mcp. It finds a Node 24 and
+# runs mcp.ts with it, and holds nothing else.
+#
+# It looks for a Node rather than trusting `node`, because the Place starts it
+# with no login shell: nvm is not on PATH, and the first `node` can be the one
+# the distribution ships. An old one fails with "Unknown file extension .ts",
+# which says nothing about versions to whoever has to read it.
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+for node in ${NEXUS_NODE:+"$NEXUS_NODE"} \
+            "$(command -v node 2>/dev/null)" \
+            "${NVM_DIR:-$HOME/.nvm}"/versions/node/*/bin/node; do
+  [ -x "$node" ] || continue
+  major=$("$node" -p 'process.versions.node.split(".")[0]' 2>/dev/null) || continue
+  [ "$major" -ge 24 ] 2>/dev/null || continue
+  exec "$node" "$here/mcp.ts" "$@"
+done
+
+echo "nexus: no Node 24 or newer was found, and the Plugin Server is TypeScript that Node runs with no build step. Set NEXUS_NODE to a Node 24, or start the Host with one on its PATH." >&2
+exit 1
