@@ -11,6 +11,8 @@
  * byte-identical (ADR 0001). Install, Update and Remove all end here.
  *
  * `npx` is found on PATH; on Windows that finds `npx.cmd` (`run-program.ts`).
+ * Under WSL a directory on a Windows Drive is passed over, so the `npx` of a
+ * Windows Node is never taken (`windows-drives.ts`).
  * On Linux and macOS a PATH without it falls back to NVM, as a person's
  * shell would find it. NVM is a shell function, so that one step sources
  * `nvm.sh` in `bash` (in `/bin/sh` when there is no `bash`), and the PATH it
@@ -38,6 +40,7 @@ import { type NexusLock, readLock } from './lock.ts';
 import { error } from './output.ts';
 import type { Paths } from './paths.ts';
 import { findProgram, runProgram } from './run-program.ts';
+import { withoutWindowsDrives } from './windows-drives.ts';
 
 /** The lock the fault point `install_snapshot_mutate` writes over the Upstream Lock. */
 const BETA_LOCK = '{"version":3,"skills":{"beta":{}}}\n';
@@ -91,7 +94,7 @@ const NVM_SCRIPT = [
  * macOS. Say why not and give undefined when there is none.
  */
 export function ensureNpx(paths: Paths, env: NodeJS.ProcessEnv = process.env): Npx | undefined {
-  const onPath = findProgram('npx', env.PATH ?? '');
+  const onPath = findProgram('npx', withoutWindowsDrives(env.PATH ?? ''));
   if (onPath !== undefined) return { program: onPath, env: withoutStateHome(env) };
 
   const nvmDir =
@@ -104,7 +107,8 @@ export function ensureNpx(paths: Paths, env: NodeJS.ProcessEnv = process.env): N
   const shell = findProgram('bash', env.PATH ?? '') ?? '/bin/sh';
   const run = runProgram(shell, ['-c', NVM_SCRIPT, 'nexus', nvmScript], { env });
   process.stderr.write(run.stderr);
-  const program = run.status === 0 ? findProgram('npx', run.stdout) : undefined;
+  const program =
+    run.status === 0 ? findProgram('npx', withoutWindowsDrives(run.stdout)) : undefined;
   if (program === undefined) {
     error('NVM loaded but npx is unavailable');
     return undefined;

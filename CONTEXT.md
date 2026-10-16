@@ -210,6 +210,13 @@ A retained temporary or recovery path left behind by an interrupted Setup.
 Nexus names it and asks the user to review before retrying.
 _Avoid_: garbage, temp files
 
+**Windows Drive**:
+Under WSL, a Windows drive that Linux sees as a `drvfs` mount, such as
+`/mnt/c`. A program on one is a Windows program, so Nexus never takes `npx`
+from it: a Host started from Windows puts one there on the Plugin Server's
+PATH.
+_Avoid_: Windows mount, host drive, C drive
+
 ### FirstMate
 
 **Host**:

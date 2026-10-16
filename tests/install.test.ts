@@ -14,6 +14,7 @@
  */
 import assert from 'node:assert/strict';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -233,6 +234,47 @@ test(
       assert.equal(run.status, 0, `${shell}: ${run.stderr}`);
       assert.match(run.stdout, /nexus: installed alpha: /, shell);
       assert.equal(fakeCalls(home, 'npx').length, 1, shell);
+    }
+  },
+);
+
+test(
+  'under WSL, install passes over an npx on a Windows Drive, for one on PATH after it or NVM',
+  { skip: process.platform !== 'linux' && 'Windows Drives are a WSL mount' },
+  () => {
+    for (const later of [true, false]) {
+      const home = installHome(`install-windows-drive-${later ? 'path' : 'nvm'}`);
+      // The npx of a Windows Node, as a WSL Host's PATH holds it.
+      mkdirSync(join(home, 'drive'));
+      writeFileSync(join(home, 'drive', 'npx'), '#!/bin/sh\necho windows npx >&2\nexit 1\n');
+      chmodSync(join(home, 'drive', 'npx'), 0o755);
+      writeFileSync(
+        join(home, 'mounts'),
+        `C:\\134 ${join(home, 'drive')} 9p rw,noatime,aname=drvfs;path=C:\\;uid=1000 0 0\n`,
+      );
+      mkdirSync(join(home, 'linux-bin'));
+      renameSync(join(home, 'fakebin', 'npx'), join(home, 'linux-bin', 'npx'));
+      rmSync(join(home, 'fakebin', 'npx.cmd'));
+      mkdirSync(join(home, '.nvm'));
+      writeFileSync(
+        join(home, '.nvm', 'nvm.sh'),
+        'nvm() { PATH="$HOME/linux-bin:$PATH"; export PATH; }\n',
+      );
+      mkdirSync(join(home, 'onlybin'));
+      const bash = onPath('bash');
+      if (bash !== undefined) symlinkSync(bash, join(home, 'onlybin', 'bash'));
+      const dirs = [join(home, 'drive'), ...(later ? [join(home, 'linux-bin')] : [])];
+      const run = runNexus(home, ['install', 'source', '--skill', 'alpha'], {
+        env: {
+          PATH: [...dirs, join(home, 'onlybin')].join(delimiter),
+          NVM_DIR: '',
+          NEXUS_TEST_MOUNTS: join(home, 'mounts'),
+        },
+      });
+      assert.equal(run.status, 0, `${later}: ${run.stderr}`);
+      assert.ok(!run.stderr.includes('windows npx'), String(later));
+      assert.match(run.stdout, /nexus: installed alpha: /, String(later));
+      assert.equal(fakeCalls(home, 'npx').length, 1, String(later));
     }
   },
 );

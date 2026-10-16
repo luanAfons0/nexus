@@ -100,12 +100,19 @@ export function paused(): boolean {
   return held;
 }
 
+/**
+ * True when this run may honour a test seam such as `NEXUS_FAULT`:
+ * `NEXUS_TEST_MODE=1`, in a home that holds the test-home marker.
+ */
+export function inTestHome(): boolean {
+  return process.env.NEXUS_TEST_MODE === '1' && reachesFile(homeFile(MARKER));
+}
+
 /** The fault `NEXUS_FAULT` names, when this run may honour it. */
 function activeFault(): string | undefined {
   if (active === null) {
     const name = process.env.NEXUS_FAULT ?? '';
-    const honoured = process.env.NEXUS_TEST_MODE === '1' && reachesFile(homeFile(MARKER));
-    active = honoured && name !== '' ? name : undefined;
+    active = inTestHome() && name !== '' ? name : undefined;
   }
   return active;
 }

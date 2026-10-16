@@ -38,6 +38,8 @@ Setup preflight checks no program: it does not check Git, npm, npx, or NVM.
 Install first uses a directly available `npx`; if it is unavailable, NVM is the fallback
 on Linux and macOS. On Windows Nexus finds `npx` as `npx.cmd` on the path,
 and there is no NVM fallback.
+Under WSL, Nexus passes over every directory on a Windows drive (`/mnt/c`
+and the rest), so the `npx` of a Windows Node is never used.
 
 Nexus is installed by cloning it into its home directory. The same command
 works in a Linux or macOS shell and in PowerShell:
@@ -817,8 +819,9 @@ which the tests use with a short value.
 - **Global instructions must be a regular file:** `~/.custom-skills/GLOBAL.md`
   is a symlink or a directory. Replace it with a regular file and rerun link.
 - **NVM/npx:** ensure direct `npx` works, or install/select a default NVM Node
-  version. Nexus only loads NVM as the fallback when `npx` is unavailable. On
-  Windows, `npx.cmd` must be on the `PATH`; there is no fallback.
+  version. Nexus only loads NVM as the fallback when `npx` is unavailable.
+  Under WSL an `npx` on a Windows drive counts as unavailable. On Windows,
+  `npx.cmd` must be on the `PATH`; there is no fallback.
 - **Setup on Windows says a symlink needs Developer Mode:** an agent home
   holds a symlink, and the Backup must copy it as one. Turn on Developer Mode,
   then run setup again; nothing was changed.
