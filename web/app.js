@@ -191,8 +191,8 @@ function clearBanner(id) {
 
 function connectionLost() {
   banner('connection', 'err', [
-    el('strong', { text: 'Connection lost.' }), ' The FirstMate Host is not answering. Check it with ',
-    el('code', { text: 'systemctl --user status firstmate' }), '.',
+    el('strong', { text: 'Connection lost.' }), ' The FirstMate Host is not answering. Open the FirstMate App, or check it with ',
+    el('code', { text: 'firstmate status' }), '.',
   ]);
 }
 
