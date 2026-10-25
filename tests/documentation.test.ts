@@ -36,7 +36,7 @@ const GONE = [
   'python3',
   '`jq`',
   'bash tests/run.sh',
-  'systemctl --user start',
+  'systemctl',
   'journalctl',
 ];
 
@@ -160,6 +160,7 @@ test('the README says how to install, run and recover Nexus on Node alone', () =
     'remove_skill',
     'edit_global_instructions',
     'Connection lost.',
+    'App, or check it with firstmate status.',
     'grouped by kind',
     'All kinds',
     'Node 24',
@@ -243,4 +244,9 @@ test('Nexus runs on Node alone: no Bash, Python or jq file, and no runtime depen
     '@types/node',
     'typescript',
   ]);
+});
+
+test('the page says how to check the Host on every system', () => {
+  assertHolds('web/app.js', ['Open the FirstMate App, or check it with ', "'firstmate status'"]);
+  assertLacks('web/app.js', ['systemctl']);
 });

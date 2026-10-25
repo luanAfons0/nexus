@@ -704,10 +704,9 @@ an exit pill, a local timestamp, and standard output followed by standard
 error in red, as preformatted text. Escape, Close or a click outside the
 dialog closes it. It persists until the next command, and a banner that
 points at the output links straight to it. When a call cannot reach the server at all, a red banner
-says `Connection lost. The FirstMate Host is not answering. Check it with
-systemctl --user status firstmate.` and the page does not retry on its own.
-That command is from FirstMate 1.x; with the FirstMate App, run `firstmate
-status` instead.
+says `Connection lost. The FirstMate Host is not answering. Open the FirstMate
+App, or check it with firstmate status.` and the page does not retry on its
+own.
 
 ### Editor
 
