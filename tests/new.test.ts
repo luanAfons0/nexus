@@ -4,7 +4,8 @@
  * This is `new_cli` of the Bash suite, carried over. `new` makes the
  * directory and names it; it does not link, because the skill has no
  * `SKILL.md` yet (the `nexus-new` Control Skill runs `nexus link` after the
- * skill is written). Nothing here links, so every case runs on Windows too.
+ * skill is written). Nothing here links, so every case runs on Windows too;
+ * the device names and the case of a name are Windows' alone.
  */
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -21,6 +22,8 @@ function newSkillHome(name: string): string {
   writeLock(join(home, '.nexus', 'skill-lock.json'), ['installed']);
   return home;
 }
+
+const WINDOWS_ONLY = process.platform !== 'win32' && 'only Windows has device names';
 
 test('new refuses a missing, extra, unsafe or Control Skill name with exit 2', () => {
   const home = newSkillHome('new-usage');
@@ -55,6 +58,44 @@ test('new refuses the name of an Installed Skill', () => {
   );
   assert.ok(isAbsent(join(home, '.custom-skills', 'installed')));
 });
+
+test(
+  'on Windows new refuses a device name, a trailing dot, and a Control Skill in another case',
+  { skip: WINDOWS_ONLY },
+  () => {
+    const home = newSkillHome('new-windows-names');
+    const cases: readonly (readonly [string, string])[] = [
+      ...['CON', 'nul', 'Aux', 'prn', 'COM1', 'lpt9', 'nul.md', 'con.skill', 'mine.'].map(
+        (name) => [name, 'new requires a safe skill name'] as const,
+      ),
+      ['Nexus-Link', 'reserved control skill name: Nexus-Link'],
+    ];
+    const before = agentTrees(home);
+    for (const [name, sentence] of cases) {
+      const run = runNexus(home, ['new', name]);
+      assert.equal(run.status, 2, name);
+      assert.equal(run.stderr, `nexus: error: ${sentence}\n`, name);
+    }
+    assert.equal(agentTrees(home), before);
+    assert.deepEqual(readdirSync(join(home, '.custom-skills')), []);
+  },
+);
+
+test(
+  'on Windows new refuses the name of an Installed Skill in another case',
+  { skip: WINDOWS_ONLY },
+  () => {
+    const home = newSkillHome('new-installed-case');
+    const run = runNexus(home, ['new', 'Installed']);
+    assert.equal(run.status, 1);
+    assert.equal(
+      run.stderr,
+      'nexus: error: name collides with an installed skill: Installed ' +
+        `(${join(home, '.agents', 'skills', 'installed')})\n`,
+    );
+    assert.deepEqual(readdirSync(join(home, '.custom-skills')), []);
+  },
+);
 
 test('new makes one empty directory, names its workspace, and links nothing', () => {
   const home = newSkillHome('new-created');

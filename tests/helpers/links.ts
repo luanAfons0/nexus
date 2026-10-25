@@ -109,3 +109,16 @@ const AGENT_TREES: readonly string[] = ['.claude', '.codex', '.agents', '.custom
 export function agentTrees(home: string, dirs: readonly string[] = AGENT_TREES): string {
   return dirs.map((dir) => `${dir}:\n${snapshotTree(join(home, dir)).join('\n')}`).join('\n');
 }
+
+/**
+ * The move a Foreign Entry hint names, as a person types it: `mv` with each
+ * path in single quotes, or on Windows PowerShell's `Move-Item`.
+ */
+export function moveCommand(from: string, to: string): string {
+  if (WINDOWS) {
+    const quote = (path: string): string => `'${path.replaceAll("'", "''")}'`;
+    return `Move-Item -Force -LiteralPath ${quote(from)} -Destination ${quote(to)}`;
+  }
+  const quote = (path: string): string => `'${path.replaceAll("'", "'\\''")}'`;
+  return `mv ${quote(from)} ${quote(to)}`;
+}

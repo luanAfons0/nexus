@@ -35,6 +35,7 @@ import {
   linkText,
   makeLink,
   managedCopies,
+  moveCommand,
   sha256,
   WINDOWS,
 } from './helpers/links.ts';
@@ -291,7 +292,7 @@ test(
     assert.equal(
       run.stdout,
       `nexus: foreign entry at ${codex}: preserved; to manage it, run: ` +
-        `mv ${codex} ${owner(home)}, then rerun link\n` +
+        `${moveCommand(codex, owner(home))}, then rerun link\n` +
         'nexus: link complete: skills reconciled\n',
     );
     assert.ok(statSync(owner(home)).isFile());

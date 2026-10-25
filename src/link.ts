@@ -160,7 +160,7 @@ function linkInstructionPaths(paths: Paths, primitive: LinkPrimitive, tally: Tal
     if (entry === 'foreign link' || entry === 'foreign') {
       info(
         `foreign entry at ${path}: preserved; to manage it, run: ` +
-          `mv ${path} ${paths.globalInstructions}, then rerun link`,
+          `${moveCommand(path, paths.globalInstructions)}, then rerun link`,
       );
       continue;
     }
@@ -339,6 +339,21 @@ function isFreshContainer(container: string, parent: string): boolean {
 function skillOwner(paths: Paths, customSet: ReadonlySet<string>, name: string): string {
   if (isControlSkill(name)) return controlSkillTarget(paths, name);
   return customSet.has(name) ? join(paths.customRoot, name) : join(paths.canonicalRoot, name);
+}
+
+/**
+ * The command a person runs to move `from` onto `to`. Each path is in single
+ * quotes, so a space or a quote in it stays one argument. On Windows it is
+ * PowerShell's `Move-Item`, because cmd.exe has no `mv`; `-Force` replaces
+ * `to`, as `mv` does.
+ */
+function moveCommand(from: string, to: string): string {
+  if (process.platform === 'win32') {
+    const quote = (path: string): string => `'${path.replaceAll("'", "''")}'`;
+    return `Move-Item -Force -LiteralPath ${quote(from)} -Destination ${quote(to)}`;
+  }
+  const quote = (path: string): string => `'${path.replaceAll("'", "'\\''")}'`;
+  return `mv ${quote(from)} ${quote(to)}`;
 }
 
 /** Rename `from` to `to`; false when it failed. */

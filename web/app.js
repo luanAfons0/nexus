@@ -560,21 +560,37 @@ function writeSoftWrap(on) {
   }
 }
 
-// Home directory derived from the Owner path, and "~/..." for display.
+// The home directory derived from the Owner path, with the separator its
+// system writes: a backslash on Windows, "/" elsewhere. "~" stands for it in display.
 function homeFromOwner(owner) {
-  const suffix = '/.custom-skills/GLOBAL.md';
-  return owner.endsWith(suffix) ? owner.slice(0, -suffix.length) : null;
+  for (const sep of ['/', '\\']) {
+    const suffix = sep + '.custom-skills' + sep + 'GLOBAL.md';
+    if (owner.endsWith(suffix)) return { path: owner.slice(0, -suffix.length), sep };
+  }
+  return null;
 }
 
 function shortPath(path, home) {
-  return home && path.startsWith(home + '/') ? '~' + path.slice(home.length) : path;
+  return home && path.startsWith(home.path + home.sep) ? '~' + path.slice(home.path.length) : path;
 }
 
 function instructionPaths(home) {
   return [
-    { agent: 'claude', path: home + '/.claude/CLAUDE.md' },
-    { agent: 'codex', path: home + '/.codex/AGENTS.md' },
+    { agent: 'claude', path: [home.path, '.claude', 'CLAUDE.md'].join(home.sep) },
+    { agent: 'codex', path: [home.path, '.codex', 'AGENTS.md'].join(home.sep) },
   ];
+}
+
+// The command that moves a Foreign Entry onto the Owner, as link says it:
+// both paths whole and in single quotes, and on Windows PowerShell's
+// Move-Item, because cmd.exe has no mv.
+function moveCommand(from, to, home) {
+  if (home && home.sep === '\\') {
+    const quote = (path) => "'" + path.replaceAll("'", "''") + "'";
+    return 'Move-Item -Force -LiteralPath ' + quote(from) + ' -Destination ' + quote(to);
+  }
+  const quote = (path) => "'" + path.replaceAll("'", "'\\''") + "'";
+  return 'mv ' + quote(from) + ' ' + quote(to);
 }
 
 function stateBadge(agent, state) {
@@ -587,7 +603,7 @@ function foreignHint(agent, path, home, owner) {
   return el('div', { class: 'hint' }, [
     agent + ' Instruction Path ', el('code', { text: shortPath(path, home) }),
     ' is a Foreign Entry. Run ',
-    el('code', { text: 'mv ' + shortPath(path, home) + ' ' + shortPath(owner, home) }),
+    el('code', { text: moveCommand(path, owner, home) }),
     ', then link. The entry is preserved until you move it.',
   ]);
 }

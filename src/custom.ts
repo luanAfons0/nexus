@@ -14,7 +14,7 @@ import { isControlSkill } from './control-skills.ts';
 import { reachesDirectory } from './entries.ts';
 import type { Paths } from './paths.ts';
 import { isWithin, realpathMissing, resolvedLinkTarget } from './real-paths.ts';
-import { byteOrder, isSafeSkillName } from './skill-names.ts';
+import { byteOrder, isSafeSkillName, skillNameKey } from './skill-names.ts';
 
 /** The Custom Skills the Custom Root holds, and every fault found on the way. */
 export type CustomSkills = {
@@ -87,21 +87,25 @@ export function readCustomSkills(paths: Paths): CustomSkills {
 
 /**
  * One sentence per Collision of a Custom Skill with an Installed Skill: two
- * Owners for one Skill Name, which no field can settle (ADR 0002).
+ * Owners for one Skill Name, which no field can settle (ADR 0002). On
+ * Windows two names that differ only in case are one Skill Name.
  */
 export function customCollisions(
   paths: Paths,
   lockNames: readonly string[],
   customNames: readonly string[],
 ): readonly string[] {
-  const installed = new Set(lockNames);
-  return customNames
-    .filter((name) => installed.has(name))
-    .map(
-      (name) =>
-        `custom skill collides with an installed skill: ${name} ` +
-        `(${join(paths.customRoot, name)} and ${join(paths.canonicalRoot, name)})`,
+  const installed = new Map(lockNames.map((name) => [skillNameKey(name), name]));
+  const sentences: string[] = [];
+  for (const name of customNames) {
+    const other = installed.get(skillNameKey(name));
+    if (other === undefined) continue;
+    sentences.push(
+      `custom skill collides with an installed skill: ${name} ` +
+        `(${join(paths.customRoot, name)} and ${join(paths.canonicalRoot, other)})`,
     );
+  }
+  return sentences;
 }
 
 /**
