@@ -1,6 +1,6 @@
 /**
- * Seam 3, for Link, the lock and Install: named fault points, driven
- * through the CLI as a subprocess (Seam 1).
+ * Seam 3, for Link, the lock, Install and `global edit`: named fault points,
+ * driven through the CLI as a subprocess (Seam 1).
  *
  * These are the fault cases of the Bash suite, which made them with Bash
  * function overrides: `bootstrap_staging_failure`, `force_recovery`,
@@ -19,7 +19,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
-import { snapshotTree, writeLock, writeSkill } from './helpers/homes.ts';
+import { customHome, snapshotTree, writeLock, writeSkill } from './helpers/homes.ts';
 import { assertLinkTo, isAbsent, linkText, makeLink } from './helpers/links.ts';
 import { installFake, newHome, type RunOptions, runNexus } from './helpers/nexus.ts';
 
@@ -251,3 +251,25 @@ test(
     assert.equal(readFileSync(join(home, '.codex', 'AGENTS.md'), 'utf8'), 'rule two\n');
   },
 );
+
+test('global edit tries again a GLOBAL.md that another program holds for a moment', () => {
+  const home = customHome('global_rename_busy');
+  const owner = join(home, '.custom-skills', 'GLOBAL.md');
+  writeFileSync(owner, 'rule one\n');
+  const run = runFault(home, 'global_rename_busy', ['global', 'edit'], { input: 'rule two\n' });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stderr, '');
+  assert.equal(readFileSync(owner, 'utf8'), 'rule two\n');
+  assert.deepEqual(named(join(home, '.custom-skills'), '.nexus-tmp.'), []);
+});
+
+test('global edit stops on a GLOBAL.md that stays held, and leaves it as it was', () => {
+  const home = customHome('global_rename_held');
+  const owner = join(home, '.custom-skills', 'GLOBAL.md');
+  writeFileSync(owner, 'rule one\n');
+  const run = runFault(home, 'global_rename_held', ['global', 'edit'], { input: 'rule two\n' });
+  assert.equal(run.status, 1);
+  assert.equal(run.stderr, `nexus: error: cannot replace the global instructions: ${owner}\n`);
+  assert.equal(readFileSync(owner, 'utf8'), 'rule one\n');
+  assert.deepEqual(named(join(home, '.custom-skills'), '.nexus-tmp.'), []);
+});

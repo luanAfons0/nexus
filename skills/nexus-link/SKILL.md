@@ -20,7 +20,7 @@ Report the command output clearly. Never bypass validation errors or collision e
 Some lines are notices, not errors, and link still exits 0:
 
 - `global instructions are absent`: there is no `~/.custom-skills/GLOBAL.md` yet. Skills were still reconciled. Tell the user to create that file and rerun link.
-- `foreign entry at <path>`: a physical file, an unrelated symlink, or a directory sits at an Instruction Path (on Windows, also a Managed Copy edited by hand). Nexus preserved it and skipped only that link. Show the user the exact `mv` command from the notice; the move is theirs to make, never yours.
+- `foreign entry at <path>`: a physical file, an unrelated symlink, or a directory sits at an Instruction Path (on Windows, also a Managed Copy edited by hand). Nexus preserved it and skipped only that link. Show the user the exact move command from the notice (`mv`, or `Move-Item` on Windows); the move is theirs to make, never yours.
 - `skipped <path>: agent home is absent`: that agent is not installed. Nexus never creates an Agent Home.
 
 `global instructions must be a regular file` is an error: `GLOBAL.md` is a symlink or a directory, and link changed nothing. Report it and stop.

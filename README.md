@@ -91,6 +91,31 @@ keeps it, and `list` and `global show --json` call it `foreign`. The decision
 is recorded in
 `docs/adr/0010-on-windows-a-managed-link-is-a-junction-or-a-managed-copy.md`.
 
+Before you use Nexus on Windows, make sure that these programs are on the
+`PATH` that PowerShell and the FirstMate Host see:
+
+- **Install, update and remove:** Node 24 or newer, with npm. npm puts
+  `npx.cmd` on the `PATH` beside `node.exe`. Nexus runs upstream `npx skills`
+  through it, and there is no NVM fallback on Windows.
+- **Check:** `gh`, signed in with `gh auth login`. Without it, `nexus check`
+  refuses in one sentence and changes nothing.
+- **Setup of an agent home that holds a symlink:** Developer Mode or an
+  administrator. The Backup copies a symlink as a symlink, so it equals its
+  source, and Windows lets only those two make one. Without them Setup stops
+  in one sentence that names the symlink, and nothing changes. A junction
+  needs neither.
+
+A skill name on Windows may not be a device name (`CON`, `PRN`, `AUX`, `NUL`,
+`COM1` to `COM9`, `LPT1` to `LPT9`, in any case and with any extension), and
+may not end in `.`, because Windows cannot name a directory that way. Windows
+ignores case, so two skill names that differ only in case are one name there:
+a custom skill `Foo` and an installed skill `foo` are a collision.
+
+A notice that names a move to make gives it in the form of the system: `mv`
+on Linux and macOS, and PowerShell's `Move-Item` on Windows, because cmd.exe
+has no `mv`. Each path is in single quotes, so a path with a space stays
+whole.
+
 ## Setup and recovery
 
 Setup first performs preflight checks, then discovers candidate locks in
@@ -219,8 +244,9 @@ states below are notices, not errors, so link still exits 0:
   stale link and is removed; anything else there is left alone.
 - `GLOBAL.md` exists and the instruction path is a foreign entry, that is a
   physical file, a symlink to an unrelated place, or a directory: a notice
-  names the path and the exact move to make (`mv <path>
-  ~/.custom-skills/GLOBAL.md`, then rerun link). The entry is preserved and
+  names the path and the exact move to make (`mv '<path>'
+  '<home>/.custom-skills/GLOBAL.md'`, or on Windows `Move-Item -Force
+  -LiteralPath '<path>' -Destination '<owner>'`, then rerun link). The entry is preserved and
   only that link is skipped; the other instruction path is still linked. A
   foreign entry at an instruction path is deliberately not a collision, because
   a physical `CLAUDE.md` is the normal state before you migrate.
@@ -687,8 +713,10 @@ The Global Instructions section reads `nexus global show --json` through
 `show_global_instructions`. The header shows the owner path and one badge per
 instruction path with its state word: `linked` (green), `foreign` (amber),
 `absent` and `no home` (grey). A `foreign` badge adds one line under the
-header with the exact fix, `mv <path> ~/.custom-skills/GLOBAL.md`, then
-link; the entry is preserved until you move it.
+header with the exact fix, the same move link names (`mv` with both paths in
+single quotes, or `Move-Item` on Windows), then link; the entry is preserved
+until you move it. The page reads the home directory and the separator from
+the owner path, so it shows the badges and the fix on Windows too.
 
 The editor is modeled on the GitHub file editor. It is a `textarea` with a
 line-number gutter that scrolls with the text, a line count, and Edit and
@@ -789,7 +817,11 @@ which the tests use with a short value.
 - **Global instructions must be a regular file:** `~/.custom-skills/GLOBAL.md`
   is a symlink or a directory. Replace it with a regular file and rerun link.
 - **NVM/npx:** ensure direct `npx` works, or install/select a default NVM Node
-  version. Nexus only loads NVM as the fallback when `npx` is unavailable.
+  version. Nexus only loads NVM as the fallback when `npx` is unavailable. On
+  Windows, `npx.cmd` must be on the `PATH`; there is no fallback.
+- **Setup on Windows says a symlink needs Developer Mode:** an agent home
+  holds a symlink, and the Backup must copy it as one. Turn on Developer Mode,
+  then run setup again; nothing was changed.
 - **Upstream failure:** inspect the `npx skills` error and any reported
   untracked directories; the prior Nexus lock is preserved.
 - **Retained temporary/residue paths:** read the command's exact path and

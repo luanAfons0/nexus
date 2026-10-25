@@ -18,8 +18,11 @@
  * absolute target that reaches a directory or nothing, which is what a
  * junction holds (a Managed Link there is one), is copied as a junction,
  * which needs no privilege; any other link needs the privilege a symlink
- * needs there, and its copy fails loudly without it. The manifest compares
- * the target text, not the kind of link. Windows has no owner to copy.
+ * needs there, and its copy fails loudly without it, in one sentence that
+ * names the link and the privilege. It is never copied as the file it
+ * reaches: the Backup must equal its source, link for link. The manifest
+ * compares the target text, not the kind of link. Windows has no owner to
+ * copy.
  */
 import {
   chmodSync,
@@ -40,6 +43,7 @@ import {
 import { isAbsolute, sep } from 'node:path';
 import { getSystemErrorMessage } from 'node:util';
 import { floorDiv } from './backup-manifest.ts';
+import { fault } from './fault.ts';
 
 /**
  * The precision, in nanoseconds, to which this copier writes a time: one
@@ -106,7 +110,7 @@ function attempt<T>(path: Buffer, step: () => T): T {
   try {
     return step();
   } catch (failure) {
-    throw copyFailure(path, failure);
+    throw isCopyError(failure) ? failure : copyFailure(path, failure);
   }
 }
 
@@ -170,9 +174,26 @@ function copySymlink(from: Buffer, to: Buffer): void {
   } catch {
     reached = 'nothing';
   }
-  if (isAbsolute(text) && reached !== 'file') symlinkSync(text, to, 'junction');
-  else symlinkSync(text, to, reached === 'directory' ? 'dir' : 'file');
+  if (isAbsolute(text) && reached !== 'file') {
+    symlinkSync(text, to, 'junction');
+    return;
+  }
+  try {
+    if (fault('backup_symlink_privilege')) {
+      throw Object.assign(new Error('test seam: no symlink privilege'), { code: 'EPERM' });
+    }
+    symlinkSync(text, to, reached === 'directory' ? 'dir' : 'file');
+  } catch (failure) {
+    if ((failure as NodeJS.ErrnoException).code !== 'EPERM') throw failure;
+    throw {
+      copyError: true,
+      sentence:
+        `cannot copy the symlink ${from.toString()}: Windows lets only Developer Mode or ` +
+        'an administrator make a symlink; turn on Developer Mode, then run the command again',
+    } satisfies CopyError;
+  }
 }
+
 
 /** How one entry's metadata is copied. */
 type AttributeOptions = {

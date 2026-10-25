@@ -8,6 +8,7 @@
  */
 import { join } from 'node:path';
 import type { Paths } from './paths.ts';
+import { skillNameKey } from './skill-names.ts';
 
 /** Every Control Skill, in the order Bootstrap links them. */
 export const CONTROL_SKILLS: readonly string[] = [
@@ -21,9 +22,12 @@ export const CONTROL_SKILLS: readonly string[] = [
   'nexus',
 ];
 
-/** True when `name` is the name of a Control Skill. */
+/**
+ * True when `name` is the name of a Control Skill, or on Windows, which
+ * ignores case, the same name in another case.
+ */
 export function isControlSkill(name: string): boolean {
-  return CONTROL_SKILLS.includes(name);
+  return CONTROL_SKILLS.some((control) => skillNameKey(control) === skillNameKey(name));
 }
 
 /** The Owner directory of one Control Skill. */

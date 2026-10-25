@@ -19,6 +19,9 @@
  * On Windows a home's links are junctions, as `makeLink` makes them. A
  * newline in a link's text, a mode other than read-only and a nanosecond
  * time cannot be made there, so those cases run on Linux and macOS alone.
+ * One case runs on Windows alone: a symlink that needs a privilege fails the
+ * Backup in one sentence. It starts from a symlink, so it needs an account
+ * that can make one, and it is skipped on any other.
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -527,3 +530,29 @@ test('a directory that appears at a canonical entry just before the copy moves i
   const recovery = lastNamed(run.stderr, 'recovery');
   assert.notEqual(linkText(join(recovery, 'original')), undefined);
 });
+
+test(
+  'on Windows a symlink that needs a privilege fails the Backup in one sentence',
+  { skip: !WINDOWS && 'only Windows needs a privilege for a symlink' },
+  (context) => {
+    const home = newHome('backup_symlink_privilege');
+    markedHome(home);
+    const link = join(home, '.claude', 'linked-marker');
+    try {
+      symlinkSync('marker', link, 'file');
+    } catch {
+      context.skip('this account cannot make the symlink this case starts from');
+      return;
+    }
+    const run = runNexus(home, ['setup'], { env: { NEXUS_FAULT: 'backup_symlink_privilege' } });
+    assert.ok(
+      run.stderr.includes(
+        `cannot copy the symlink ${link}: Windows lets only Developer Mode or an administrator ` +
+          'make a symlink; turn on Developer Mode, then run the command again',
+      ),
+      run.stderr,
+    );
+    assertNothingPublished(home, run);
+    assert.equal(linkText(link), 'marker');
+  },
+);

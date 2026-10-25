@@ -17,6 +17,7 @@ import { readLock } from './lock.ts';
 import { parseOneSkillName } from './one-skill.ts';
 import { error, info } from './output.ts';
 import { readPaths } from './paths.ts';
+import { skillNameKey } from './skill-names.ts';
 
 /** Reserve one Custom Skill directory, and give the exit code. */
 export const newSkill: Command = async (args) => {
@@ -49,9 +50,10 @@ export const newSkill: Command = async (args) => {
       for (const sentence of read.errors) error(sentence);
       return 1;
     }
-    if (read.lock.names.includes(name)) {
+    const installed = read.lock.names.find((each) => skillNameKey(each) === skillNameKey(name));
+    if (installed !== undefined) {
       error(
-        `name collides with an installed skill: ${name} (${join(paths.canonicalRoot, name)})`,
+        `name collides with an installed skill: ${name} (${join(paths.canonicalRoot, installed)})`,
       );
       return 1;
     }

@@ -6,9 +6,10 @@
  * Every refusal happens before any change, so a refused edit leaves the
  * Custom Root byte-identical. The edit writes a temporary file beside
  * `GLOBAL.md` and renames it over the old one, so no reader ever sees half a
- * file. On Windows each Instruction Path is a Managed Copy (ADR 0010), so the
- * edit then brings both copies in step with the new file; a Foreign Entry is
- * kept. When `GLOBAL.md` is new, Link runs as `nexus link` does, so both
+ * file; a rename that another program holds back is tried again for a
+ * moment. On Windows each Instruction Path is a Managed Copy (ADR 0010), so
+ * the edit then brings both copies in step with the new file; a Foreign
+ * Entry is kept. When `GLOBAL.md` is new, Link runs as `nexus link` does, so both
  * Instruction Paths reach it at once.
  *
  * The sentences, the output and the exit codes are the Bash CLI's: output
@@ -30,6 +31,7 @@ import { join } from 'node:path';
 import type { Command } from './cli.ts';
 import { customRootFault, globalInstructionsFault } from './custom.ts';
 import { isPresent } from './entries.ts';
+import { fault } from './fault.ts';
 import { usageRefusal } from './help.ts';
 import { globalInstructionsPresent, readGlobalInstructions } from './instructions.ts';
 import { compactJson } from './json.ts';
@@ -46,6 +48,19 @@ const EMPTY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b78
 
 /** The prefix of the temporary file an edit writes in the Custom Root. */
 const TEMPORARY_PREFIX = '.nexus-tmp.global.';
+
+/**
+ * The errors of a rename over a file that another program holds open, which
+ * Windows refuses until the program lets go: an editor, a virus scanner or
+ * an indexer holds a file for a moment.
+ */
+const HELD_CODES: readonly string[] = ['EPERM', 'EBUSY', 'EACCES'];
+
+/** How many times the rename over `GLOBAL.md` is tried. */
+const REPLACE_TRIES = 5;
+
+/** The first wait between two tries, in milliseconds; each wait doubles it. */
+const REPLACE_WAIT_MS = 50;
 
 /** `nexus global`: show or edit; anything else is the usage and exit 2. */
 export const globalInstructions: Command = async (args) => {
@@ -119,9 +134,7 @@ async function edit(args: readonly string[]): Promise<number> {
     error(`cannot set the mode of ${temporary.path}`);
     return 1;
   }
-  try {
-    renameSync(temporary.path, owner);
-  } catch {
+  if (!replace(temporary.path, owner)) {
     rmSync(temporary.path, { force: true });
     error(`cannot replace the global instructions: ${owner}`);
     return 1;
@@ -133,6 +146,28 @@ async function edit(args: readonly string[]): Promise<number> {
   for (const sentence of failures) error(sentence);
   const linked = existed ? 0 : linkAll(paths, false);
   return failures.length > 0 ? 1 : linked;
+}
+
+/**
+ * Rename `temporary` over `owner`; false when it failed. A rename refused
+ * because the file is held is tried again, with a wait that doubles each
+ * time, so a file held for a moment does not fail the edit.
+ */
+function replace(temporary: string, owner: string): boolean {
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      if (fault('global_rename_held') || (fault('global_rename_busy') && attempt < 3)) {
+        throw Object.assign(new Error('test seam: global instructions held'), { code: 'EBUSY' });
+      }
+      renameSync(temporary, owner);
+      return true;
+    } catch (failure) {
+      const code = (failure as NodeJS.ErrnoException).code ?? '';
+      if (attempt === REPLACE_TRIES || !HELD_CODES.includes(code)) return false;
+      Atomics.wait(sleeper, 0, 0, REPLACE_WAIT_MS * 2 ** (attempt - 1));
+    }
+  }
 }
 
 /** What `global edit` was asked, or the exit code of its usage refusal. */

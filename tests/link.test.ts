@@ -34,6 +34,7 @@ import {
   linkText,
   makeLink,
   managedCopies,
+  moveCommand,
   sha256,
   WINDOWS,
 } from './helpers/links.ts';
@@ -483,13 +484,54 @@ test('a file at an Instruction Path is a Foreign Entry: kept, with a hint, and n
   assert.ok(
     run.stdout.includes(
       `nexus: foreign entry at ${claude}: preserved; ` +
-        `to manage it, run: mv ${claude} ${global}, then rerun link\n`,
+        `to manage it, run: ${moveCommand(claude, global)}, then rerun link\n`,
     ),
   );
   assert.equal(linkText(claude), undefined);
   assert.equal(readFileSync(claude, 'utf8'), 'hand written\n');
   assertInstructionLink(home, join(home, '.codex', 'AGENTS.md'));
   assert.deepEqual(residue(join(home, '.claude')), []);
+});
+
+test(
+  'on Windows a Custom Skill that differs from an Installed Skill only in case is a Collision',
+  { skip: !WINDOWS && 'only Windows ignores case' },
+  () => {
+    const home = customHome('custom_collision_case');
+    const custom = join(home, '.custom-skills');
+    const canonical = join(home, '.agents', 'skills');
+    writeSkill(canonical, 'installed');
+    writeLock(join(home, '.nexus', 'skill-lock.json'), ['installed']);
+    writeSkill(custom, 'Installed');
+    const before = agentTrees(home);
+
+    const run = runNexus(home, ['link']);
+    assert.equal(run.status, 1);
+    assert.equal(
+      run.stderr,
+      `nexus: error: custom skill collides with an installed skill: Installed ` +
+        `(${join(custom, 'Installed')} and ${join(canonical, 'installed')})\n` +
+        'nexus: error: link failed with 1 error(s); no changes were made\n',
+    );
+    assert.equal(agentTrees(home), before);
+  },
+);
+
+test('the move a Foreign Entry hint names keeps a path with a space and a quote whole', () => {
+  const home = globalHome("global_foreign_it's quoted");
+  const global = join(home, '.custom-skills', 'GLOBAL.md');
+  const claude = join(home, '.claude', 'CLAUDE.md');
+  writeFileSync(global, 'rule one\n');
+  writeFileSync(claude, 'hand written\n');
+
+  const run = runNexus(home, ['link']);
+  assert.equal(run.status, 0, run.stderr);
+  const expected = WINDOWS
+    ? `Move-Item -Force -LiteralPath '${claude.replaceAll("'", "''")}' ` +
+      `-Destination '${global.replaceAll("'", "''")}'`
+    : `mv '${claude.replaceAll("'", "'\\''")}' '${global.replaceAll("'", "'\\''")}'`;
+  assert.ok(run.stdout.includes(`to manage it, run: ${expected}, then rerun link\n`), run.stdout);
+  assert.equal(readFileSync(claude, 'utf8'), 'hand written\n');
 });
 
 test('an unrelated symlink at an Instruction Path is a Foreign Entry and is kept', () => {
@@ -504,7 +546,7 @@ test('an unrelated symlink at an Instruction Path is a Foreign Entry and is kept
   assert.ok(
     run.stdout.includes(
       `nexus: foreign entry at ${codex}: preserved; ` +
-        `to manage it, run: mv ${codex} ${global}, then rerun link\n`,
+        `to manage it, run: ${moveCommand(codex, global)}, then rerun link\n`,
     ),
   );
   assertLinkText(codex, '/unrelated/AGENTS.md');
@@ -657,7 +699,7 @@ test(
     assert.equal(
       run.stdout,
       `nexus: foreign entry at ${claude}: preserved; ` +
-        `to manage it, run: mv ${claude} ${global}, then rerun link\n` +
+        `to manage it, run: ${moveCommand(claude, global)}, then rerun link\n` +
         'nexus: link complete: skills reconciled\n',
     );
     assert.equal(readFileSync(claude, 'utf8'), 'rule one\nmy own rule\n');
