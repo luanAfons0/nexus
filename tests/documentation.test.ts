@@ -234,14 +234,18 @@ test('Nexus runs on Node alone: no Bash, Python or jq file, and no runtime depen
   assert.deepEqual(foreign, []);
 
   // The one file that is not Node: the launcher a FirstMate `wsl` Place starts.
-  // It finds a Node 24 and runs mcp.ts with it, and holds nothing else.
+  // It finds a Node 24 and runs mcp.ts with it, or mcp.js in a Plugin
+  // Release, and holds nothing else.
   assert.match(read('mcp'), /^#!\/bin\/sh\n/);
-  assert.match(read('mcp'), /exec "\$node" "\$here\/mcp\.ts" "\$@"\n/);
+  assert.match(read('mcp'), /server="\$here\/mcp\.ts"\n/);
+  assert.match(read('mcp'), /exec "\$node" "\$server" "\$@"\n/);
 
   const manifest = JSON.parse(read('package.json')) as Record<string, unknown>;
   assert.equal(manifest.dependencies, undefined);
+  // tsdown bundles a Plugin Release on the release path alone; nothing runs it.
   assert.deepEqual(Object.keys(manifest.devDependencies as object).sort(), [
     '@types/node',
+    'tsdown',
     'typescript',
   ]);
 });

@@ -26,9 +26,11 @@ Node 24 or newer, npm and Git. Also `gh`, if you touch `nexus check`. Nexus
 calls upstream `npx skills` to install, update and remove a skill, and for
 nothing else. The suite runs fake `gh` and `npx` programs in their place.
 
-Nexus is TypeScript on Node 24, with no build step: Node runs the `.ts` files
-directly. `npm install` brings the two development dependencies, `typescript`
-and `@types/node`. Nexus has no runtime dependency.
+Nexus is TypeScript on Node 24. The repository has no build step: Node runs
+the `.ts` files directly. Only the Plugin Release is built: `npm run release`
+writes `release/`, the bundled `mcp.js` and CLI with `web/`, `skills/` and
+`mcp` (ADR 0011). `npm install` brings the three development dependencies,
+`typescript`, `@types/node` and `tsdown`. Nexus has no runtime dependency.
 
 Nexus is developed and tested on Linux, on WSL and on Windows. macOS is
 untried rather than unsupported. If you run the suite there, open an issue

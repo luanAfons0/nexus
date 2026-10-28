@@ -43,7 +43,11 @@ import { isObject } from './src/json.ts';
 /** The Nexus home this file sits in. */
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-/** The CLI entry each tool runs: `node <Nexus home>/src/nexus.js <command>`. */
+/**
+ * The CLI entry each tool runs: `node <Nexus home>/src/nexus.js <command>`.
+ * In a Plugin Release this file is `mcp.js` and the entry beside it is the
+ * bundled CLI (ADR 0011), so a tool call starts JavaScript Node need not strip.
+ */
 const CLI = join(HERE, 'src', 'nexus.js');
 
 /**

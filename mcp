@@ -1,12 +1,16 @@
 #!/bin/sh
 # The launcher a FirstMate `wsl` Place starts as ./mcp. It finds a Node 24 and
-# runs mcp.ts with it, and holds nothing else.
+# runs the Plugin Server with it, and holds nothing else. The Plugin Server is
+# mcp.ts in the repository and mcp.js in a Plugin Release, which holds no
+# TypeScript; mcp.ts comes first when both are there, as the Host takes it.
 #
 # It looks for a Node rather than trusting `node`, because the Place starts it
 # with no login shell: nvm is not on PATH, and the first `node` can be the one
 # the distribution ships. An old one fails with "Unknown file extension .ts",
 # which says nothing about versions to whoever has to read it.
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+server="$here/mcp.ts"
+[ -f "$server" ] || server="$here/mcp.js"
 
 for node in ${NEXUS_NODE:+"$NEXUS_NODE"} \
             "$(command -v node 2>/dev/null)" \
@@ -14,8 +18,8 @@ for node in ${NEXUS_NODE:+"$NEXUS_NODE"} \
   [ -x "$node" ] || continue
   major=$("$node" -p 'process.versions.node.split(".")[0]' 2>/dev/null) || continue
   [ "$major" -ge 24 ] 2>/dev/null || continue
-  exec "$node" "$here/mcp.ts" "$@"
+  exec "$node" "$server" "$@"
 done
 
-echo "nexus: no Node 24 or newer was found, and the Plugin Server is TypeScript that Node runs with no build step. Set NEXUS_NODE to a Node 24, or start the Host with one on its PATH." >&2
+echo "nexus: no Node 24 or newer was found, and the Plugin Server needs one. Set NEXUS_NODE to a Node 24, or start the Host with one on its PATH." >&2
 exit 1

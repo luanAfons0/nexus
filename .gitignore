@@ -6,3 +6,4 @@ managed-copies.json
 docs/research/
 *.bak
 node_modules/
+release/

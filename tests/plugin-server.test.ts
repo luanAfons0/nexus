@@ -663,9 +663,8 @@ test(
 
     assert.equal(
       server.stderr(),
-      'nexus: no Node 24 or newer was found, and the Plugin Server is TypeScript that ' +
-        'Node runs with no build step. Set NEXUS_NODE to a Node 24, or start the Host ' +
-        'with one on its PATH.\n',
+      'nexus: no Node 24 or newer was found, and the Plugin Server needs one. ' +
+        'Set NEXUS_NODE to a Node 24, or start the Host with one on its PATH.\n',
     );
   },
 );
