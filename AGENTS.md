@@ -5,8 +5,10 @@ owner for their Agent Context: the skills of all three kinds and the Global
 Instructions (`~/.custom-skills/GLOBAL.md`), which it links into each agent's
 Instruction Path. See `README.md` for behavior, safety contract, and recovery.
 
-Nexus is TypeScript on Node 24, with no build step and no runtime dependency.
-The CLI is `node src/nexus.js <command>`. Run `npm run check` (`tsc --noEmit`,
+Nexus is TypeScript on Node 24 with no runtime dependency. The repository has
+no build step; the Plugin Release is built: `npm run release` writes
+`release/` (ADR 0011), and a tag `vMAJOR.MINOR.PATCH` publishes it. The CLI
+is `node src/nexus.js <command>`. Run `npm run check` (`tsc --noEmit`,
 then `node --test`) before a commit; `node --test tests/<area>.test.ts` runs
 one file while you work.
 

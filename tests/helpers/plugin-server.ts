@@ -61,14 +61,21 @@ export type ServerOptions = {
   readonly env?: Readonly<Record<string, string>>;
   /** Start the `sh` launcher `./mcp` rather than `mcp.ts`. */
   readonly launcher?: boolean;
+  /**
+   * The Plugin directory to start it in, and the file the Host would find
+   * there: a Plugin Release ships `mcp.js` and no `mcp.ts`. The repository
+   * and `mcp.ts` when not given.
+   */
+  readonly plugin?: { readonly directory: string; readonly server: 'mcp.ts' | 'mcp.js' };
 };
 
 /** Start the Plugin Server against a test home. */
 export function startServer(home: string, options: ServerOptions = {}): Server {
   const env = homeEnvironment(home, options.env ?? {});
+  const { directory, server } = options.plugin ?? { directory: REPO_ROOT, server: 'mcp.ts' };
   const child: ChildProcessWithoutNullStreams = options.launcher
-    ? spawn('./mcp', [], { cwd: REPO_ROOT, env, shell: false })
-    : spawn(process.execPath, ['mcp.ts'], { cwd: REPO_ROOT, env, shell: false, windowsHide: true });
+    ? spawn('./mcp', [], { cwd: directory, env, shell: false })
+    : spawn(process.execPath, [server], { cwd: directory, env, shell: false, windowsHide: true });
   const lines: string[] = [];
   const waiting = new Map<unknown, (reply: Reply) => void>();
   let stderr = '';

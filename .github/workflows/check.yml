@@ -1,9 +1,10 @@
 # The whole suite, run by a machine on every change.
 #
-# Nexus is TypeScript on Node 24 with no build step: Node runs the TypeScript
-# directly. `npm run check` checks the types, then runs every test with
-# `node --test`, on Linux and on Windows, because a Managed Link is a symlink
-# on one and a junction or a Managed Copy on the other (ADR 0010).
+# The repository has no build step: Node runs the TypeScript directly, and
+# only a Plugin Release is built (ADR 0011). `npm run check` checks the types,
+# then runs every test with `node --test`, on Linux and on Windows, because a
+# Managed Link is a symlink on one and a junction or a Managed Copy on the
+# other (ADR 0010).
 #
 # Every test gets its own home under a temporary root and refuses to run
 # outside it, so nothing here reaches the runner's own files.

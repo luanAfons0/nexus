@@ -24,7 +24,9 @@ and the "Develop" section below.
 ## Requirements and first use
 
 Nexus needs Node 24 or newer, Git, npm, and `gh`, and nothing else. It runs
-on Linux, macOS, and Windows, with no build step and no runtime dependency.
+on Linux, macOS, and Windows, with no runtime dependency. The repository has
+no build step; the Plugin Release that `firstmate install nexus` fetches is
+built from a tag (ADR 0011).
 Git is needed for Git-based sources and normal development. npm brings `npx`,
 which runs upstream `npx skills` to install, update, and remove a skill.
 `nexus check` needs `gh`. A Node older than 24 is refused with one sentence,
@@ -528,7 +530,8 @@ The contract is recorded in
 - Nexus is a directory holding a `web/` folder and a Plugin Server, `mcp.ts`,
   and asks nothing else of anyone. The Host starts it with its own Node, on
   Linux and on Windows. In a FirstMate `wsl` Place the Host starts `./mcp`
-  instead, an `sh` launcher that finds a Node 24 and hands it `mcp.ts`:
+  instead, an `sh` launcher that finds a Node 24 and hands it `mcp.ts`, or
+  `mcp.js` in a Plugin Release, which holds no TypeScript (ADR 0011):
   `NEXUS_NODE` first, then the `node` on PATH, then one nvm keeps. The Place
   starts it with no login shell, so nvm is not on PATH there.
 - The Plugin Server never touches `GLOBAL.md`, the Nexus Lock, or any skill
@@ -860,12 +863,13 @@ npm install
 npm run check
 ```
 
-`npm install` brings the two development dependencies, `typescript` and
-`@types/node`. `npm run check` checks the types with `tsc --noEmit`, then runs
-the whole suite with `node --test`. Every test builds its own home directory
-under a temporary root and drives the CLI over its command line. The `Check`
-workflow runs `npm run check` on Linux and on Windows, in the jobs `Types and
-tests on Linux` and `Types and tests on Windows`, for every pull request.
+`npm install` brings the three development dependencies, `typescript`,
+`@types/node` and `tsdown`, which builds a Plugin Release alone.
+`npm run check` checks the types with `tsc --noEmit`, then runs the whole
+suite with `node --test`. Every test builds its own home directory under a
+temporary root and drives the CLI over its command line. The `Check` workflow
+runs `npm run check` on Linux and on Windows, in the jobs `Types and tests on
+Linux` and `Types and tests on Windows`, for every pull request.
 
 To try a change by hand, never point it at your own agent context. Use the
 sandbox home:

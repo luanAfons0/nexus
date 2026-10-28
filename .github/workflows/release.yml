@@ -1,0 +1,25 @@
+# Publish a Plugin Release for every tag vMAJOR.MINOR.PATCH (ADR 0011).
+#
+# FirstMate's reusable workflow does the work: it refuses any other tag, runs
+# `test`, runs `build`, archives `release/` with its `.sha256`, and publishes
+# the GitHub Release that `firstmate install nexus` fetches. It is called at
+# `@main` because a called workflow cannot find its own ref.
+#
+# `test` runs the whole suite, on the commit of the tag. `build` writes
+# `release/`: the bundled `mcp.js` and CLI, `web/`, `skills/` and `mcp`.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  release:
+    uses: luanAfons0/FirstMate/.github/workflows/plugin-release.yml@main
+    # The workflow creates the GitHub Release, so it needs this, and nothing more.
+    permissions:
+      contents: write
+    with:
+      test: npm ci && npm run check
+      build: npm run release

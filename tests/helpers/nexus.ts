@@ -75,6 +75,8 @@ export type RunOptions = {
    * checked, so that the CLI sees a home that is not marked.
    */
   readonly unmarked?: boolean;
+  /** The CLI entry to run, such as a Plugin Release's; the repository's when not given. */
+  readonly cli?: string;
 };
 
 /** A run of the CLI that goes on while the test acts on it. */
@@ -110,7 +112,8 @@ export function runNexus(home: string, args: readonly string[], options: RunOpti
   const hidden = `${marker}.hidden`;
   if (options.unmarked === true) renameSync(marker, hidden);
   try {
-    const result = spawnSync(process.execPath, [...(options.node ?? []), CLI, ...args], {
+    const entry = options.cli ?? CLI;
+    const result = spawnSync(process.execPath, [...(options.node ?? []), entry, ...args], {
       cwd: resolved,
       env,
       encoding: 'utf8',

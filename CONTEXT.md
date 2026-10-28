@@ -242,7 +242,8 @@ _Avoid_: Web UI, dashboard, web app, admin page, GUI
 speaks MCP to it, and its tools are everything the page can do. Every tool is
 one subprocess call to the Nexus CLI, so the server touches no file itself. In
 a FirstMate `wsl` Place the Host starts `mcp` instead, an `sh` launcher that
-finds a Node 24 and hands it `mcp.ts`.
+finds a Node 24 and hands it `mcp.ts`. A Plugin Release ships `mcp.js`
+instead, `mcp.ts` bundled, and the CLI bundled at `src/nexus.js` (ADR 0011).
 _Avoid_: backend, API, ui server, adapter
 
 **Envelope**:
